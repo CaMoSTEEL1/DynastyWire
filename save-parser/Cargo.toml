@@ -1,0 +1,17 @@
+[package]
+name = "save-parser"
+version = "0.1.0"
+edition = "2021"
+description = "Parser for EA CFB27 dynasty saves (FBCHUNKS + zlib + FrTk franchise tables)"
+
+[lib]
+name = "save_parser"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sp-inspect"
+path = "src/bin/inspect.rs"
+
+[dependencies]
+flate2 = "1.0"
+anyhow = "1.0"

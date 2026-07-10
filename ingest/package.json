@@ -1,0 +1,18 @@
+{
+  "name": "dynastywire-ingest",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CFB27 dynasty save -> DynastySnapshot + week delta. Runs as the Tauri sidecar.",
+  "type": "commonjs",
+  "bin": {
+    "dw-ingest": "cli.js"
+  },
+  "scripts": {
+    "snapshot": "node cli.js snapshot",
+    "delta": "node cli.js delta"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
+    "madden-franchise": "^4.2.2"
+  }
+}

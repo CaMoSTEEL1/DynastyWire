@@ -1,0 +1,14 @@
+[package]
+name = "dw-watcher"
+version = "0.1.0"
+edition = "2021"
+description = "Watches the CFB27 saves folder and fires when the dynasty autosave changes."
+
+[[bin]]
+name = "dw-watch"
+path = "src/main.rs"
+
+[dependencies]
+notify = "6"
+anyhow = "1"
+save-parser = { path = "../save-parser" }

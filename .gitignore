@@ -40,3 +40,15 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .env.local
+
+# perishable save baselines (personal data, large binaries)
+calibration/
+save-parser/target/
+save-parser/ref/
+
+# build artifacts / deps (all crates + sidecar)
+**/node_modules/
+**/target/
+
+# test output scratch
+ingest/*.out
