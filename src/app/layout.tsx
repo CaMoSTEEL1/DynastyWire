@@ -2,9 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { Playfair_Display, Source_Serif_4 } from "next/font/google";
 import { Geist } from "next/font/google";
 import { cn } from "@/lib/utils";
-import { Suspense } from "react";
-import { PostHogProvider } from "@/components/posthog-provider";
-import { PostHogPageView } from "@/components/posthog-pageview";
 import "./globals.css";
 
 const playfair = Playfair_Display({
@@ -86,14 +83,7 @@ export default function RootLayout({
         "font-sans"
       )}
     >
-      <body className="min-h-screen antialiased">
-        <PostHogProvider>
-          <Suspense fallback={null}>
-            <PostHogPageView />
-          </Suspense>
-          {children}
-        </PostHogProvider>
-      </body>
+      <body className="min-h-screen antialiased">{children}</body>
     </html>
   );
 }
