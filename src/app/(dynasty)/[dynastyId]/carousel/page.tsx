@@ -1,156 +1,91 @@
 "use client";
 
-import { useState, use } from "react";
+// Coaching carousel: generate the staff + rumor mill from the real program state
+// (ingest/gen/carousel.js). Rumors are read-only narrative (resolution was server-bound).
+
+import { useCallback, useState } from "react";
+import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { SectionHeader } from "@/components/ui/section-header";
 import { StaffCard } from "@/components/carousel/staff-card";
 import { RumorCard } from "@/components/carousel/rumor-card";
-import { OutcomeDisplay } from "@/components/carousel/outcome-display";
-import { cn } from "@/lib/utils";
-import type {
-  StaffMember,
-  CoachingRumor,
-  CarouselOutcome,
-} from "@/lib/carousel/types";
+import type { StaffMember, CoachingRumor } from "@/lib/carousel/types";
 
-interface CarouselPageProps {
-  params: Promise<{ dynastyId: string }>;
+interface CarouselResult {
+  staff?: StaffMember[];
+  rumors?: CoachingRumor[];
+  error?: boolean;
 }
 
-export default function CarouselPage({ params }: CarouselPageProps) {
-  const { dynastyId } = use(params);
+export default function CarouselPage() {
+  const { needsOnboarding, generate } = useDynasty();
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [rumors, setRumors] = useState<CoachingRumor[]>([]);
-  const [outcomes, setOutcomes] = useState<CarouselOutcome[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [tried, setTried] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const hasGenerated = staff.length > 0;
-  const allResolved = hasGenerated && rumors.length > 0 && outcomes.length === rumors.length;
-
-  async function handleGenerate() {
-    setLoading(true);
+  const run = useCallback(async () => {
+    setGenerating(true);
     setError(null);
-    setOutcomes([]);
-
     try {
-      const res = await fetch("/api/carousel/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dynastyId }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error((data as { error?: string }).error ?? "Failed to generate carousel");
+      const data = await generate<CarouselResult>("carousel", {});
+      if (!data || data.error) {
+        setError("The carousel didn't spin up. Try again.");
+      } else {
+        setStaff(Array.isArray(data.staff) ? data.staff : []);
+        setRumors(Array.isArray(data.rumors) ? data.rumors : []);
       }
-
-      const data = await res.json();
-      const payload = data as { staff: StaffMember[]; rumors: CoachingRumor[] };
-      setStaff(payload.staff);
-      setRumors(payload.rumors);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Something went wrong";
-      setError(msg);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't reach the generator. Check your save + API key.");
     } finally {
-      setLoading(false);
+      setGenerating(false);
+      setTried(true);
     }
-  }
-
-  function handleOutcome(outcome: CarouselOutcome) {
-    setOutcomes((prev) => [...prev, outcome]);
-  }
+  }, [generate]);
 
   return (
     <div>
-      <SectionHeader
-        title="COACHING CAROUSEL"
-        subtitle="Staff changes and power moves"
-      />
+      <SectionHeader title="THE CAROUSEL" subtitle="Staff, rumors, and the hot seat" variant="carousel" />
 
-      {!hasGenerated && (
-        <div className="mt-8 rounded border border-dw-border bg-paper2 px-6 py-12 text-center">
-          {error && (
-            <p className="mb-4 font-serif text-sm text-dw-red">{error}</p>
-          )}
-          <p className="mb-4 font-serif italic text-ink3">
-            Generate your coaching staff and see who is drawing interest from other programs.
-          </p>
-          <button
-            onClick={handleGenerate}
-            disabled={loading}
-            className={cn(
-              "rounded border border-dw-accent bg-dw-accent/10 px-5 py-2 font-headline text-sm uppercase tracking-wider text-dw-accent transition-colors",
-              "hover:bg-dw-accent/20 disabled:opacity-50 disabled:cursor-not-allowed"
-            )}
-          >
-            {loading ? "Generating..." : "Generate Staff & Rumors"}
-          </button>
+      {needsOnboarding ? (
+        <div className="mt-6 rounded border border-dw-border bg-paper2 px-6 py-12 text-center font-serif text-ink2">
+          Set up your save + API key in settings to see who&apos;s hot and who&apos;s gone.
         </div>
-      )}
-
-      {hasGenerated && (
-        <div className="mt-6 space-y-8">
-          <div>
-            <h3 className="font-headline text-sm uppercase tracking-wider text-ink3">
-              Coaching Staff
-            </h3>
-            <div className="mt-1 h-px w-full bg-dw-border" />
-            <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {staff.map((member) => (
-                <StaffCard key={member.id} staff={member} />
-              ))}
-            </div>
+      ) : (
+        <>
+          <div className="mt-4 mb-6">
+            <button
+              type="button"
+              onClick={() => void run()}
+              disabled={generating}
+              className="rounded border border-dw-accent bg-dw-accent px-5 py-2.5 font-sans text-xs uppercase tracking-wider text-paper hover:bg-dw-accent2 disabled:opacity-50"
+            >
+              {generating ? "Working the phones…" : staff.length || rumors.length ? "Refresh Carousel" : "Spin the Carousel"}
+            </button>
           </div>
 
-          {rumors.length > 0 && !allResolved && (
-            <div>
-              <h3 className="font-headline text-sm uppercase tracking-wider text-ink3">
-                Carousel Rumors
-              </h3>
-              <div className="mt-1 h-px w-full bg-dw-border" />
-              <div className="mt-3 space-y-4">
-                {rumors.map((rumor) => (
-                  <RumorCard
-                    key={rumor.id}
-                    rumor={rumor}
-                    dynastyId={dynastyId}
-                    onResolved={handleOutcome}
-                  />
-                ))}
+          {error && !generating && <div className="rounded border border-dw-red/30 bg-dw-red/10 px-6 py-6 text-center font-serif text-dw-red">{error}</div>}
+          {!generating && !error && !tried && (
+            <div className="rounded border border-dw-border bg-paper2 px-6 py-10 text-center font-serif text-ink2">See your staff and the latest coaching rumors swirling around the program.</div>
+          )}
+
+          {staff.length > 0 && (
+            <div className="mb-8">
+              <h3 className="mb-3 font-headline text-xs uppercase tracking-wider text-ink3">Your Staff</h3>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {staff.map((s) => <StaffCard key={s.id} staff={s} />)}
               </div>
             </div>
           )}
-
-          {allResolved && (
+          {rumors.length > 0 && (
             <div>
-              <h3 className="font-headline text-sm uppercase tracking-wider text-ink3">
-                Carousel Summary
-              </h3>
-              <div className="mt-1 h-px w-full bg-dw-border" />
-              <div className="mt-3 space-y-4">
-                {outcomes.map((outcome, idx) => (
-                  <OutcomeDisplay key={`outcome-${idx}`} outcome={outcome} />
-                ))}
-              </div>
-
-              <div className="mt-6 rounded border border-dw-border bg-paper2 px-6 py-4 text-center">
-                <p className="font-serif italic text-sm text-ink3">
-                  All carousel decisions have been resolved. These outcomes will shape your next season.
-                </p>
-                <button
-                  onClick={handleGenerate}
-                  disabled={loading}
-                  className={cn(
-                    "mt-3 rounded border border-dw-accent bg-dw-accent/10 px-5 py-2 font-headline text-sm uppercase tracking-wider text-dw-accent transition-colors",
-                    "hover:bg-dw-accent/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                  )}
-                >
-                  {loading ? "Generating..." : "Run New Carousel"}
-                </button>
+              <h3 className="mb-3 font-headline text-xs uppercase tracking-wider text-ink3">The Rumor Mill</h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {rumors.map((r) => <RumorCard key={r.id} rumor={r} />)}
               </div>
             </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );

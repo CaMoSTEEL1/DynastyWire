@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import type { RecapContent } from "@/lib/ai/generators";
+import type { RecapContent } from "./types";
 
 interface LeadStoryProps {
   recap: RecapContent | null;

@@ -56,6 +56,35 @@ async function main() {
     return pretty ? printCycle(cycle) : console.log(JSON.stringify(cycle));
   }
 
+  // Generic per-kind generator: `generate <kind> <before> <after> [--extra <json>]`.
+  // Dispatches to ingest/gen/<kind>.js (exports generate(ctx, apiKey, extra)).
+  if (cmd === 'generate') {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return fail('No ANTHROPIC_API_KEY in env (BYO-key).');
+    const kind = files[0];
+    const before = await buildSnapshot(files[1], opts);
+    const after = await buildSnapshot(files[2], opts);
+    const delta = buildDelta(before, after);
+    const coachIdx = args.indexOf('--coach');
+    const ctx = buildMediaContext(delta, after, {
+      userTeamName: opts.userTeamName,
+      coachName: coachIdx >= 0 ? args[coachIdx + 1] : undefined,
+    });
+    ctx.snapshot = after; // per-kind modules may need richer snapshot data
+    ctx.delta = delta;
+    const extraIdx = args.indexOf('--extra');
+    const extra = extraIdx >= 0 ? JSON.parse(args[extraIdx + 1]) : {};
+    let mod;
+    try {
+      mod = require(`./gen/${kind}.js`);
+    } catch {
+      return fail(`unknown generator kind: ${kind}`);
+    }
+    const result = await mod.generate(ctx, apiKey, extra);
+    if (!result) return fail(`${kind} generation returned nothing`);
+    return console.log(JSON.stringify(result));
+  }
+
   console.error('usage: cli.js snapshot <save> | delta <b> <a> | recap <b> <a> | media <b> <a> [--team N] [--coach N] [--pretty]');
   process.exit(1);
 }

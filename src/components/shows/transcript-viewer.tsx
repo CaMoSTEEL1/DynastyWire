@@ -4,7 +4,6 @@ import { cn } from "@/lib/utils";
 import type { ShowTranscript, ShowType } from "@/lib/shows/types";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
-import { BroadcastPlayer } from "@/components/audio/broadcast-player";
 
 const SHOW_ACCENT: Record<ShowType, string> = {
   gameday: "text-dw-accent",
@@ -82,19 +81,6 @@ export function TranscriptViewer({
         <p className="mt-1 font-serif text-sm italic text-ink2">
           {transcript.subtitle} &mdash; Week {transcript.week}
         </p>
-
-        {/* Broadcast audio player */}
-        {submissionId && dynastyId && (
-          <div className="mt-4 border-t border-dw-border pt-4">
-            <BroadcastPlayer
-              submissionId={submissionId}
-              contentType={`show_${transcript.showType}`}
-              dynastyId={dynastyId}
-              showTitle={transcript.title}
-              accentColor={SHOW_ACCENT[transcript.showType]}
-            />
-          </div>
-        )}
 
         <div className="mt-4 border-t border-dw-border pt-4">
           <p className="mb-2 font-sans text-xs font-medium uppercase tracking-wider text-ink3">

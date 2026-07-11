@@ -99,6 +99,46 @@ export async function getMedia(
   );
 }
 
+/**
+ * Generic per-kind generation (press-conference, nil, offseason, shows, trophy, …).
+ * Each `kind` maps to ingest/gen/<kind>.js in the sidecar. `extra` is feature options.
+ */
+export async function generate<T = unknown>(
+  kind: string,
+  beforePath: string,
+  afterPath: string,
+  apiKey: string,
+  opts: { team?: string; coach?: string; extra?: Record<string, unknown> } = {}
+): Promise<T> {
+  return JSON.parse(
+    await invoke<string>("dynasty_generate", {
+      kind,
+      beforePath,
+      afterPath,
+      team: opts.team ?? null,
+      coach: opts.coach ?? null,
+      extra: opts.extra ? JSON.stringify(opts.extra) : null,
+      apiKey,
+    })
+  );
+}
+
+export interface SaveEntry {
+  name: string;
+  path: string;
+  modified: number;
+}
+
+/** Dynasty saves in a folder, newest first. */
+export function listSaves(folder: string): Promise<SaveEntry[]> {
+  return invoke<SaveEntry[]>("list_saves", { folder });
+}
+
+/** Copy a save into the app archive so the next ingest has a "before" to diff. */
+export function archiveSave(path: string, archiveDir: string, label: string): Promise<string> {
+  return invoke<string>("archive_save", { path, archiveDir, label });
+}
+
 // ---- Local settings + cache (Tauri store) ----
 
 export interface DynastySettings {

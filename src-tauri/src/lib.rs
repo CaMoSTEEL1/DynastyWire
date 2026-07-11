@@ -120,6 +120,78 @@ fn dynasty_media(
     run_sidecar(&args, Some(&api_key))
 }
 
+/// List dynasty save files in a folder, newest first (name + modified time millis).
+#[tauri::command]
+fn list_saves(folder: String) -> Result<Vec<SaveEntry>, String> {
+    let mut out = Vec::new();
+    let rd = std::fs::read_dir(&folder).map_err(|e| format!("reading {folder}: {e}"))?;
+    for entry in rd.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with("DYNASTY-") {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        out.push(SaveEntry {
+            name,
+            path: entry.path().to_string_lossy().to_string(),
+            modified,
+        });
+    }
+    out.sort_by(|a, b| b.modified.cmp(&a.modified));
+    Ok(out)
+}
+
+#[derive(serde::Serialize)]
+struct SaveEntry {
+    name: String,
+    path: String,
+    modified: u64,
+}
+
+/// Copy a save into an app-managed archive so the next ingest has a "before" to diff
+/// against (the game overwrites the live autosave in place). Returns the archive path.
+#[tauri::command]
+fn archive_save(path: String, archive_dir: String, label: String) -> Result<String, String> {
+    std::fs::create_dir_all(&archive_dir).map_err(|e| e.to_string())?;
+    let dest = PathBuf::from(&archive_dir).join(format!("{label}.save"));
+    std::fs::copy(&path, &dest).map_err(|e| format!("archiving: {e}"))?;
+    Ok(dest.to_string_lossy().to_string())
+}
+
+/// Generic per-kind generation (press-conference, nil, offseason, shows, trophy, …).
+/// Dispatches to the sidecar's ingest/gen/<kind>.js module.
+#[tauri::command]
+fn dynasty_generate(
+    kind: String,
+    before_path: String,
+    after_path: String,
+    team: Option<String>,
+    coach: Option<String>,
+    extra: Option<String>,
+    api_key: String,
+) -> Result<String, String> {
+    let mut args = vec!["generate".to_string(), kind, before_path, after_path];
+    if let Some(t) = team {
+        args.push("--team".into());
+        args.push(t);
+    }
+    if let Some(c) = coach {
+        args.push("--coach".into());
+        args.push(c);
+    }
+    if let Some(e) = extra {
+        args.push("--extra".into());
+        args.push(e);
+    }
+    run_sidecar(&args, Some(&api_key))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -129,7 +201,10 @@ pub fn run() {
             validate_save,
             dynasty_snapshot,
             dynasty_delta,
-            dynasty_media
+            dynasty_media,
+            dynasty_generate,
+            list_saves,
+            archive_save
         ])
         .run(tauri::generate_context!())
         .expect("error while running Dynasty Wire");

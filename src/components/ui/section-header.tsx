@@ -6,7 +6,9 @@ type SectionHeaderVariant =
   | "social"
   | "shows"
   | "rankings"
-  | "recruiting";
+  | "recruiting"
+  | "carousel"
+  | "offseason";
 
 interface SectionHeaderProps {
   title: string;

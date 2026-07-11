@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import type { BeatTakesContent, RankingsTakeContent, RecruitingNoteContent } from "@/lib/ai/generators";
+import type { BeatTakesContent, RankingsTakeContent, RecruitingNoteContent } from "./types";
 
 interface SecondaryStoriesProps {
   beatTakes: BeatTakesContent | null;

@@ -210,4 +210,9 @@ module.exports = {
   generateSocialPosts,
   generateRankingsTake,
   generateCycle,
+  // shared helpers for per-kind generator modules under ingest/gen/
+  callClaude,
+  parseJSON,
+  SYSTEM_PROMPT,
+  MODEL,
 };

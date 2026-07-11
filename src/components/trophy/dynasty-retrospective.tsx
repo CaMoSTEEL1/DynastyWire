@@ -47,7 +47,7 @@ export function DynastyRetrospective({
       <div className="space-y-8">
         {retrospective.chapters.map((chapter, idx) => (
           <motion.section
-            key={chapter.year}
+            key={idx}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{
@@ -58,9 +58,11 @@ export function DynastyRetrospective({
             className="border-t border-dw-border pt-6"
           >
             <div className="mb-3 flex items-baseline gap-3">
-              <span className="font-headline text-3xl text-ink3">
-                {chapter.year}
-              </span>
+              {chapter.year > 0 && (
+                <span className="font-headline text-3xl text-ink3">
+                  {chapter.year}
+                </span>
+              )}
               <h3 className="font-headline text-lg text-ink">
                 {chapter.title}
               </h3>

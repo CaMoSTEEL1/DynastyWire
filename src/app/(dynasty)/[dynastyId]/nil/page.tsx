@@ -1,118 +1,66 @@
 "use client";
 
-import { useEffect, useState, useCallback, use } from "react";
-import { SectionHeader } from "@/components/ui/section-header";
-import { NILBoard } from "@/components/nil/nil-board";
-import { PortalTracker } from "@/components/nil/portal-tracker";
-import { createClient } from "@/lib/supabase/client";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { Loader2 } from "lucide-react";
-import type { NILPageContent } from "@/lib/nil/types";
+import { SectionHeader } from "@/components/ui/section-header";
+import { useDynasty } from "@/components/dynasty/dynasty-context";
 
-interface SeasonRow {
-  id: string;
-  current_week: number;
+interface MarketNote {
+  label: string;
+  text: string;
 }
 
-interface ContentCacheRow {
-  content_type: string;
-  content: NILPageContent;
+interface NILMarketColumn {
+  headline: string;
+  body: string;
+  marketTemp: string;
+  tempReason: string;
+  notes: MarketNote[];
 }
 
-export default function NILPage({
-  params,
-}: {
-  params: Promise<{ dynastyId: string }>;
-}) {
-  const { dynastyId } = use(params);
+const TEMP_CONFIG: Record<string, { label: string; color: string }> = {
+  cold: { label: "Cold", color: "text-ink3" },
+  warm: { label: "Warm", color: "text-dw-yellow" },
+  hot: { label: "Hot", color: "text-dw-accent" },
+  "red-hot": { label: "Red Hot", color: "text-dw-red" },
+};
 
-  const [content, setContent] = useState<NILPageContent | null>(null);
-  const [loading, setLoading] = useState(true);
+function TempBadge({ temp }: { temp: string }) {
+  const cfg = TEMP_CONFIG[temp] ?? TEMP_CONFIG.warm;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded border border-current px-2.5 py-1 font-sans text-xs uppercase tracking-wider",
+        cfg.color
+      )}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      {cfg.label} Market
+    </span>
+  );
+}
+
+export default function NILPage() {
+  const { snapshot, loading, error, generate, settings, currentSavePath } =
+    useDynasty();
+
+  const [column, setColumn] = useState<NILMarketColumn | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [seasonId, setSeasonId] = useState<string | null>(null);
-  const [currentWeek, setCurrentWeek] = useState<number>(1);
+  const [genError, setGenError] = useState<string | null>(null);
 
-  const loadData = useCallback(async () => {
-    const supabase = createClient();
-
-    const { data: season } = await supabase
-      .from("seasons")
-      .select("id, current_week")
-      .eq("dynasty_id", dynastyId)
-      .order("year", { ascending: false })
-      .limit(1)
-      .single();
-
-    if (!season) {
-      setLoading(false);
-      return;
-    }
-
-    const typedSeason = season as SeasonRow;
-    setSeasonId(typedSeason.id);
-    setCurrentWeek(typedSeason.current_week);
-
-    // Find latest complete submission to look up cached NIL content
-    const { data: submission } = await supabase
-      .from("weekly_submissions")
-      .select("id")
-      .eq("season_id", typedSeason.id)
-      .eq("status", "complete")
-      .order("week", { ascending: false })
-      .limit(1)
-      .single();
-
-    if (submission) {
-      const { data: cachedRows } = await supabase
-        .from("content_cache")
-        .select("content_type, content")
-        .eq("weekly_submission_id", submission.id as string)
-        .eq("content_type", "nil_offers")
-        .limit(1);
-
-      if (cachedRows && cachedRows.length > 0) {
-        const row = cachedRows[0] as ContentCacheRow;
-        setContent(row.content);
-      }
-    }
-
-    setLoading(false);
-  }, [dynastyId]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  const canGenerate = Boolean(currentSavePath && settings.anthropicKey);
 
   async function handleGenerate() {
     if (generating) return;
-
     setGenerating(true);
-    setError(null);
-
+    setGenError(null);
     try {
-      const response = await fetch("/api/nil/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dynastyId }),
-      });
-
-      if (!response.ok) {
-        const errBody = await response.json();
-        throw new Error(
-          (errBody as { error?: string }).error ?? "Failed to generate NIL report"
-        );
-      }
-
-      const data = await response.json() as {
-        nilContent: NILPageContent;
-      };
-
-      setContent(data.nilContent);
+      const result = await generate<NILMarketColumn>("nil", {});
+      setColumn(result);
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "An unexpected error occurred";
-      setError(message);
+      setGenError(
+        err instanceof Error ? err.message : "Failed to generate NIL report."
+      );
     } finally {
       setGenerating(false);
     }
@@ -121,12 +69,20 @@ export default function NILPage({
   if (loading) {
     return (
       <div>
-        <SectionHeader
-          title="NIL & PORTAL"
-          subtitle="Money moves and roster drama"
-        />
-        <div className="mt-8 flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-ink3" />
+        <SectionHeader title="NIL & PORTAL" subtitle="Money moves and roster drama" />
+        <div className="mt-8 rounded border border-dw-border bg-paper2 px-6 py-12 text-center">
+          <p className="font-serif italic text-ink3">Reading your save&hellip;</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div>
+        <SectionHeader title="NIL & PORTAL" subtitle="Money moves and roster drama" />
+        <div className="mt-8 rounded border border-dw-red/30 bg-dw-red/10 px-6 py-12 text-center">
+          <p className="font-serif text-dw-red">{error}</p>
         </div>
       </div>
     );
@@ -134,75 +90,121 @@ export default function NILPage({
 
   return (
     <div>
-      <SectionHeader
-        title="NIL & PORTAL"
-        subtitle="Money moves and roster drama"
-      />
+      <SectionHeader title="NIL & PORTAL" subtitle="Money moves and roster drama" />
 
-      {!content ? (
-        <div className="mt-8 rounded border border-dw-border bg-paper2 px-6 py-12 text-center">
-          <p className="font-headline text-sm uppercase tracking-wider text-ink3">
-            No NIL Intelligence Available
+      <div className="mt-6 space-y-6">
+        {/* Player-level NIL/portal detail needs roster data the save does not
+            yet expose. Degrade to a program NIL-market column — clearly labeled. */}
+        <div className="rounded border border-dashed border-dw-border bg-paper2 px-6 py-8 text-center">
+          <p className="font-headline text-sm uppercase tracking-widest text-dw-accent">
+            Player-Level NIL Coming Soon
           </p>
-          <p className="mt-3 font-serif text-sm text-ink2">
-            Generate a report to see the latest NIL offers, transfer portal
-            activity, and the drama shaping your roster.
+          <p className="mx-auto mt-3 max-w-md font-serif text-sm leading-relaxed text-ink2">
+            Individual NIL offers and transfer-portal moves will appear here once
+            the roster is read from your dynasty save. For now, here&apos;s the
+            program&apos;s market read.
+            {snapshot?.userTeam
+              ? ` Tracking ${snapshot.userTeam.name} at Week ${snapshot.week ?? "—"}.`
+              : ""}
           </p>
-
-          {error && (
-            <p className="mt-3 font-sans text-sm text-dw-red">{error}</p>
-          )}
-
-          <button
-            type="button"
-            onClick={handleGenerate}
-            disabled={generating}
-            className={cn(
-              "mt-6 inline-flex items-center gap-2 rounded border border-dw-accent bg-dw-accent/10 px-5 py-2.5",
-              "font-headline text-sm uppercase tracking-wider text-dw-accent",
-              "transition-colors hover:bg-dw-accent/20",
-              "disabled:cursor-not-allowed disabled:opacity-50"
-            )}
-          >
-            {generating && (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            )}
-            {generating ? "Generating..." : "Generate NIL Report"}
-          </button>
         </div>
-      ) : (
-        <div className="mt-6 space-y-8">
-          <div className="grid gap-8 lg:grid-cols-2">
-            <NILBoard
-              offers={content.nilOffers}
-              drama={content.nilDrama}
-            />
-            <PortalTracker
-              entries={content.portalEntries}
-              drama={content.portalDrama}
-            />
+
+        <div className="rounded border border-dw-border bg-paper">
+          <div className="flex items-center justify-between gap-4 border-b border-dw-border bg-paper2 px-4 py-3">
+            <h3 className="font-headline text-sm uppercase tracking-wider text-ink2">
+              Market Watch
+            </h3>
+            {column && <TempBadge temp={column.marketTemp} />}
           </div>
 
-          <div className="border-t border-dw-border pt-4">
-            <button
-              type="button"
-              onClick={handleGenerate}
-              disabled={generating}
-              className={cn(
-                "inline-flex items-center gap-2 rounded border border-dw-border bg-paper2 px-4 py-2",
-                "font-sans text-xs text-ink3",
-                "transition-colors hover:border-dw-accent hover:text-dw-accent",
-                "disabled:cursor-not-allowed disabled:opacity-50"
-              )}
-            >
-              {generating && (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              )}
-              {generating ? "Regenerating..." : "Regenerate Report"}
-            </button>
+          <div className="px-5 py-5">
+            {!column ? (
+              <div className="py-6 text-center">
+                <p className="font-serif text-sm text-ink2">
+                  Generate a read on your program&apos;s NIL collective and
+                  transfer-portal climate — grounded in this season&apos;s results.
+                </p>
+
+                {genError && (
+                  <p className="mt-3 font-sans text-sm text-dw-red">{genError}</p>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleGenerate}
+                  disabled={generating || !canGenerate}
+                  className={cn(
+                    "mt-6 inline-flex items-center gap-2 rounded border border-dw-accent bg-dw-accent/10 px-5 py-2.5",
+                    "font-headline text-sm uppercase tracking-wider text-dw-accent",
+                    "transition-colors hover:bg-dw-accent/20",
+                    "disabled:cursor-not-allowed disabled:opacity-50"
+                  )}
+                >
+                  {generating ? "Reading the market…" : "Generate NIL Report"}
+                </button>
+
+                {!canGenerate && (
+                  <p className="mt-3 font-sans text-xs text-ink3">
+                    Add your save and API key in settings to generate.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div>
+                <h4 className="font-headline text-xl leading-tight text-ink">
+                  {column.headline}
+                </h4>
+                <p className="mt-2 font-serif text-sm leading-relaxed text-ink2">
+                  {column.body}
+                </p>
+                {column.tempReason && (
+                  <p className="mt-2 font-serif italic text-sm text-ink3">
+                    {column.tempReason}
+                  </p>
+                )}
+
+                <div className="my-5 flex items-center gap-3 text-dw-accent/60">
+                  <span className="h-px flex-1 bg-dw-border" />
+                  <span className="text-xs">&#9670;</span>
+                  <span className="h-px flex-1 bg-dw-border" />
+                </div>
+
+                <div className="space-y-4">
+                  {column.notes.map((note, i) => (
+                    <div key={i} className="border-l-2 border-dw-border pl-4">
+                      <h5 className="font-headline text-xs uppercase tracking-wider text-dw-accent2">
+                        {note.label}
+                      </h5>
+                      <p className="mt-1 font-serif text-sm leading-relaxed text-ink2">
+                        {note.text}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-6 border-t border-dw-border pt-4">
+                  <button
+                    type="button"
+                    onClick={handleGenerate}
+                    disabled={generating}
+                    className={cn(
+                      "inline-flex items-center gap-2 rounded border border-dw-border bg-paper2 px-4 py-2",
+                      "font-sans text-xs text-ink3",
+                      "transition-colors hover:border-dw-accent hover:text-dw-accent",
+                      "disabled:cursor-not-allowed disabled:opacity-50"
+                    )}
+                  >
+                    {generating ? "Regenerating…" : "Regenerate Report"}
+                  </button>
+                  {genError && (
+                    <p className="mt-2 font-sans text-xs text-dw-red">{genError}</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

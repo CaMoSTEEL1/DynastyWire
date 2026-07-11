@@ -1,205 +1,60 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
 import { SectionHeader } from "@/components/ui/section-header";
-import { SeasonArchiveCard } from "@/components/trophy/season-archive-card";
-import { LegacyScoreDisplay } from "@/components/trophy/legacy-score-display";
-import { AllTimeRecords } from "@/components/trophy/all-time-records";
 import { DynastyRetrospective } from "@/components/trophy/dynasty-retrospective";
-import { createClient } from "@/lib/supabase/client";
-import {
-  calculateLegacyScore,
-  calculateAllTimeRecords,
-  archiveSeason,
-} from "@/lib/trophy/legacy-calculator";
-import type { SeasonState } from "@/lib/state/schema";
-import type {
-  SeasonArchive,
-  LegacyScore,
-  AllTimeRecords as AllTimeRecordsType,
-  DynastyRetrospective as DynastyRetrospectiveType,
-} from "@/lib/trophy/types";
+import { useDynasty } from "@/components/dynasty/dynasty-context";
+import type { DynastyRetrospective as DynastyRetrospectiveType } from "@/lib/trophy/types";
 
-interface DynastyInfo {
-  school: string;
-  coachName: string;
-  prestige: string;
+function StatBox({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
+  return (
+    <div className="rounded border border-dw-border bg-paper2 px-4 py-3 text-center">
+      <p className="font-sans text-[10px] uppercase tracking-widest text-ink3">{label}</p>
+      <p className="mt-1 font-headline text-2xl text-ink">{value}</p>
+      {sub && <p className="mt-0.5 font-sans text-xs text-ink3">{sub}</p>}
+    </div>
+  );
 }
 
-export default function TrophyRoomPage({
-  params,
-}: {
-  params: Promise<{ dynastyId: string }>;
-}) {
-  const [dynastyId, setDynastyId] = useState<string | null>(null);
-  const [archives, setArchives] = useState<SeasonArchive[]>([]);
-  const [dynasty, setDynasty] = useState<DynastyInfo | null>(null);
-  const [legacyScore, setLegacyScore] = useState<LegacyScore | null>(null);
-  const [allTimeRecords, setAllTimeRecords] = useState<AllTimeRecordsType | null>(null);
+export default function TrophyRoomPage() {
+  const { snapshot, loading, error, generate } = useDynasty();
+
   const [retrospective, setRetrospective] = useState<DynastyRetrospectiveType | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [generatingRetrospective, setGeneratingRetrospective] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [retroError, setRetroError] = useState<string | null>(null);
 
-  useEffect(() => {
-    params.then((p) => setDynastyId(p.dynastyId));
-  }, [params]);
+  const team = snapshot?.userTeam ?? null;
+  const wins = team?.wins ?? 0;
+  const losses = team?.losses ?? 0;
+  const gamesPlayed = wins + losses;
+  const winPct =
+    gamesPlayed > 0 ? `${Math.round((wins / gamesPlayed) * 1000) / 10}%` : "—";
 
-  const fetchTrophyData = useCallback(async (dynId: string) => {
-    setLoading(true);
-    try {
-      const supabase = createClient();
-
-      // Fetch dynasty info
-      const { data: dynastyData } = await supabase
-        .from("dynasties")
-        .select("school, coach_name, prestige")
-        .eq("id", dynId)
-        .single();
-
-      if (!dynastyData) {
-        setLoading(false);
-        return;
-      }
-
-      const dynInfo: DynastyInfo = {
-        school: dynastyData.school as string,
-        coachName: dynastyData.coach_name as string,
-        prestige: dynastyData.prestige as string,
-      };
-      setDynasty(dynInfo);
-
-      // Fetch all seasons for this dynasty
-      const { data: seasons } = await supabase
-        .from("seasons")
-        .select("id, year, season_state")
-        .eq("dynasty_id", dynId)
-        .order("year", { ascending: false });
-
-      if (!seasons || seasons.length === 0) {
-        setLoading(false);
-        return;
-      }
-
-      // Convert seasons to archives
-      const seasonArchives: SeasonArchive[] = [];
-
-      for (const season of seasons) {
-        const state = season.season_state as unknown as SeasonState;
-        if (!state || !state.record) continue;
-
-        // Only include seasons that have at least one game played
-        const totalGames = state.record.wins + state.record.losses;
-        if (totalGames === 0) continue;
-
-        const archive = archiveSeason(
-          state,
-          season.year as number,
-          state.coachYear ?? 1
-        );
-        archive.seasonId = season.id as string;
-
-        // Check for cached recap in content_cache via weekly submissions
-        const { data: submissions } = await supabase
-          .from("weekly_submissions")
-          .select("id")
-          .eq("season_id", season.id as string)
-          .order("week", { ascending: false })
-          .limit(1);
-
-        if (submissions && submissions.length > 0) {
-          const { data: cachedRecap } = await supabase
-            .from("content_cache")
-            .select("content")
-            .eq("weekly_submission_id", submissions[0].id as string)
-            .eq("content_type", "season_recap")
-            .limit(1)
-            .single();
-
-          if (cachedRecap && cachedRecap.content) {
-            const content = cachedRecap.content as Record<string, unknown>;
-            if (typeof content === "string") {
-              archive.recap = content;
-            } else if (typeof content.recap === "string") {
-              archive.recap = content.recap;
-            }
-          }
-        }
-
-        seasonArchives.push(archive);
-      }
-
-      setArchives(seasonArchives);
-
-      // Calculate legacy score and records
-      if (seasonArchives.length > 0) {
-        const score = calculateLegacyScore(seasonArchives, dynInfo.prestige);
-        setLegacyScore(score);
-
-        const records = calculateAllTimeRecords(seasonArchives);
-        setAllTimeRecords(records);
-      }
-    } catch (err) {
-      console.error("Failed to fetch trophy data:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (dynastyId) {
-      fetchTrophyData(dynastyId);
-    }
-  }, [dynastyId, fetchTrophyData]);
-
-  const handleGenerateRetrospective = async () => {
-    if (!dynasty || archives.length === 0) return;
-
-    setGeneratingRetrospective(true);
+  const handleGenerate = async () => {
+    setGenerating(true);
     setRetroError(null);
-
     try {
-      const response = await fetch("/api/trophy/retrospective", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          archives,
-          dynasty: {
-            school: dynasty.school,
-            coachName: dynasty.coachName,
-            prestige: dynasty.prestige,
-          },
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to generate retrospective");
-      }
-
-      const data = (await response.json()) as DynastyRetrospectiveType;
+      const data = await generate<DynastyRetrospectiveType>("trophy", {});
       setRetrospective(data);
-    } catch {
-      setRetroError("Failed to generate retrospective. Please try again.");
+    } catch (e) {
+      setRetroError(
+        e instanceof Error ? e.message : "Failed to generate retrospective. Please try again."
+      );
     } finally {
-      setGeneratingRetrospective(false);
+      setGenerating(false);
     }
   };
 
-  if (loading) {
+  // ── Loading ────────────────────────────────────────────────────────────
+  if (loading && !snapshot) {
     return (
       <div>
-        <SectionHeader
-          title="TROPHY ROOM"
-          subtitle="The legacy you're building"
-        />
+        <SectionHeader title="TROPHY ROOM" subtitle="The legacy you're building" />
         <div className="mt-8 space-y-4">
-          <div className="h-36 animate-pulse rounded border border-dw-border bg-paper2" />
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div
-                key={i}
-                className="h-20 animate-pulse rounded border border-dw-border bg-paper2"
-              />
+          <div className="h-24 animate-pulse rounded border border-dw-border bg-paper2" />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-20 animate-pulse rounded border border-dw-border bg-paper2" />
             ))}
           </div>
           <div className="h-64 animate-pulse rounded border border-dw-border bg-paper2" />
@@ -208,25 +63,20 @@ export default function TrophyRoomPage({
     );
   }
 
-  if (archives.length === 0) {
+  // ── Empty / no save ────────────────────────────────────────────────────
+  if (!team) {
     return (
       <div>
-        <SectionHeader
-          title="TROPHY ROOM"
-          subtitle="The legacy you're building"
-        />
+        <SectionHeader title="TROPHY ROOM" subtitle="The legacy you're building" />
         <div className="mt-8 rounded border border-dw-border bg-paper2 px-6 py-12 text-center">
           <p className="font-headline text-xl text-ink">
             Every dynasty starts with a blank trophy case.
           </p>
           <div className="mx-auto mt-3 h-px w-16 bg-dw-accent" />
           <p className="mt-4 font-serif text-sm leading-relaxed text-ink2">
-            Complete a season to see your legacy take shape — records, awards,
-            and the story of how you built something that mattered. The first
-            chapter is waiting to be written.
-          </p>
-          <p className="mt-6 font-sans text-xs uppercase tracking-wider text-ink3">
-            Submit weekly results to build your dynasty&apos;s history
+            {error
+              ? `We couldn't read your save. ${error}`
+              : "Play a week and DynastyWire will start building the story of your program — records, retrospectives, and the legacy you leave behind."}
           </p>
         </div>
       </div>
@@ -235,68 +85,95 @@ export default function TrophyRoomPage({
 
   return (
     <div className="space-y-8">
-      <SectionHeader
-        title="TROPHY ROOM"
-        subtitle="The legacy you're building"
-      />
+      <SectionHeader title="TROPHY ROOM" subtitle="The legacy you're building" />
 
-      {/* Legacy Score */}
-      {legacyScore && <LegacyScoreDisplay score={legacyScore} />}
+      {/* ── This Season (from the save) ─────────────────────────────────── */}
+      <div>
+        <h3 className="mb-3 font-headline text-xs uppercase tracking-widest text-ink3">
+          {team.name} — This Season
+        </h3>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <StatBox label="Record" value={`${wins}-${losses}`} />
+          <StatBox label="Win Rate" value={winPct} sub={`${gamesPlayed} played`} />
+          <StatBox label="Media Rank" value={team.rankMedia ? `#${team.rankMedia}` : "NR"} />
+          <StatBox
+            label="Prestige"
+            value={team.prestige != null ? `${team.prestige}/10` : "—"}
+          />
+        </div>
+      </div>
 
-      {/* All-Time Records */}
-      {allTimeRecords && <AllTimeRecords records={allTimeRecords} />}
-
-      {/* Retrospective section */}
+      {/* ── Season Retrospective (generated on demand) ──────────────────── */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="font-headline text-sm uppercase tracking-wider text-ink">
-            Dynasty Retrospective
+            Season Retrospective
           </h3>
-          {!retrospective && (
+          {!retrospective && !generating && (
             <button
-              onClick={handleGenerateRetrospective}
-              disabled={generatingRetrospective}
+              onClick={handleGenerate}
               className="rounded border border-dw-accent bg-dw-accent/10 px-4 py-1.5 font-sans text-xs uppercase tracking-wider text-dw-accent transition-colors hover:bg-dw-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {generatingRetrospective
-                ? "Generating..."
-                : "Generate Retrospective"}
+              Generate Retrospective
             </button>
           )}
         </div>
 
-        {generatingRetrospective && (
+        {generating && (
           <div className="flex items-center justify-center rounded border border-dw-border bg-paper2 px-6 py-12">
             <div className="text-center">
               <div className="mx-auto mb-3 h-2 w-2 animate-pulse rounded-full bg-dw-accent" />
               <p className="font-serif text-sm italic text-ink3">
-                Our writers are composing your dynasty&apos;s story...
+                Our writers are composing your season&apos;s story…
               </p>
             </div>
           </div>
         )}
 
-        {retroError && (
-          <div className="rounded border border-dw-red bg-paper2 px-4 py-3">
+        {retroError && !generating && (
+          <div className="rounded border border-dw-red/40 bg-dw-red/5 px-4 py-3">
             <p className="font-sans text-sm text-dw-red">{retroError}</p>
+            <button
+              onClick={handleGenerate}
+              className="mt-2 font-sans text-xs uppercase tracking-wider text-dw-accent hover:underline"
+            >
+              Try again
+            </button>
           </div>
         )}
 
         {retrospective && <DynastyRetrospective retrospective={retrospective} />}
+
+        {!retrospective && !generating && !retroError && (
+          <div className="rounded border border-dashed border-dw-border bg-paper2/60 px-6 py-8 text-center">
+            <p className="font-serif text-sm leading-relaxed text-ink2">
+              Generate a longform retrospective on your season so far — grounded in your
+              real record, ranking, and results.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Divider */}
       <div className="h-px w-full bg-dw-border" />
 
-      {/* Season Archives - Reverse Chronological */}
-      <div className="space-y-4">
-        <h3 className="font-headline text-sm uppercase tracking-wider text-ink">
-          Season Archives
+      {/* ── Coming Soon (multi-season history not yet mapped) ───────────── */}
+      <div>
+        <h3 className="mb-3 font-headline text-sm uppercase tracking-wider text-ink">
+          All-Time Records &amp; Season Archives
         </h3>
-        <div className="space-y-6">
-          {archives.map((archive) => (
-            <SeasonArchiveCard key={archive.seasonId} archive={archive} />
-          ))}
+        <div className="rounded border border-dashed border-dw-border bg-paper2/60 px-6 py-10 text-center">
+          <p className="font-headline text-lg text-ink">Reading from your save…</p>
+          <div className="mx-auto mt-3 h-px w-16 bg-dw-accent" />
+          <p className="mt-4 font-serif text-sm leading-relaxed text-ink2">
+            Legacy scores, national and conference championships, award cases, and
+            season-by-season archives need multi-season history that isn&apos;t mapped
+            from the dynasty file yet. As DynastyWire ingests more of your save, the full
+            trophy case will fill in here.
+          </p>
+          <p className="mt-4 font-sans text-xs uppercase tracking-wider text-ink3">
+            Coming soon
+          </p>
         </div>
       </div>
     </div>

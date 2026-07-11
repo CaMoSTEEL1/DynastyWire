@@ -24,7 +24,7 @@ function getDelay(index: number): number {
 
 interface SocialFeedProps {
   posts: SocialPost[];
-  onPostClick: (post: SocialPost) => void;
+  onPostClick?: (post: SocialPost) => void;
   onVisibleCountChange?: (count: number) => void;
 }
 
