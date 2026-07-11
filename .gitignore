@@ -58,3 +58,6 @@ src-tauri/gen/
 
 # compiled sidecar (rebuildable via pkg — see docs/PACKAGING.md)
 ingest/dist/
+ingest/pkgbuild.log
+ingest/*.result
+ingest/snap.result
