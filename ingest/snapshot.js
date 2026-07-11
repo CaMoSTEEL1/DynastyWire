@@ -6,6 +6,46 @@
 // a name (e.g. multiple `SeasonGame`); always pick the instance with the most records.
 
 const { FranchiseFile } = require('madden-franchise');
+const os = require('os');
+const fsc = require('fs');
+const pathc = require('path');
+const crypto = require('crypto');
+
+// Parsed-result cache keyed by (path, mtime, size, kind). A full-schema parse is slow
+// (~1-2 min); every generate/delta call would otherwise re-parse the same save. With
+// this, only the first parse of a given save state pays the cost.
+function statKey(p) {
+  try {
+    const s = fsc.statSync(p);
+    return `${Math.round(s.mtimeMs)}_${s.size}`;
+  } catch (e) {
+    return 'nostat';
+  }
+}
+function cacheFile(p, kind) {
+  const h = crypto.createHash('md5').update(`${p}|${statKey(p)}|${kind}`).digest('hex');
+  const dir = pathc.join(os.tmpdir(), 'dynastywire-cache');
+  try {
+    fsc.mkdirSync(dir, { recursive: true });
+  } catch (e) {
+    /* ignore */
+  }
+  return pathc.join(dir, `${h}.json`);
+}
+function readCache(file) {
+  try {
+    return JSON.parse(fsc.readFileSync(file, 'utf8'));
+  } catch (e) {
+    return null;
+  }
+}
+function writeCache(file, obj) {
+  try {
+    fsc.writeFileSync(file, JSON.stringify(obj));
+  } catch (e) {
+    /* ignore */
+  }
+}
 
 function openSave(path) {
   return new Promise((resolve, reject) => {
@@ -208,7 +248,19 @@ function detectUserCoach(coachTable) {
 }
 
 async function buildSnapshot(pathOrFile, opts = {}) {
-  const f = typeof pathOrFile === 'string' ? await openSave(pathOrFile) : pathOrFile;
+  const isPath = typeof pathOrFile === 'string';
+  const optKey = JSON.stringify({
+    t: opts.userTeamName || null,
+    r: opts.userTeamRow ?? null,
+    c: opts.coachName || null,
+  });
+  const cf = isPath ? cacheFile(pathOrFile, `snap|${optKey}`) : null;
+  if (cf) {
+    const cached = readCache(cf);
+    if (cached) return cached;
+  }
+
+  const f = isPath ? await openSave(pathOrFile) : pathOrFile;
   const seasonInfo = await readRecords(pickTable(f, 'SeasonInfo'));
   const teamTable = await readRecords(pickTable(f, 'Team'));
   const sgTable = await readRecords(pickTable(f, 'SeasonGame'));
@@ -238,7 +290,7 @@ async function buildSnapshot(pathOrFile, opts = {}) {
     week = games.reduce((m, g) => (g.played && g.week != null && g.week > m ? g.week : m), 0);
   }
 
-  return {
+  const result = {
     week,
     year: si ? num(si, 'CurrentSeasonYear') : null,
     dynastyYear: si ? num(si, 'CurrentYear') : null,
@@ -250,12 +302,20 @@ async function buildSnapshot(pathOrFile, opts = {}) {
     teams,
     games,
   };
+  if (cf) writeCache(cf, result);
+  return result;
 }
 
 // Recruiting board: join Recruit -> Player (mapping from PocketScout). Capped to the top
 // `cap` national recruits so we don't resolve all ~7,600 Player refs on every call.
 async function buildRecruits(pathOrFile, cap = 120) {
-  const f = typeof pathOrFile === 'string' ? await openSave(pathOrFile) : pathOrFile;
+  const isPath = typeof pathOrFile === 'string';
+  const cf = isPath ? cacheFile(pathOrFile, `recruits|${cap}`) : null;
+  if (cf) {
+    const cached = readCache(cf);
+    if (cached) return cached;
+  }
+  const f = isPath ? await openSave(pathOrFile) : pathOrFile;
   const recruitT = await readRecords(pickTable(f, 'Recruit'));
   const playerT = await readRecords(pickTable(f, 'Player'));
   if (!recruitT || !playerT) return [];
@@ -297,6 +357,7 @@ async function buildRecruits(pathOrFile, cap = 120) {
       stage: str(r, 'RecruitStage'),
     });
   }
+  if (cf) writeCache(cf, out);
   return out;
 }
 

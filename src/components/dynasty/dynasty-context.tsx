@@ -10,8 +10,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   archiveSave,
   generate as generateKind,
@@ -117,6 +120,28 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!needsOnboarding) refresh();
   }, [needsOnboarding, refresh]);
+
+  // Watch-folder auto-sync: when the game overwrites the dynasty autosave, the Rust
+  // watcher emits `dynasty-saved` and we re-ingest automatically. (The wow feature.)
+  const refreshRef = useRef(refresh);
+  useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
+  useEffect(() => {
+    if (!settings.savesFolder) return;
+    let unlisten: (() => void) | undefined;
+    invoke("start_watch", { folder: settings.savesFolder }).catch(() => {});
+    listen("dynasty-saved", () => {
+      refreshRef.current();
+    })
+      .then((u) => {
+        unlisten = u;
+      })
+      .catch(() => {});
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [settings.savesFolder]);
 
   const updateSettings = useCallback(async (patch: Partial<DynastySettings>) => {
     await saveSettings(patch);

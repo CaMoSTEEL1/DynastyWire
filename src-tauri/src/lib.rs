@@ -5,9 +5,10 @@
 //! - `dynasty_snapshot` / `dynasty_delta` / `dynasty_media` shell out to the Node ingest
 //!   sidecar (bundled madden-franchise + generators), passing the user's BYO key via env.
 
-use std::path::PathBuf;
+use notify::{EventKind, RecursiveMode, Watcher};
+use std::path::{Path, PathBuf};
 use std::process::Command;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// Fast native check: is this a readable, complete CFB27 dynasty save? Returns the
 /// save's internal name on success.
@@ -234,6 +235,67 @@ fn dynasty_generate(
     run_sidecar(&app, &args, Some(&api_key))
 }
 
+fn is_dynasty_save(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.starts_with("DYNASTY-"))
+        .unwrap_or(false)
+}
+
+/// Watch the saves folder. When the dynasty autosave changes (and settles + validates),
+/// emit a `dynasty-saved` event the frontend listens for to auto-refresh. The game
+/// overwrites the autosave in place, so we watch Modify, debounce, and validate.
+#[tauri::command]
+fn start_watch(app: tauri::AppHandle, folder: String) -> Result<(), String> {
+    let dir = PathBuf::from(&folder);
+    if !dir.is_dir() {
+        return Err(format!("not a directory: {folder}"));
+    }
+    std::thread::spawn(move || {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher = match notify::recommended_watcher(move |res| {
+            let _ = tx.send(res);
+        }) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("watcher init failed: {e}");
+                return;
+            }
+        };
+        if watcher.watch(&dir, RecursiveMode::NonRecursive).is_err() {
+            return;
+        }
+        let debounce = std::time::Duration::from_millis(1500);
+        let mut pending: Option<PathBuf> = None;
+        loop {
+            match rx.recv_timeout(debounce) {
+                Ok(Ok(event)) => {
+                    if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
+                        for p in event.paths {
+                            if is_dynasty_save(&p) {
+                                pending = Some(p);
+                            }
+                        }
+                    }
+                }
+                Ok(Err(_)) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if let Some(p) = pending.take() {
+                        // Only fire once the file is a complete, readable save.
+                        if let Ok(raw) = std::fs::read(&p) {
+                            if save_parser::unwrap_container(&raw).is_ok() {
+                                let _ = app.emit("dynasty-saved", p.to_string_lossy().to_string());
+                            }
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -247,7 +309,8 @@ pub fn run() {
             dynasty_generate,
             dynasty_recruits,
             list_saves,
-            archive_save
+            archive_save,
+            start_watch
         ])
         .run(tauri::generate_context!())
         .expect("error while running Dynasty Wire");
