@@ -13,6 +13,15 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
-    "madden-franchise": "^4.2.2"
+    "madden-franchise": "^4.3.1"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.21.0"
+  },
+  "pkg": {
+    "scripts": ["gen/**/*.js"],
+    "assets": ["node_modules/madden-franchise/data/**/*"],
+    "targets": ["node20-win-x64"],
+    "outputPath": "dist"
   }
 }

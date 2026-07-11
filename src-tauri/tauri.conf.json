@@ -27,7 +27,7 @@
     "active": true,
     "targets": "all",
     "resources": {
-      "../ingest": "ingest"
+      "../ingest/dist/dw-ingest.exe": "dw-ingest.exe"
     },
     "icon": [
       "icons/32x32.png",

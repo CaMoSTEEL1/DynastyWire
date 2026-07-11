@@ -76,10 +76,12 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       .finally(() => setReady(true));
   }, []);
 
-  const needsOnboarding = ready && (!settings.savesFolder || !settings.anthropicKey || !settings.userTeam);
+  // Team is auto-detected from the save (Coach.IsUserControlled), so onboarding only
+  // needs the save folder + API key.
+  const needsOnboarding = ready && (!settings.savesFolder || !settings.anthropicKey);
 
   const refresh = useCallback(async () => {
-    if (!settings.savesFolder || !settings.userTeam) return;
+    if (!settings.savesFolder) return; // team auto-detects from the save
     setLoading(true);
     setError(null);
     try {
@@ -88,14 +90,14 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       const current = saves[0].path;
       setCurrentSavePath(current);
 
-      const snap = await getSnapshot(current, settings.userTeam);
+      const snap = await getSnapshot(current, settings.userTeam ?? undefined);
       setSnapshot(snap);
 
       // Diff against the archived baseline from the previous ingest, if any.
       const baseline = await getLastIngested();
       if (baseline && baseline !== current) {
         try {
-          setDelta(await getDelta(baseline, current, settings.userTeam));
+          setDelta(await getDelta(baseline, current, settings.userTeam ?? undefined));
         } catch {
           setDelta(null);
         }

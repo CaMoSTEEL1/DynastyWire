@@ -55,3 +55,6 @@ ingest/*.out
 
 # tauri-generated
 src-tauri/gen/
+
+# compiled sidecar (rebuildable via pkg — see docs/PACKAGING.md)
+ingest/dist/

@@ -171,7 +171,40 @@ function resolveUserTeam(teams, opts) {
       if (t.name && t.name.toLowerCase().includes(needle)) return Number(row);
     }
   }
-  return detectUserTeam(teams); // fallback guess only
+  return null; // no explicit match; caller falls back to coach detection then heuristic
+}
+
+// Detect the human's coach via the real CFB27 schema: Coach.IsUserControlled === true.
+// Returns { teamIndex, coachName } or null. Reliable (replaces the old heuristics).
+function detectUserCoach(coachTable) {
+  if (!coachTable) return null;
+  for (const r of coachTable.records) {
+    if (r.isEmpty) continue;
+    let flag;
+    try {
+      flag = r['IsUserControlled'];
+    } catch (e) {
+      continue;
+    }
+    if (flag === true || flag === 1) {
+      const first = str(r, 'FirstName');
+      const last = str(r, 'LastName');
+      return {
+        teamIndex: num(r, 'TeamIndex'),
+        coachName: [first, last].filter(Boolean).join(' ') || null,
+        // Real coach fields (CFB27 schema) — powers the coach hub + hot-seat drama.
+        jobSecurity: str(r, 'SeasonStartJobSecurityStatus'),
+        fireReported: safeBool(r, 'COACH_FIREREPORTED'),
+        performanceLevel: num(r, 'COACH_PERFORMANCELEVEL'),
+        age: num(r, 'Age'),
+        awardPoints: num(r, 'AwardPoints'),
+        careerWinSeasons: num(r, 'CareerWinSeasons'),
+        careerPlayoffs: num(r, 'CareerPlayoffsMade'),
+        careerLongWinStreak: num(r, 'CareerLongWinStreak'),
+      };
+    }
+  }
+  return null;
 }
 
 async function buildSnapshot(pathOrFile, opts = {}) {
@@ -179,21 +212,38 @@ async function buildSnapshot(pathOrFile, opts = {}) {
   const seasonInfo = await readRecords(pickTable(f, 'SeasonInfo'));
   const teamTable = await readRecords(pickTable(f, 'Team'));
   const sgTable = await readRecords(pickTable(f, 'SeasonGame'));
+  const coachTable = await readRecords(pickTable(f, 'Coach'));
 
   const teams = buildTeams(teamTable);
   const games = buildGames(sgTable);
-  const userTeamRow = resolveUserTeam(teams, opts);
 
-  // Week: SeasonInfo.Field_6 is the source of truth but its isolated read is flaky;
-  // fall back to the furthest week that has a played game.
-  let week =
-    seasonInfo && seasonInfo.records[0] ? num(seasonInfo.records[0], 'Field_6') : null;
+  // Reliable user identity from the real schema, with explicit opts override kept as a
+  // manual escape hatch.
+  const userCoach = detectUserCoach(coachTable);
+  // Priority: explicit override -> reliable Coach.IsUserControlled -> last-resort heuristic.
+  let userTeamRow = resolveUserTeam(teams, opts);
+  if (userTeamRow == null && userCoach && userCoach.teamIndex != null) {
+    const match = Object.keys(teams)
+      .map(Number)
+      .find((row) => teams[row].teamIndex === userCoach.teamIndex);
+    if (match !== undefined) userTeamRow = match;
+  }
+  if (userTeamRow == null) userTeamRow = detectUserTeam(teams);
+  const coachName = opts.coachName || (userCoach ? userCoach.coachName : null);
+
+  // Week + dynasty year from the real SeasonInfo fields.
+  const si = seasonInfo && seasonInfo.records[0];
+  let week = si ? num(si, 'CurrentWeek') : null;
   if (week == null) {
     week = games.reduce((m, g) => (g.played && g.week != null && g.week > m ? g.week : m), 0);
   }
 
   return {
     week,
+    year: si ? num(si, 'CurrentSeasonYear') : null,
+    dynastyYear: si ? num(si, 'CurrentYear') : null,
+    coachName,
+    coach: userCoach,
     tableCount: f.tables.length,
     userTeamRow,
     userTeam: userTeamRow != null ? teams[userTeamRow] : null,

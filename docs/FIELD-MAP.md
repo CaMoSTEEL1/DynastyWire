@@ -1,4 +1,38 @@
-# CFB27 Empirical Field Map
+# CFB27 Field Map
+
+## ⭐ SUPERSEDED (2026-07-10): the real CFB27 schema exists — use madden-franchise ≥ 4.3.1
+
+The empirical struggle below is history. **madden-franchise 4.3.1 ships the real CFB27
+schema** (`data/schemas/27/C27_468_2.gz`, "College 27"). 4.2.2 (what we first bundled) did
+not — that's why we were approximating with Madden 26 and degrading features. Upgraded, the
+lib reports `gameYear: 27, schema {major:468, minor:2}` and **every table decodes with real
+field names, zero generic**. Verified against the real save.
+
+Credit: the **PocketScout Utilities** CFB27 editor (open source Electron app, uses the same
+madden-franchise lib) — its `resources/app/src/modules/*` gave the field semantics below.
+
+### Resolved with the real schema (no more guessing / "coming soon"):
+- **User's team — DEFINITIVE:** `Coach` where `IsUserControlled === true` → its `TeamIndex`
+  → the `Team` row with that `TeamIndex`. (Real save: coach "Ski Miller", TeamIndex 38 →
+  Kansas State.) Replaces the IsSimmed / program-points heuristics that both mispicked.
+- **Current week/year:** `SeasonInfo.CurrentWeek`, `.CurrentSeasonYear`, `.CurrentYear`
+  (dynasty year). Replaces the fragile `Field_6` guess.
+- **Coach / hot seat:** `Coach.SeasonStartJobSecurityStatus`, `COACH_FIREREPORTED`,
+  `COACH_PERFORMANCELEVEL`, `Age`, `AwardPoints`, `CareerWinSeasons`, `CareerPlayoffsMade`,
+  `CareerLongWinStreak`, contract fields.
+- **Recruiting board:** `Recruit.Player` (ref) → `Player.FirstName/LastName/Position/
+  OverallRating`; `Recruit.CommitScore`, `ProspectStarRating` (stars), `NationalRank`,
+  `PositionRank`, `StateRank`, `Class`, `RecruitStage`.
+- Team (424 fields), polls, pipelines, NIL/program points — all real-named now.
+
+### Ingest overhaul applied
+`ingest/snapshot.js` now: upgrades to 4.3.1, auto-detects user team+coach via the schema,
+uses `CurrentWeek`, and surfaces coach hot-seat/career fields. Recruiting extraction
+(Recruit→Player join) is the mapped-but-not-yet-wired next addition.
+
+---
+
+# (Historical) CFB27 Empirical Field Map
 
 Path (c): we don't have the CFB27 schema, so we label the fields the media engine
 needs by **before/after autosave diffing**. This doc is the running ledger of what's

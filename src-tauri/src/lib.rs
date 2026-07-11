@@ -51,15 +51,43 @@ fn sidecar_cli(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .ok_or_else(|| "could not locate ingest/cli.js (set DW_INGEST_DIR)".into())
 }
 
-/// Run the sidecar with the given args; return stdout (JSON). `api_key` is passed via
-/// env, never on the command line.
-fn run_sidecar(app: &tauri::AppHandle, args: &[String], api_key: Option<&str>) -> Result<String, String> {
-    let cli = sidecar_cli(app)?;
-    let mut cmd = Command::new("node");
-    cmd.arg("--max-old-space-size=2048").arg(&cli).args(args);
-    if let Some(dir) = cli.parent() {
-        cmd.current_dir(dir);
+/// Locate the compiled standalone sidecar (dw-ingest.exe) — no Node required. Preferred
+/// over the node+cli.js path in packaged builds.
+fn sidecar_exe(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let name = if cfg!(windows) { "dw-ingest.exe" } else { "dw-ingest" };
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(res) = app.path().resource_dir() {
+        candidates.push(res.join(name));
+        candidates.push(res.join("ingest").join(name));
     }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join(name));
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("ingest/dist").join(name));
+        candidates.push(cwd.join("../ingest/dist").join(name));
+    }
+    candidates.into_iter().find(|p| p.exists())
+}
+
+/// Run the sidecar with the given args; return stdout (JSON). Prefers the compiled exe
+/// (Node-free); falls back to `node cli.js` in dev. `api_key` is passed via env only.
+fn run_sidecar(app: &tauri::AppHandle, args: &[String], api_key: Option<&str>) -> Result<String, String> {
+    let mut cmd = if let Some(exe) = sidecar_exe(app) {
+        let mut c = Command::new(exe);
+        c.args(args);
+        c
+    } else {
+        let cli = sidecar_cli(app)?;
+        let mut c = Command::new("node");
+        c.arg("--max-old-space-size=3072").arg(&cli).args(args);
+        if let Some(dir) = cli.parent() {
+            c.current_dir(dir);
+        }
+        c
+    };
     if let Some(key) = api_key {
         cmd.env("ANTHROPIC_API_KEY", key);
     }
