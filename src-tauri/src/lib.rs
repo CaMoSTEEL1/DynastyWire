@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use tauri::Manager;
 
 /// Fast native check: is this a readable, complete CFB27 dynasty save? Returns the
 /// save's internal name on success.
@@ -17,8 +18,9 @@ fn validate_save(path: String) -> Result<String, String> {
     Ok(container.internal_name)
 }
 
-/// Locate the Node ingest sidecar (ingest/cli.js). Overridable via DW_INGEST_DIR.
-fn sidecar_cli() -> Result<PathBuf, String> {
+/// Locate the Node ingest sidecar (ingest/cli.js). In a packaged build it lives in the
+/// bundled resource dir; in dev it's found relative to cwd/exe. Overridable via DW_INGEST_DIR.
+fn sidecar_cli(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     if let Ok(dir) = std::env::var("DW_INGEST_DIR") {
         let p = PathBuf::from(dir).join("cli.js");
         if p.exists() {
@@ -26,12 +28,16 @@ fn sidecar_cli() -> Result<PathBuf, String> {
         }
     }
     let mut candidates: Vec<PathBuf> = Vec::new();
+    // Packaged: <resources>/ingest/cli.js
+    if let Ok(res) = app.path().resource_dir() {
+        candidates.push(res.join("ingest/cli.js"));
+        candidates.push(res.join("ingest").join("cli.js"));
+    }
     if let Ok(cwd) = std::env::current_dir() {
         candidates.push(cwd.join("ingest/cli.js"));
         candidates.push(cwd.join("../ingest/cli.js"));
     }
     if let Ok(exe) = std::env::current_exe() {
-        // dev: target/debug/<exe> -> repo root is three levels up
         if let Some(root) = exe.ancestors().nth(3) {
             candidates.push(root.join("ingest/cli.js"));
         }
@@ -47,8 +53,8 @@ fn sidecar_cli() -> Result<PathBuf, String> {
 
 /// Run the sidecar with the given args; return stdout (JSON). `api_key` is passed via
 /// env, never on the command line.
-fn run_sidecar(args: &[String], api_key: Option<&str>) -> Result<String, String> {
-    let cli = sidecar_cli()?;
+fn run_sidecar(app: &tauri::AppHandle, args: &[String], api_key: Option<&str>) -> Result<String, String> {
+    let cli = sidecar_cli(app)?;
     let mut cmd = Command::new("node");
     cmd.arg("--max-old-space-size=2048").arg(&cli).args(args);
     if let Some(dir) = cli.parent() {
@@ -77,17 +83,18 @@ fn run_sidecar(args: &[String], api_key: Option<&str>) -> Result<String, String>
 }
 
 #[tauri::command]
-fn dynasty_snapshot(save_path: String, team: Option<String>) -> Result<String, String> {
+fn dynasty_snapshot(app: tauri::AppHandle, save_path: String, team: Option<String>) -> Result<String, String> {
     let mut args = vec!["snapshot".to_string(), save_path];
     if let Some(t) = team {
         args.push("--team".into());
         args.push(t);
     }
-    run_sidecar(&args, None)
+    run_sidecar(&app, &args, None)
 }
 
 #[tauri::command]
 fn dynasty_delta(
+    app: tauri::AppHandle,
     before_path: String,
     after_path: String,
     team: Option<String>,
@@ -97,11 +104,12 @@ fn dynasty_delta(
         args.push("--team".into());
         args.push(t);
     }
-    run_sidecar(&args, None)
+    run_sidecar(&app, &args, None)
 }
 
 #[tauri::command]
 fn dynasty_media(
+    app: tauri::AppHandle,
     before_path: String,
     after_path: String,
     team: Option<String>,
@@ -117,7 +125,7 @@ fn dynasty_media(
         args.push("--coach".into());
         args.push(c);
     }
-    run_sidecar(&args, Some(&api_key))
+    run_sidecar(&app, &args, Some(&api_key))
 }
 
 /// List dynasty save files in a folder, newest first (name + modified time millis).
@@ -168,6 +176,7 @@ fn archive_save(path: String, archive_dir: String, label: String) -> Result<Stri
 /// Dispatches to the sidecar's ingest/gen/<kind>.js module.
 #[tauri::command]
 fn dynasty_generate(
+    app: tauri::AppHandle,
     kind: String,
     before_path: String,
     after_path: String,
@@ -189,7 +198,7 @@ fn dynasty_generate(
         args.push("--extra".into());
         args.push(e);
     }
-    run_sidecar(&args, Some(&api_key))
+    run_sidecar(&app, &args, Some(&api_key))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
