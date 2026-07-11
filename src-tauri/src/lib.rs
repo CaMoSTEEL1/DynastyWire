@@ -121,6 +121,11 @@ fn dynasty_snapshot(app: tauri::AppHandle, save_path: String, team: Option<Strin
 }
 
 #[tauri::command]
+fn dynasty_recruits(app: tauri::AppHandle, save_path: String) -> Result<String, String> {
+    run_sidecar(&app, &["recruits".to_string(), save_path], None)
+}
+
+#[tauri::command]
 fn dynasty_delta(
     app: tauri::AppHandle,
     before_path: String,
@@ -240,6 +245,7 @@ pub fn run() {
             dynasty_delta,
             dynasty_media,
             dynasty_generate,
+            dynasty_recruits,
             list_saves,
             archive_save
         ])

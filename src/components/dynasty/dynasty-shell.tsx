@@ -48,7 +48,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
     id: "current",
     school: u.name,
     conference: "", // conference not yet mapped from the save
-    coachName: "Head Coach",
+    coachName: snapshot.coachName || "Head Coach",
     prestige: u.prestige != null ? String(u.prestige) : "",
   };
   const seasonInfo = {

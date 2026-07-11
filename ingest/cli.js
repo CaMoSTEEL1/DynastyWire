@@ -4,7 +4,7 @@
 //   node cli.js delta <beforeSave> <after> -> prints WeekDelta JSON
 // Add --pretty for a human-readable summary instead of raw JSON.
 
-const { buildSnapshot } = require('./snapshot');
+const { buildSnapshot, buildRecruits } = require('./snapshot');
 const { buildDelta } = require('./diff');
 const { buildMediaContext, generateRecap, generateCycle } = require('./generate');
 
@@ -20,6 +20,11 @@ async function main() {
     const snap = await buildSnapshot(files[0], opts);
     if (pretty) return printSnapshot(snap);
     return console.log(JSON.stringify(snap));
+  }
+
+  if (cmd === 'recruits') {
+    const recruits = await buildRecruits(files[0]);
+    return console.log(JSON.stringify({ recruits }));
   }
 
   if (cmd === 'delta') {

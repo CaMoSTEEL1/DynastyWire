@@ -201,24 +201,61 @@ export default function CoachPage() {
             <p className="mt-2 font-serif text-xs italic text-ink3">{standing.desc}</p>
           </div>
 
-          {/* ── Coming Soon (not yet mapped from the save) ──────────────────── */}
-          <div>
-            <h3 className="mb-3 font-headline text-xs uppercase tracking-widest text-ink3">
-              Hot Seat &amp; Contract
-            </h3>
-            <div className="rounded border border-dashed border-dw-border bg-paper2/60 px-6 py-8 text-center">
-              <p className="font-headline text-lg text-ink">Reading from your save…</p>
-              <div className="mx-auto mt-3 h-px w-16 bg-dw-accent" />
-              <p className="mt-4 font-serif text-sm leading-relaxed text-ink2">
-                Hot-seat pressure, fan sentiment, and contract details aren&apos;t mapped
-                from the dynasty file yet. For now the hub tracks your record, ranking,
-                and prestige straight from the game.
-              </p>
-              <p className="mt-4 font-sans text-xs uppercase tracking-wider text-ink3">
-                Coming soon
-              </p>
+          {/* ── Hot Seat & Career (real coach data from the save) ──────────── */}
+          {snapshot?.coach && (
+            <div>
+              <h3 className="mb-3 font-headline text-xs uppercase tracking-widest text-ink3">
+                Hot Seat &amp; Career
+              </h3>
+              <div className="rounded border border-dw-border bg-paper2 px-5 py-1">
+                {snapshot.coach.jobSecurity && (
+                  <PulseRow label="Job Security">
+                    <span
+                      className={cn(
+                        "font-sans text-sm font-semibold uppercase tracking-wider",
+                        /hot|fire|danger/i.test(snapshot.coach.jobSecurity)
+                          ? "text-dw-red"
+                          : /warm|lukewarm/i.test(snapshot.coach.jobSecurity)
+                            ? "text-dw-yellow"
+                            : "text-dw-green"
+                      )}
+                    >
+                      {snapshot.coach.jobSecurity}
+                      {snapshot.coach.fireReported ? " · FIRE REPORTED" : ""}
+                    </span>
+                  </PulseRow>
+                )}
+                {snapshot.coach.careerWinSeasons != null && (
+                  <PulseRow label="Winning Seasons">
+                    <span className="font-sans text-sm font-semibold uppercase tracking-wider text-ink2">
+                      {snapshot.coach.careerWinSeasons}
+                    </span>
+                  </PulseRow>
+                )}
+                {snapshot.coach.careerPlayoffs != null && (
+                  <PulseRow label="Playoffs Made">
+                    <span className="font-sans text-sm font-semibold uppercase tracking-wider text-ink2">
+                      {snapshot.coach.careerPlayoffs}
+                    </span>
+                  </PulseRow>
+                )}
+                {snapshot.coach.careerLongWinStreak != null && (
+                  <PulseRow label="Longest Win Streak">
+                    <span className="font-sans text-sm font-semibold uppercase tracking-wider text-ink2">
+                      {snapshot.coach.careerLongWinStreak}
+                    </span>
+                  </PulseRow>
+                )}
+                {snapshot.coach.age != null && (
+                  <PulseRow label="Age">
+                    <span className="font-sans text-sm font-semibold uppercase tracking-wider text-ink2">
+                      {snapshot.coach.age}
+                    </span>
+                  </PulseRow>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </>
       ) : (
         <div className="rounded border border-dw-border bg-paper2 px-6 py-12 text-center">

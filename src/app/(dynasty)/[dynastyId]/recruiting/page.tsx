@@ -4,6 +4,7 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { SectionHeader } from "@/components/ui/section-header";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
+import { getRecruits, type Recruit } from "@/lib/dynasty/client";
 import { TREND_CONFIG } from "@/lib/recruiting/types";
 
 interface RecruitingBeat {
@@ -44,7 +45,24 @@ export default function RecruitingPage() {
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
 
+  const [recruits, setRecruits] = useState<Recruit[] | null>(null);
+  const [loadingBoard, setLoadingBoard] = useState(false);
+  const [boardError, setBoardError] = useState<string | null>(null);
+
   const canGenerate = Boolean(currentSavePath && settings.anthropicKey);
+
+  async function loadBoard() {
+    if (!currentSavePath || loadingBoard) return;
+    setLoadingBoard(true);
+    setBoardError(null);
+    try {
+      setRecruits(await getRecruits(currentSavePath));
+    } catch (err) {
+      setBoardError(err instanceof Error ? err.message : "Couldn't read the recruiting board.");
+    } finally {
+      setLoadingBoard(false);
+    }
+  }
 
   async function handleGenerate() {
     if (generating) return;
@@ -103,19 +121,81 @@ export default function RecruitingPage() {
       />
 
       <div className="mt-6 space-y-6">
-        {/* Board placeholder — the individual recruit board is not yet
-            extracted from the save. Clearly labeled, no fabricated data. */}
-        <div className="rounded border border-dashed border-dw-border bg-paper2 px-6 py-10 text-center">
-          <p className="font-headline text-sm uppercase tracking-widest text-dw-accent">
-            Recruiting Board Coming Soon
-          </p>
-          <p className="mx-auto mt-3 max-w-md font-serif text-sm leading-relaxed text-ink2">
-            Individual recruits, star ratings, and commitments will appear here
-            once the recruiting board is read directly from your dynasty save.
-            {snapshot?.userTeam
-              ? ` Tracking ${snapshot.userTeam.name} at Week ${snapshot.week ?? "—"}.`
-              : " Reading from your save."}
-          </p>
+        {/* National recruiting board — read directly from the save (top prospects). */}
+        <div className="rounded border border-dw-border bg-paper">
+          <div className="flex items-center justify-between gap-4 border-b border-dw-border bg-paper2 px-4 py-3">
+            <h3 className="font-headline text-sm uppercase tracking-wider text-ink2">
+              National Board — Top Prospects
+            </h3>
+            {recruits && (
+              <button
+                type="button"
+                onClick={loadBoard}
+                disabled={loadingBoard}
+                className="font-sans text-xs text-ink3 hover:text-dw-accent disabled:opacity-50"
+              >
+                {loadingBoard ? "Reading…" : "Refresh"}
+              </button>
+            )}
+          </div>
+          <div className="px-4 py-4">
+            {!recruits ? (
+              <div className="py-6 text-center">
+                <p className="font-serif text-sm text-ink2">
+                  Pull the top national prospects straight from your dynasty file — names,
+                  stars, ranks, and commit scores.
+                </p>
+                {boardError && <p className="mt-3 font-sans text-sm text-dw-red">{boardError}</p>}
+                <button
+                  type="button"
+                  onClick={loadBoard}
+                  disabled={loadingBoard || !currentSavePath}
+                  className={cn(
+                    "mt-5 inline-flex items-center gap-2 rounded border border-dw-accent bg-dw-accent/10 px-5 py-2.5",
+                    "font-headline text-sm uppercase tracking-wider text-dw-accent transition-colors hover:bg-dw-accent/20",
+                    "disabled:cursor-not-allowed disabled:opacity-50"
+                  )}
+                >
+                  {loadingBoard ? "Reading the board…" : "Load Recruiting Board"}
+                </button>
+              </div>
+            ) : recruits.length === 0 ? (
+              <p className="py-6 text-center font-serif text-sm text-ink2">No recruits found in this save.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-dw-border font-sans text-[10px] uppercase tracking-widest text-ink3">
+                      <th className="py-2 pr-2">Nat</th>
+                      <th className="py-2 pr-2">Recruit</th>
+                      <th className="py-2 pr-2">Pos</th>
+                      <th className="py-2 pr-2">Stars</th>
+                      <th className="py-2 pr-2">OVR</th>
+                      <th className="py-2 pr-2">Commit</th>
+                      <th className="py-2">Stage</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recruits.map((r, i) => (
+                      <tr key={i} className="border-b border-dw-border/50 last:border-0">
+                        <td className="py-2 pr-2 font-sans text-ink3">{r.nationalRank ?? "—"}</td>
+                        <td className="py-2 pr-2 font-headline text-ink">{r.name}</td>
+                        <td className="py-2 pr-2 text-ink2">{r.position ?? "—"}</td>
+                        <td className="py-2 pr-2 text-dw-accent2">{r.stars != null ? "★".repeat(Math.max(0, Math.min(5, r.stars))) : "—"}</td>
+                        <td className="py-2 pr-2 text-ink2">{r.overall ?? "—"}</td>
+                        <td className="py-2 pr-2 text-ink2">{r.commitScore ?? "—"}</td>
+                        <td className="py-2 text-ink3">{r.stage ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="mt-3 font-sans text-xs text-ink3">
+                  Top {recruits.length} nationally · read from your save
+                  {snapshot?.userTeam ? ` · ${snapshot.userTeam.name}` : ""}
+                </p>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Recruiting-trail storyline column (generated on demand) */}

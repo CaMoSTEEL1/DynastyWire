@@ -39,8 +39,38 @@ export interface GameResult {
   simmed: boolean | null;
 }
 
+export interface CoachInfo {
+  teamIndex: number | null;
+  coachName: string | null;
+  jobSecurity: string | null;
+  fireReported: boolean | null;
+  performanceLevel: number | null;
+  age: number | null;
+  awardPoints: number | null;
+  careerWinSeasons: number | null;
+  careerPlayoffs: number | null;
+  careerLongWinStreak: number | null;
+}
+
+export interface Recruit {
+  name: string;
+  position: string | null;
+  overall: number | null;
+  stars: number | null;
+  commitScore: number | null;
+  nationalRank: number | null;
+  positionRank: number | null;
+  stateRank: number | null;
+  class: string | null;
+  stage: string | null;
+}
+
 export interface DynastySnapshot {
   week: number | null;
+  year: number | null;
+  dynastyYear: number | null;
+  coachName: string | null;
+  coach: CoachInfo | null;
   tableCount: number;
   userTeamRow: number | null;
   userTeam: TeamInfo | null;
@@ -73,6 +103,11 @@ export function validateSave(path: string): Promise<string> {
 
 export async function getSnapshot(savePath: string, team?: string): Promise<DynastySnapshot> {
   return JSON.parse(await invoke<string>("dynasty_snapshot", { savePath, team: team ?? null }));
+}
+
+export async function getRecruits(savePath: string): Promise<Recruit[]> {
+  const { recruits } = JSON.parse(await invoke<string>("dynasty_recruits", { savePath }));
+  return recruits ?? [];
 }
 
 export async function getDelta(beforePath: string, afterPath: string, team?: string): Promise<WeekDelta> {

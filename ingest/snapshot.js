@@ -252,4 +252,52 @@ async function buildSnapshot(pathOrFile, opts = {}) {
   };
 }
 
-module.exports = { openSave, pickTable, readRecords, buildSnapshot };
+// Recruiting board: join Recruit -> Player (mapping from PocketScout). Capped to the top
+// `cap` national recruits so we don't resolve all ~7,600 Player refs on every call.
+async function buildRecruits(pathOrFile, cap = 120) {
+  const f = typeof pathOrFile === 'string' ? await openSave(pathOrFile) : pathOrFile;
+  const recruitT = await readRecords(pickTable(f, 'Recruit'));
+  const playerT = await readRecords(pickTable(f, 'Player'));
+  if (!recruitT || !playerT) return [];
+
+  const ranked = [];
+  for (const r of recruitT.records) {
+    if (r.isEmpty) continue;
+    const natRank = num(r, 'NationalRank');
+    ranked.push({ r, natRank: natRank == null || natRank <= 0 ? 999999 : natRank });
+  }
+  ranked.sort((a, b) => a.natRank - b.natRank);
+
+  const out = [];
+  for (const { r } of ranked.slice(0, cap)) {
+    const playerRow = refRow(r, 'Player');
+    let name = null;
+    let position = null;
+    let overall = null;
+    let stars = num(r, 'ProspectStarRating'); // sometimes on Recruit
+    if (playerRow != null && playerT.records[playerRow]) {
+      const p = playerT.records[playerRow];
+      name = [str(p, 'FirstName'), str(p, 'LastName')].filter(Boolean).join(' ') || null;
+      position = str(p, 'Position');
+      overall = num(p, 'OverallRating');
+      if (overall == null) overall = num(p, 'PlayerOverallRating');
+      if (stars == null) stars = num(p, 'ProspectStarRating'); // usually on the Player
+    }
+    if (!name) continue; // skip placeholder rows
+    out.push({
+      name,
+      position,
+      overall,
+      stars,
+      commitScore: num(r, 'CommitScore'),
+      nationalRank: num(r, 'NationalRank'),
+      positionRank: num(r, 'PositionRank'),
+      stateRank: num(r, 'StateRank'),
+      class: str(r, 'Class'),
+      stage: str(r, 'RecruitStage'),
+    });
+  }
+  return out;
+}
+
+module.exports = { openSave, pickTable, readRecords, buildSnapshot, buildRecruits };
