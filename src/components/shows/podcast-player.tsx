@@ -34,7 +34,10 @@ export function PodcastPlayer({
   label?: string;
 }) {
   const { settings } = useDynasty();
-  const enabled = settings.podcastAudio === true && !!settings.elevenLabsKey;
+  // A key is all that's needed to PLAY on demand; the podcastAudio toggle only controls
+  // whether a show auto-plays on open. That split is what keeps a Listen button visible
+  // even for users who haven't flipped the auto-play toggle.
+  const hasKey = !!settings.elevenLabsKey;
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [idx, setIdx] = useState(-1); // -1 = not started
   const [playing, setPlaying] = useState(false);
@@ -47,7 +50,7 @@ export function PodcastPlayer({
   const lines = rawLines.filter((l) => l.text.trim()).slice(0, 32);
 
   const fetchClip = useCallback((i: number): Promise<string> | null => {
-    if (!enabled || i < 0 || i >= lines.length) return null;
+    if (!hasKey || i < 0 || i >= lines.length) return null;
     let p = clips.current.get(i);
     if (!p) {
       const l = lines[i];
@@ -62,10 +65,10 @@ export function PodcastPlayer({
       clips.current.set(i, p);
     }
     return p;
-  }, [enabled, lines, settings.elevenLabsKey, weekSeed]);
+  }, [hasKey, lines, settings.elevenLabsKey, weekSeed]);
 
   const playFrom = useCallback(async (i: number) => {
-    if (!enabled || stopped.current || i >= lines.length) { setPlaying(false); setIdx(-1); return; }
+    if (!hasKey || stopped.current || i >= lines.length) { setPlaying(false); setIdx(-1); return; }
     setIdx(i); setLoading(true); setErr(null);
     try {
       const url = await fetchClip(i)!;
@@ -82,13 +85,14 @@ export function PodcastPlayer({
       setLoading(false); setPlaying(false);
       setErr(e instanceof Error ? e.message : "Audio failed — check your ElevenLabs key/credits.");
     }
-  }, [enabled, lines.length, fetchClip]);
+  }, [hasKey, lines.length, fetchClip]);
 
-  // Optional auto-start; release all clips when the content changes or on unmount.
+  // Optional auto-start; release all clips when the content changes or on unmount. Auto-play
+  // is opt-in (the podcastAudio toggle) — manual play works from just a key.
   useEffect(() => {
     stopped.current = false;
     const held = clips.current;
-    if (autoStart && enabled && lines.length > 0) void playFrom(0);
+    if (autoStart && settings.podcastAudio === true && hasKey && lines.length > 0) void playFrom(0);
     return () => {
       stopped.current = true;
       const a = audioRef.current;
@@ -99,10 +103,13 @@ export function PodcastPlayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey]);
 
-  if (!enabled || lines.length === 0) return null;
+  // Nothing to read → no player. But whenever there IS dialogue, the Listen bar always
+  // renders (even with no key), so there's a visible way to hear the commentary.
+  if (lines.length === 0) return null;
 
   const stop = () => { stopped.current = true; const a = audioRef.current; if (a) a.pause(); setPlaying(false); setIdx(-1); };
   const toggle = () => {
+    if (!hasKey) return;
     const a = audioRef.current;
     if (!a) return;
     if (playing) { a.pause(); setPlaying(false); }
@@ -112,18 +119,32 @@ export function PodcastPlayer({
 
   return (
     <div className="mt-4 flex items-center gap-3 rounded border border-dw-accent2/30 bg-dw-accent2/5 px-4 py-2.5">
-      <button type="button" onClick={toggle} className="flex h-8 w-8 items-center justify-center rounded-full bg-dw-accent2 text-paper">
+      <button
+        type="button"
+        onClick={toggle}
+        disabled={!hasKey}
+        title={hasKey ? undefined : "Add your ElevenLabs key in Settings to hear this as a podcast"}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-dw-accent2 text-paper disabled:opacity-40"
+      >
         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
       </button>
       {idx >= 0 && (
-        <button type="button" onClick={stop} className="flex h-7 w-7 items-center justify-center rounded-full border border-dw-border text-ink3 hover:text-ink">
+        <button type="button" onClick={stop} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-dw-border text-ink3 hover:text-ink">
           <Square className="h-3 w-3" />
         </button>
       )}
       <div className="min-w-0 flex-1">
         <p className="font-sans text-[10px] uppercase tracking-widest text-dw-accent2">{label}</p>
         <p className="truncate font-serif text-xs text-ink2">
-          {err ? <span className="text-dw-red">{err}</span> : idx >= 0 ? `${lines[idx]?.speaker ?? ""} — ${idx + 1}/${lines.length}` : "Tap play to hear this read aloud."}
+          {!hasKey ? (
+            <span className="text-ink3">Add your ElevenLabs key in Settings to hear this read aloud.</span>
+          ) : err ? (
+            <span className="text-dw-red">{err}</span>
+          ) : idx >= 0 ? (
+            `${lines[idx]?.speaker ?? ""} — ${idx + 1}/${lines.length}`
+          ) : (
+            "Tap play to hear this read aloud."
+          )}
         </p>
       </div>
       <audio ref={audioRef} className="hidden" />

@@ -31,11 +31,25 @@
 - **The whole media universe knows.** Every article, presser, social feed, and show is told who's suspended, why, and for how long — writers cover the absence (who steps up, when he's back) with the player's real rating, never a fake "he collapsed to 40 overall" storyline from the temporary bench rating.
 - Save writes stay safe: backed up first, verified after, and if the game is running the write just waits until you close it and reopen the Wire.
 
+## 💵 Smarter NIL valuations
+
+- Player "worth" is now DynastyWire's own market estimate, not the save's under-cooked number. It weighs rating, **position** (quarterbacks command their own tier), real production, class, and how good and how visible your program is — so a national-champion starting QB reads like a star instead of a $185K afterthought.
+- Big valuations roll up cleanly to "$4.2M" instead of "$4,200K."
+
+## 🎧 A Listen button on every show
+
+- Shows and the National Desk radio segment now always show a **Listen** control — if you haven't added an ElevenLabs key yet, it tells you how instead of just being invisible.
+- Add the key and hit play to hear any broadcast as a podcast; the auto-play toggle in Settings still controls whether shows start on their own.
+
+## 📖 Help tour expanded
+
+- The Help tour (the "?" up top) now walks through every part of the app — National Desk, Coach, Situation Room, NIL, The Book, Shows, Offseason, cost control — and ends with a "What's New in v0.1.7" recap.
+
 ## 🧑‍🏫 Coach & program polish
 
 - The first letter of your coach's backstory is no longer missing — the drop cap was eating it.
 - "Reset Backstory" now confirms in place instead of using a popup that could silently do nothing.
-- NIL page: every player's GPA now shows on the roster with Dean's List / At Risk called out, not just a bare number that sometimes didn't appear.
+- NIL page: every player's GPA now shows on the roster with Dean's List / At Risk called out; hovering a GPA just names the grade (Eligible, At Risk…) instead of a wall of text.
 
 ---
 *BYO keys as always — Anthropic for the writing, ElevenLabs (optional) for the audio.*

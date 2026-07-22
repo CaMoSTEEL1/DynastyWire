@@ -10,8 +10,14 @@ import {
   Mic,
   Users,
   Tv,
-  Award,
   Settings,
+  Globe,
+  UserCircle,
+  Flame,
+  DollarSign,
+  Coins,
+  Snowflake,
+  Zap,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -33,51 +39,87 @@ const steps: TutorialStep[] = [
   },
   {
     icon: FileText,
-    title: "Submit Weekly Results",
+    title: "It Reads Your Save Automatically",
     description:
-      "After each game, submit your results by uploading a screenshot or entering them manually. This kicks off the AI content engine, generating a full week of media coverage based on what happened on the field.",
+      "Point DynastyWire at your CFB dynasty save once. From then on it watches the file \u2014 every time you advance a week in-game, it re-reads the save and writes that week\u2019s issue in the background. No screenshots, no manual entry. Bring your own Anthropic API key (and optionally an ElevenLabs key for audio); everything stays local on your machine.",
   },
   {
     icon: Newspaper,
     title: "Front Page",
     description:
-      "Your personalized front page fills with AI-generated articles, recaps, and feature stories after every week. Headlines shift based on your wins, losses, upsets, and rivalries \u2014 just like a real sports news site.",
+      "Your personalized front page fills with AI-generated articles, recaps, and feature stories after every week. Headlines shift based on your wins, losses, upsets, and rivalries \u2014 all grounded in your real roster and results, never invented.",
+  },
+  {
+    icon: Globe,
+    title: "National Desk",
+    description:
+      "The whole country\u2019s week from the national media\u2019s chair \u2014 a game-of-the-week story, takes on the ranked slate, the poll pulse, the full around-the-league wire, and a national radio segment you can listen to.",
+  },
+  {
+    icon: UserCircle,
+    title: "Coach & Backstory",
+    description:
+      "Write your coach\u2019s origin story and archetype, and DynastyWire builds a recurring cast around you \u2014 your AD, lead booster, beat writer, and rival coach. Text them directly, and pull a scouting report on your next opponent straight from their real roster.",
+  },
+  {
+    icon: Flame,
+    title: "Situation Room",
+    description:
+      "Off-field storylines land on your desk \u2014 legal trouble, portal threats, locker-room drama, academics. Your decisions move four pressure meters (boosters, fans, media, locker room) that follow you everywhere. Rarely, a serious incident or a failing grade can suspend a player \u2014 and DynastyWire enforces it in your actual save, benching him until he\u2019s served it.",
   },
   {
     icon: MessageCircle,
     title: "Social Feed",
     description:
-      "Check the social feed for fan reactions, analyst hot takes, and recruit buzz. The tone shifts with your performance \u2014 win big and you\u2019re a genius, lose and the fanbase lets you hear about it.",
+      "Fan reactions, analyst hot takes, and recruit buzz \u2014 with a rotating cast so it never feels like the same five accounts every week. The tone shifts with your performance: win big and you\u2019re a genius, lose and the fanbase lets you hear about it.",
   },
   {
     icon: Mic,
     title: "Press Conference",
     description:
-      "Step to the podium and answer questions from the media. Your responses shape headlines and influence how fans, analysts, and recruits perceive your program. Choose your words carefully.",
+      "Step to the podium and answer questions from the media \u2014 pick a scripted posture or type your own words and let the room judge them. Your answers shape headlines and how fans, analysts, and recruits see your program.",
   },
   {
     icon: Users,
     title: "Recruiting",
     description:
-      "Follow dynamic recruiting narratives throughout the season. Watch as prospects react to your wins and losses, and see how your program\u2019s trajectory influences their decisions.",
+      "Search the class, open a full AI dossier on any prospect (backstory, film grade, media buzz, socials), then text him directly. Prospects react to your season as it unfolds.",
+  },
+  {
+    icon: DollarSign,
+    title: "NIL & The Collective",
+    description:
+      "Take brand-deal meetings from your AD and boosters \u2014 not all money is clean money \u2014 and distribute NIL to your roster, written straight back into your save. Every player carries an estimated market value based on rating, position, production, and how good your program is.",
+  },
+  {
+    icon: Coins,
+    title: "The Book",
+    description:
+      "A play-money sportsbook over your dynasty. Take the spread or the moneyline on your games and the ranked slate, watch your win probability and line, and let bets settle automatically when the games play. Fake money, real bragging rights \u2014 no save changes.",
   },
   {
     icon: Tv,
-    title: "Rankings & Shows",
+    title: "Shows & Podcast Audio",
     description:
-      "Tune into studio analyst debates, ranking reveals, and weekly power rankings. AI-generated show segments break down your season with the drama and spectacle of real college football media.",
+      "Studio segments \u2014 GameDay, rankings reveals, portal insider, hot-seat debates \u2014 written from your real week. Add an ElevenLabs key and hit Listen to hear any show read aloud as a gapless podcast, a different voice per host.",
   },
   {
-    icon: Award,
-    title: "Trophy Room",
+    icon: Snowflake,
+    title: "Offseason & Trophy Room",
     description:
-      "Track your legacy across seasons in the trophy room. Conference titles, bowl wins, All-Americans, and milestone victories are all preserved as your dynasty\u2019s permanent record.",
+      "When your season ends, the offseason takes over \u2014 the portal, signing day, the coaching carousel, and awards. The Trophy Room preserves your legacy across seasons: titles, bowl wins, All-Americans, and milestone victories.",
   },
   {
     icon: Settings,
-    title: "Settings",
+    title: "Settings & Cost Control",
     description:
-      "Customize your AI content generation preferences, start new seasons, and manage your dynasty. Fine-tune the experience to match exactly how you want your media universe to run.",
+      "Budget mode is on by default \u2014 it uses a leaner model and only auto-writes your core sections, and you can check exactly which sections generate automatically so you only pay for what you read. Reopening any past week is always instant and free. Manage dynasties, keys, and immersion options here too.",
+  },
+  {
+    icon: Zap,
+    title: "What\u2019s New in v0.1.7",
+    description:
+      "\u2022 Costs slashed: budget mode on by default + cached week context, so a season now costs what a single week used to.\n\u2022 Choose exactly which sections auto-write each week.\n\u2022 The Book adds spread betting, win probability, and a season record.\n\u2022 Podcast audio is now gapless and stitched for a real broadcast feel \u2014 with a Listen button on shows and the national radio segment.\n\u2022 Player suspensions: rare serious incidents and failed grades bench a player in your actual save, and the whole media universe knows he\u2019s out.\n\u2022 Smarter NIL valuations, GPA on the depth chart, and a pile of polish.",
   },
 ];
 
@@ -187,8 +229,15 @@ export default function TutorialWizard() {
                     {step.title}
                   </h2>
 
-                  {/* Description */}
-                  <p className="font-serif text-ink2 text-sm leading-relaxed max-w-md">
+                  {/* Description — whitespace-pre-line so the What's New bullet list keeps
+                      its line breaks; a multi-line step reads better left-aligned, while
+                      single-paragraph steps stay centered like before. */}
+                  <p
+                    className={cn(
+                      "font-serif text-ink2 text-sm leading-relaxed max-w-md whitespace-pre-line",
+                      step.description.includes("\n") && "text-left"
+                    )}
+                  >
                     {step.description}
                   </p>
                 </motion.div>

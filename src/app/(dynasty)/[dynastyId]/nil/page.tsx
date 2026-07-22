@@ -12,12 +12,16 @@ import { applyImpact, type ImpactResult, type RosterPlayer } from "@/lib/dynasty
 // Points → money: 1 program point = $1,000 of NIL compensation. Transparent + fixed so the
 // budgeting math is easy to reason about ("I have 6,900 points = $6.9M to distribute").
 const POINTS_PER_K = 1;
-const fmtMoney = (k: number | null | undefined) => (k == null ? "—" : `$${k.toLocaleString()}K`);
+// Format a $K figure — rolls up to $X.XM once it crosses a million so big valuations stay
+// readable (a national-champ QB reads "$4.2M", not "$4,200K").
+const fmtMoney = (k: number | null | undefined) =>
+  k == null ? "—" : k >= 1000 ? `$${(k / 1000).toFixed(k % 1000 === 0 ? 0 : 1)}M` : `$${k.toLocaleString()}K`;
 
 // Flavor GPA lives in the shared academics lib — the Situation Room uses the same numbers,
 // and an At-Risk player can (rarely) be ruled academically ineligible there.
 import { fakeGpa, GPA_COLOR } from "@/lib/dynasty/academics";
 import { loadSuspensions, isActive, type Suspension } from "@/lib/dynasty/suspensions";
+import { playerMarketValue } from "@/lib/dynasty/valuation";
 
 // Depth-chart order: group by position, sort by OVR (top = starter).
 function byDepthChart(roster: RosterPlayer[]): { pos: string; players: RosterPlayer[] }[] {
@@ -319,12 +323,17 @@ function NILManager() {
                       {(() => { const g = fakeGpa(p); return (
                         <span
                           className={cn("w-28 shrink-0 text-right font-sans text-[10px]", GPA_COLOR[g.status])}
-                          title={`${g.status} — a stable flavor GPA (the game doesn't track academics)`}
+                          title={g.status}
                         >
                           {g.gpa.toFixed(2)} GPA{g.status !== "Eligible" ? ` · ${g.status}` : ""}
                         </span>
                       ); })()}
-                      <span className="hidden w-24 text-right font-sans text-[10px] text-ink3 sm:block">worth {fmtMoney(p.nilBaseValue)}</span>
+                      <span
+                        className="hidden w-24 text-right font-sans text-[10px] text-ink3 sm:block"
+                        title="DynastyWire's estimated NIL market value (rating, position, production, and how good the program is)"
+                      >
+                        worth {fmtMoney(playerMarketValue(p, team))}
+                      </span>
                       <div className="flex items-center gap-1">
                         <span className="font-sans text-[10px] text-ink3">$</span>
                         <input
