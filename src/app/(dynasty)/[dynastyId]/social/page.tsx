@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
+import { useIssueTab } from "@/components/dynasty/use-issue-tab";
+import { useSaga } from "@/components/dynasty/use-saga";
 import { SectionHeader } from "@/components/ui/section-header";
 import { SocialFeed } from "@/components/social/social-feed";
 import { TrendingPanel } from "@/components/social/trending-panel";
@@ -42,7 +44,8 @@ function hydrate(raw: SocialGenPost, index: number): SocialPost {
 }
 
 export default function SocialPage() {
-  const { needsOnboarding, generate } = useDynasty();
+  const { needsOnboarding, generate, year, week } = useDynasty();
+  const saga = useSaga();
 
   const [posts, setPosts] = useState<SocialPost[]>([]);
   const [generating, setGenerating] = useState(false);
@@ -50,11 +53,44 @@ export default function SocialPage() {
   const [error, setError] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(0);
 
+  // Off-field events the coach decided this week (from the Situation Room). Feeding these to
+  // the feed lets fans, rivals, and insiders react to the arrest, the portal drama, the
+  // benching — not just the box score. Included in the cache key so the feed refreshes once a
+  // situation is resolved.
+  const situations = useMemo(() => {
+    const resolved = saga.state?.resolved ?? {};
+    return Object.values(resolved)
+      .filter((r) => r.week === week && r.year === year)
+      .map((r) => ({
+        headline: r.headline,
+        category: r.category,
+        player: r.playerName,
+        decision: r.option.label,
+        outcome: r.fallout.outcome,
+      }));
+  }, [saga.state, week, year]);
+
+  // Restore this week's feed from the persisted issue cache (survives navigation + app
+  // restarts) instead of demanding a fresh click every visit.
+  const cachedFeed = useIssueTab<SocialGenResult>(
+    "social",
+    situations.length ? { situations } : undefined
+  );
+  useEffect(() => {
+    if (posts.length === 0 && !hasGenerated && cachedFeed?.posts?.length) {
+      setPosts(cachedFeed.posts.map((p, i) => hydrate(p, i)));
+      setHasGenerated(true);
+    }
+  }, [cachedFeed, posts.length, hasGenerated]);
+
   const handleGenerate = useCallback(async () => {
     setGenerating(true);
     setError(null);
     try {
-      const data = await generate<SocialGenResult>("social", {});
+      const data = await generate<SocialGenResult>(
+        "social",
+        situations.length ? { situations } : {}
+      );
       if (data?.error || !Array.isArray(data?.posts) || data.posts.length === 0) {
         setError("The feed didn't come through. Give it another shot.");
         setPosts([]);
@@ -72,7 +108,7 @@ export default function SocialPage() {
       setGenerating(false);
       setHasGenerated(true);
     }
-  }, [generate]);
+  }, [generate, situations]);
 
   const generateButton = (
     <button

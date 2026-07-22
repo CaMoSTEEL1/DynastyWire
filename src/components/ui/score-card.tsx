@@ -23,6 +23,10 @@ export function ScoreCard({
   result,
   className,
 }: ScoreCardProps) {
+  // Only 1–25 is a real AP/Coaches poll rank; 0, null, or a hidden 26+ read as unranked.
+  const ranked = (r?: number): number | null => (r != null && r >= 1 && r <= 25 ? r : null);
+  const awayR = ranked(awayRank);
+  const homeR = ranked(homeRank);
   return (
     <div
       className={cn(
@@ -50,8 +54,8 @@ export function ScoreCard({
         {/* Away team */}
         <div className="flex-1 text-center">
           <p className="font-headline text-sm text-ink leading-tight">
-            {awayRank != null && (
-              <span className="text-dw-accent mr-1">#{awayRank}</span>
+            {awayR != null && (
+              <span className="text-dw-accent mr-1">#{awayR}</span>
             )}
             {awayTeam}
           </p>
@@ -65,8 +69,8 @@ export function ScoreCard({
         {/* Home team */}
         <div className="flex-1 text-center">
           <p className="font-headline text-sm text-ink leading-tight">
-            {homeRank != null && (
-              <span className="text-dw-accent mr-1">#{homeRank}</span>
+            {homeR != null && (
+              <span className="text-dw-accent mr-1">#{homeR}</span>
             )}
             {homeTeam}
           </p>

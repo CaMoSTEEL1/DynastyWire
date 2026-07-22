@@ -6,7 +6,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "export",
   images: { unoptimized: true },
-  skipTrailingSlashRedirect: true,
+  // Emit every route as <route>/index.html so the Tauri asset protocol (which has no
+  // clean-URL rewrite) can resolve client navigations like /current/coach reliably.
+  trailingSlash: true,
 };
 
 export default nextConfig;

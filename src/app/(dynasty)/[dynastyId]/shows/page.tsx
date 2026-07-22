@@ -3,29 +3,78 @@
 // Broadcast shows: pick a segment, generate the transcript from the real week
 // (ingest/gen/shows.js), render it with the existing TranscriptViewer.
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
+import { useIssueTab } from "@/components/dynasty/use-issue-tab";
 import { SectionHeader } from "@/components/ui/section-header";
 import { TranscriptViewer } from "@/components/shows/transcript-viewer";
 import { SHOW_CONFIGS, type ShowTranscript, type ShowType } from "@/lib/shows/types";
+import { getPortal } from "@/lib/dynasty/client";
 import { cn } from "@/lib/utils";
 
+const LAST_SHOW_KEY = "dw.shows.last";
+
 export default function ShowsPage() {
-  const { needsOnboarding, generate } = useDynasty();
+  const { needsOnboarding, generate, currentSavePath } = useDynasty();
   const [transcript, setTranscript] = useState<ShowTranscript | null>(null);
   const [loadingType, setLoadingType] = useState<ShowType | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Restore the last-watched show from the persisted issue cache (localStorage remembers
+  // which segment was on the air; the transcript itself lives in the issue store).
+  // `dismissed` breaks the restore loop: without it, the back button cleared the transcript
+  // and this effect immediately re-hydrated it — users were stuck on the show forever,
+  // across restarts. Back now dismisses AND clears the last-show pointer.
+  const [dismissed, setDismissed] = useState(false);
+  const [lastType] = useState<ShowType | null>(() =>
+    typeof window !== "undefined" ? (localStorage.getItem(LAST_SHOW_KEY) as ShowType | null) : null
+  );
+  const cachedTranscript = useIssueTab<ShowTranscript>(
+    "shows",
+    lastType ? { showType: lastType } : undefined
+  );
+  useEffect(() => {
+    // Shape-guard: transcripts cached by older builds may lack personas — never hydrate those.
+    if (
+      !dismissed &&
+      !transcript &&
+      lastType &&
+      cachedTranscript &&
+      !cachedTranscript.error &&
+      Array.isArray(cachedTranscript.personas) &&
+      Array.isArray(cachedTranscript.dialogue)
+    ) {
+      setTranscript(cachedTranscript);
+    }
+  }, [cachedTranscript, transcript, lastType, dismissed]);
+
+  const goBack = useCallback(() => {
+    setDismissed(true);
+    setTranscript(null);
+    try { localStorage.removeItem(LAST_SHOW_KEY); } catch { /* private mode */ }
+  }, []);
 
   const run = useCallback(
     async (showType: ShowType) => {
       setLoadingType(showType);
       setError(null);
       try {
-        const data = await generate<ShowTranscript>("shows", { showType });
+        // The Portal Insider is a league-wide, data-real show: pull the actual portal board
+        // (depth-chart flight risk across every program) and hand it to the generator.
+        const extra: Record<string, unknown> = { showType };
+        if (showType === "portal" && currentSavePath) {
+          try {
+            extra.portalData = await getPortal(currentSavePath);
+          } catch {
+            /* board unavailable — the show falls back to general portal talk */
+          }
+        }
+        const data = await generate<ShowTranscript>("shows", extra);
         if (!data || data.error || !Array.isArray(data.dialogue) || data.dialogue.length === 0) {
           setError("The broadcast didn't come together. Try again.");
         } else {
           setTranscript(data);
+          try { localStorage.setItem(LAST_SHOW_KEY, showType); } catch { /* private mode */ }
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Couldn't reach the generator. Check your save + API key.");
@@ -33,7 +82,7 @@ export default function ShowsPage() {
         setLoadingType(null);
       }
     },
-    [generate]
+    [generate, currentSavePath]
   );
 
   return (
@@ -46,7 +95,7 @@ export default function ShowsPage() {
         </div>
       ) : transcript ? (
         <div className="mt-4">
-          <TranscriptViewer transcript={transcript} onBack={() => setTranscript(null)} />
+          <TranscriptViewer transcript={transcript} onBack={goBack} />
         </div>
       ) : (
         <>

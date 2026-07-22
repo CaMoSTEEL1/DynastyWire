@@ -1,4 +1,4 @@
-export type ShowType = "gameday" | "rankings" | "portal" | "draft" | "hotseat";
+export type ShowType = "gameday" | "rankings" | "portal" | "draft" | "hotseat" | "podcast";
 
 export interface ShowPersona {
   name: string;
@@ -65,6 +65,14 @@ export const SHOW_CONFIGS: ShowConfig[] = [
     icon: "Target",
     description:
       "Senior player evaluations and draft stock updates.",
+  },
+  {
+    type: "podcast",
+    title: "The Wire Room",
+    subtitle: "Weekly podcast — national voice meets the local homer",
+    icon: "Mic",
+    description:
+      "A long-form weekly pod: a national analyst who sees your program from 30,000 feet and a local diehard who bleeds it — arguing about your week.",
   },
   {
     type: "hotseat",

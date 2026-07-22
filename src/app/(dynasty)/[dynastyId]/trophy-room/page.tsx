@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { DynastyRetrospective } from "@/components/trophy/dynasty-retrospective";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
+import { useIssueTab } from "@/components/dynasty/use-issue-tab";
 import type { DynastyRetrospective as DynastyRetrospectiveType } from "@/lib/trophy/types";
 
 function StatBox({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
@@ -22,6 +23,15 @@ export default function TrophyRoomPage() {
   const [retrospective, setRetrospective] = useState<DynastyRetrospectiveType | null>(null);
   const [generating, setGenerating] = useState(false);
   const [retroError, setRetroError] = useState<string | null>(null);
+
+  // Restore this week's retrospective from the persisted issue cache on mount.
+  const cachedRetro = useIssueTab<DynastyRetrospectiveType>("trophy");
+  useEffect(() => {
+    // Shape-guard against retrospectives cached by older builds.
+    if (!retrospective && cachedRetro && Array.isArray(cachedRetro.chapters)) {
+      setRetrospective(cachedRetro);
+    }
+  }, [cachedRetro, retrospective]);
 
   const team = snapshot?.userTeam ?? null;
   const wins = team?.wins ?? 0;

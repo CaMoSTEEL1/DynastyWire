@@ -10,6 +10,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::{Emitter, Manager};
 
+/// On Windows, keep spawned console processes (the Node parser) from flashing a window
+/// and stealing focus from the app / whatever the user is doing. No-op elsewhere.
+fn quiet_spawn(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let _ = cmd; // silence unused warning on non-windows
+}
+
 /// Fast native check: is this a readable, complete CFB27 dynasty save? Returns the
 /// save's internal name on success.
 #[tauri::command]
@@ -21,6 +33,7 @@ fn validate_save(path: String) -> Result<String, String> {
 
 /// Locate the Node ingest sidecar (ingest/cli.js). In a packaged build it lives in the
 /// bundled resource dir; in dev it's found relative to cwd/exe. Overridable via DW_INGEST_DIR.
+#[allow(dead_code)]
 fn sidecar_cli(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     if let Ok(dir) = std::env::var("DW_INGEST_DIR") {
         let p = PathBuf::from(dir).join("cli.js");
@@ -52,8 +65,35 @@ fn sidecar_cli(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .ok_or_else(|| "could not locate ingest/cli.js (set DW_INGEST_DIR)".into())
 }
 
+// The save parser is embedded directly in this binary so the app ships as ONE self-contained
+// .exe — no separate dw-ingest.exe file to distribute or keep alongside. On first use we
+// extract it to a per-version file in the app cache dir and run it from there (a native exe
+// can't execute straight from memory on Windows). Re-extracted only when the app version
+// changes or the cached copy is missing/corrupt.
+#[cfg(windows)]
+static SIDECAR_BYTES: &[u8] = include_bytes!("../../ingest/dist/dw-ingest.exe");
+
+#[cfg(windows)]
+fn ensure_embedded_sidecar(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let base = app
+        .path()
+        .app_cache_dir()
+        .unwrap_or_else(|_| std::env::temp_dir());
+    let dir = base.join("dynastywire");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("preparing cache dir: {e}"))?;
+    let target = dir.join(concat!("dw-ingest-", env!("CARGO_PKG_VERSION"), ".exe"));
+    let up_to_date = std::fs::metadata(&target)
+        .map(|m| m.len() == SIDECAR_BYTES.len() as u64)
+        .unwrap_or(false);
+    if !up_to_date {
+        std::fs::write(&target, SIDECAR_BYTES).map_err(|e| format!("extracting parser: {e}"))?;
+    }
+    Ok(target)
+}
+
 /// Locate the compiled standalone sidecar (dw-ingest.exe) — no Node required. Preferred
 /// over the node+cli.js path in packaged builds.
+#[allow(dead_code)]
 fn sidecar_exe(app: &tauri::AppHandle) -> Option<PathBuf> {
     let name = if cfg!(windows) { "dw-ingest.exe" } else { "dw-ingest" };
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -76,6 +116,16 @@ fn sidecar_exe(app: &tauri::AppHandle) -> Option<PathBuf> {
 /// Run the sidecar with the given args; return stdout (JSON). Prefers the compiled exe
 /// (Node-free); falls back to `node cli.js` in dev. `api_key` is passed via env only.
 fn run_sidecar(app: &tauri::AppHandle, args: &[String], api_key: Option<&str>) -> Result<String, String> {
+    // Windows (the distributed target): run the parser embedded in this exe. Elsewhere
+    // (dev on mac/linux), fall back to a colocated exe or `node cli.js`.
+    #[cfg(windows)]
+    let mut cmd = {
+        let exe = ensure_embedded_sidecar(app)?;
+        let mut c = Command::new(exe);
+        c.args(args);
+        c
+    };
+    #[cfg(not(windows))]
     let mut cmd = if let Some(exe) = sidecar_exe(app) {
         let mut c = Command::new(exe);
         c.args(args);
@@ -92,6 +142,7 @@ fn run_sidecar(app: &tauri::AppHandle, args: &[String], api_key: Option<&str>) -
     if let Some(key) = api_key {
         cmd.env("ANTHROPIC_API_KEY", key);
     }
+    quiet_spawn(&mut cmd);
     let out = cmd
         .output()
         .map_err(|e| format!("failed to run node sidecar: {e}"))?;
@@ -124,6 +175,48 @@ fn dynasty_snapshot(app: tauri::AppHandle, save_path: String, team: Option<Strin
 #[tauri::command]
 fn dynasty_recruits(app: tauri::AppHandle, save_path: String) -> Result<String, String> {
     run_sidecar(&app, &["recruits".to_string(), save_path], None)
+}
+
+/// League-wide transfer-portal board (real depth-chart + dealbreaker flight-risk read).
+#[tauri::command]
+fn dynasty_portal(app: tauri::AppHandle, save_path: String) -> Result<String, String> {
+    run_sidecar(&app, &["portal".to_string(), save_path], None)
+}
+
+/// The user team's roster (players), so player-specific content uses real names, not invented
+/// ones. `team` pins the user's team the same way snapshot/delta do.
+#[tauri::command]
+fn dynasty_roster(
+    app: tauri::AppHandle,
+    save_path: String,
+    team: Option<String>,
+    team_index: Option<i64>,
+) -> Result<String, String> {
+    let mut args = vec!["roster".to_string(), save_path];
+    if let Some(t) = team {
+        args.push("--team".into());
+        args.push(t);
+    }
+    // Read ANY team's roster directly (opponent context) — skips user-team detection.
+    if let Some(ti) = team_index {
+        args.push("--teamIndex".into());
+        args.push(ti.to_string());
+    }
+    run_sidecar(&app, &args, None)
+}
+
+/// Consequence Sync: write meter-driven consequences back into the save (player confidence,
+/// program points, job security). The sidecar refuses when the game holds the file, backs the
+/// save up first, and verifies its writes. `payload` is JSON; base64-encoded for arg safety.
+#[tauri::command]
+fn dynasty_impact(app: tauri::AppHandle, save_path: String, payload: String) -> Result<String, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let b64 = STANDARD.encode(payload.as_bytes());
+    run_sidecar(
+        &app,
+        &["impact".to_string(), save_path, "--payload".to_string(), b64],
+        None,
+    )
 }
 
 #[tauri::command]
@@ -235,6 +328,394 @@ fn dynasty_generate(
     run_sidecar(&app, &args, Some(&api_key))
 }
 
+/// Call Claude natively (no Node sidecar) for all in-app content generation. This is the
+/// path every screen/situation load uses now — a single async HTTPS request, so nothing
+/// spawns a process or steals focus on a load. The prompt/context is built in the frontend
+/// from the already-parsed snapshot; only the transport lives here so the BYO key stays
+/// server-side of the webview. Returns Claude's raw text (the frontend parses the JSON).
+/// Sniff an image's media type from its base64 prefix (PNG/JPEG/WebP are what screenshots are).
+fn image_media_type(b64: &str) -> &'static str {
+    if b64.starts_with("iVBOR") {
+        "image/png"
+    } else if b64.starts_with("/9j/") {
+        "image/jpeg"
+    } else {
+        "image/webp"
+    }
+}
+
+#[tauri::command]
+async fn claude_complete(
+    api_key: String,
+    model: Option<String>,
+    system: String,
+    prompt: String,
+    max_tokens: Option<u32>,
+    images: Option<Vec<String>>,
+    cache_prefix: Option<String>,
+) -> Result<String, String> {
+    let max_tokens = max_tokens.unwrap_or(1500);
+
+    // We clone the model string so we can own it in the candidates list if needed
+    let model_str = model.clone().unwrap_or_else(|| "claude-3-5-sonnet-latest".to_string());
+
+    let candidates = if model_str == "claude-3-5-sonnet-latest" {
+        vec![
+            "claude-3-5-sonnet-latest".to_string(),
+            "claude-3-5-sonnet-20241022".to_string(),
+            "claude-3-5-sonnet-20240620".to_string(),
+            "claude-3-sonnet-20240229".to_string()
+        ]
+    } else {
+        vec![model_str]
+    };
+
+    let client = reqwest::Client::new();
+    let mut last_err = String::new();
+
+    // `cache_prefix` is the shared week context, identical across every section of an
+    // issue. It goes FIRST in the user content with a cache_control breakpoint, so the
+    // 2nd..Nth generation of the same week reads it from Anthropic's prompt cache at
+    // ~10% of the normal input price instead of re-paying for the full context each time.
+    let user_content: serde_json::Value = {
+        let mut blocks: Vec<serde_json::Value> = Vec::new();
+        if let Some(prefix) = cache_prefix.as_ref().filter(|p| !p.trim().is_empty()) {
+            blocks.push(serde_json::json!({
+                "type": "text",
+                "text": prefix,
+                "cache_control": { "type": "ephemeral" }
+            }));
+        }
+        if let Some(imgs) = images.as_ref().filter(|i| !i.is_empty()) {
+            for b64 in imgs {
+                blocks.push(serde_json::json!({
+                    "type": "image",
+                    "source": { "type": "base64", "media_type": image_media_type(b64), "data": b64 }
+                }));
+            }
+        }
+        if blocks.is_empty() {
+            serde_json::Value::String(prompt.clone())
+        } else {
+            blocks.push(serde_json::json!({ "type": "text", "text": &prompt }));
+            serde_json::Value::Array(blocks)
+        }
+    };
+
+    for m in candidates {
+        let body = serde_json::json!({
+            "model": m,
+            "max_tokens": max_tokens,
+            "system": &system,
+            "messages": [{ "role": "user", "content": &user_content }],
+        });
+
+        let res = client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await;
+
+        match res {
+            Ok(r) => {
+                let status = r.status();
+                let text = r.text().await.unwrap_or_default();
+                if status.is_success() {
+                    let parsed: Result<serde_json::Value, _> = serde_json::from_str(&text);
+                    if let Ok(p) = parsed {
+                        let out = p
+                            .get("content")
+                            .and_then(|c| c.as_array())
+                            .map(|blocks| {
+                                blocks
+                                    .iter()
+                                    .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
+                                    .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                                    .collect::<Vec<_>>()
+                                    .join("")
+                            })
+                            .unwrap_or_default();
+                        if !out.is_empty() {
+                            return Ok(out);
+                        }
+                    }
+                    last_err = "Claude returned no text content".into();
+                } else {
+                    last_err = format!("Claude API {status}: {text}");
+                    // If it's a 404, we continue to the next fallback candidate.
+                    // Otherwise, we break and return the real error immediately.
+                    if status.as_u16() != 404 {
+                        return Err(last_err);
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(format!("Claude request failed: {e}"));
+            }
+        }
+    }
+
+    Err(last_err)
+}
+
+/// Call any OpenAI-compatible chat-completions endpoint (OpenAI, OpenRouter, Groq, Together,
+/// LM Studio/Ollama local servers, …). The user supplies the provider's v1 base URL + key +
+/// model in settings; this is the transport twin of `claude_complete` for those providers.
+#[tauri::command]
+async fn openai_complete(
+    base_url: String,
+    api_key: String,
+    model: String,
+    system: String,
+    prompt: String,
+    max_tokens: Option<u32>,
+    images: Option<Vec<String>>,
+) -> Result<String, String> {
+    // Tolerate common paste mistakes: whitespace, missing scheme, trailing slash, or the
+    // full chat/completions path instead of the /v1 base.
+    let trimmed = base_url.trim();
+    let with_scheme = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_string()
+    } else {
+        format!("https://{trimmed}")
+    };
+    let base = with_scheme.trim_end_matches('/');
+    let url = if base.ends_with("/chat/completions") {
+        base.to_string()
+    } else {
+        format!("{base}/chat/completions")
+    };
+    // With images attached, the user message becomes a multimodal content array (data URLs).
+    let user_content: serde_json::Value = match &images {
+        Some(imgs) if !imgs.is_empty() => {
+            let mut parts: Vec<serde_json::Value> = imgs
+                .iter()
+                .map(|b64| {
+                    serde_json::json!({
+                        "type": "image_url",
+                        "image_url": { "url": format!("data:{};base64,{}", image_media_type(b64), b64) }
+                    })
+                })
+                .collect();
+            parts.push(serde_json::json!({ "type": "text", "text": &prompt }));
+            serde_json::Value::Array(parts)
+        }
+        _ => serde_json::Value::String(prompt.clone()),
+    };
+    let mut body = serde_json::json!({
+        "model": model,
+        "messages": [
+            { "role": "system", "content": system },
+            { "role": "user", "content": user_content }
+        ],
+    });
+    // max_tokens is omitted entirely when None — local reasoning models burn their whole
+    // budget on thinking if capped, so users can uncap in settings.
+    if let Some(mt) = max_tokens {
+        body["max_tokens"] = mt.into();
+    }
+
+    let client = reqwest::Client::new();
+    let res = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("content-type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("provider request failed: {e}"))?;
+
+    let status = res.status();
+    let text = res
+        .text()
+        .await
+        .map_err(|e| format!("reading provider response: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("provider API {status}: {text}"));
+    }
+
+    let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        let snippet: String = text.trim().chars().take(200).collect();
+        format!(
+            "provider returned non-JSON from {url} ({e}). Check the base URL — it must be the \
+             provider's OpenAI-compatible endpoint (usually ends in /v1; for Gemini use \
+             https://generativelanguage.googleapis.com/v1beta/openai). Response starts: \"{snippet}\""
+        )
+    })?;
+    // Standard shape first; some providers (incl. Gemini reasoning modes) return content as
+    // an array of typed parts — join those as a fallback.
+    let msg = parsed
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"));
+    let out = msg
+        .and_then(|m| m.get("content"))
+        .and_then(|t| t.as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            msg.and_then(|m| m.get("content")).and_then(|c| c.as_array()).map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+        })
+        .unwrap_or_default();
+    if out.is_empty() {
+        let snippet: String = text.trim().chars().take(200).collect();
+        return Err(format!(
+            "provider returned no text content (model may have spent its whole token budget on \
+             reasoning — try enabling 'uncap max tokens' in settings). Response starts: \"{snippet}\""
+        ));
+    }
+    Ok(out)
+}
+
+/// ElevenLabs text-to-speech. Returns the spoken line as base64-encoded MP3 for the webview
+/// to play. Opt-in only (podcast audio) — the key is the user's own. Kept server-side of the
+/// webview so the key never rides in page JS.
+#[tauri::command]
+async fn tts_elevenlabs(
+    api_key: String,
+    voice_id: String,
+    text: String,
+    previous_text: Option<String>,
+    next_text: Option<String>,
+) -> Result<String, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let url = format!("https://api.elevenlabs.io/v1/text-to-speech/{voice_id}");
+    // previous_text/next_text = ElevenLabs request stitching: the model hears the lines
+    // around this one, so prosody flows across the conversation like one continuous
+    // recording instead of isolated clips — the "podcast feel".
+    let mut body = serde_json::json!({
+        "text": text,
+        "model_id": "eleven_turbo_v2_5",
+        "voice_settings": { "stability": 0.4, "similarity_boost": 0.75, "style": 0.35 }
+    });
+    if let Some(prev) = previous_text.filter(|s| !s.trim().is_empty()) {
+        body["previous_text"] = serde_json::Value::String(prev);
+    }
+    if let Some(next) = next_text.filter(|s| !s.trim().is_empty()) {
+        body["next_text"] = serde_json::Value::String(next);
+    }
+    let client = reqwest::Client::new();
+    let res = client
+        .post(&url)
+        .header("xi-api-key", &api_key)
+        .header("content-type", "application/json")
+        .header("accept", "audio/mpeg")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("elevenlabs request failed: {e}"))?;
+    let status = res.status();
+    if !status.is_success() {
+        let text = res.text().await.unwrap_or_default();
+        let snippet: String = text.trim().chars().take(200).collect();
+        return Err(format!("elevenlabs API {status}: {snippet}"));
+    }
+    let bytes = res.bytes().await.map_err(|e| format!("reading audio: {e}"))?;
+    Ok(STANDARD.encode(&bytes))
+}
+
+/// List the model ids available on an OpenAI-compatible endpoint (GET {base}/models), so
+/// users can pick from a live list instead of hand-typing a model id (case-sensitive on
+/// most providers). Returns ids sorted alphabetically.
+#[tauri::command]
+async fn openai_list_models(base_url: String, api_key: String) -> Result<Vec<String>, String> {
+    let trimmed = base_url.trim();
+    let with_scheme = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_string()
+    } else {
+        format!("https://{trimmed}")
+    };
+    let base = with_scheme.trim_end_matches('/');
+    let base = base.trim_end_matches("/chat/completions");
+    let url = format!("{base}/models");
+
+    let client = reqwest::Client::new();
+    let res = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await
+        .map_err(|e| format!("models request failed: {e}"))?;
+
+    let status = res.status();
+    let text = res
+        .text()
+        .await
+        .map_err(|e| format!("reading models response: {e}"))?;
+
+    if !status.is_success() {
+        return Err(format!("provider API {status}: {text}"));
+    }
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| {
+            let snippet: String = text.trim().chars().take(160).collect();
+            format!("provider returned non-JSON from {url} ({e}). Response starts: \"{snippet}\"")
+        })?;
+
+    let mut ids: Vec<String> = parsed
+        .get("data")
+        .and_then(|d| d.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if ids.is_empty() {
+        return Err("no models returned — check the base URL and key".into());
+    }
+
+    ids.sort();
+    Ok(ids)
+}
+
+#[tauri::command]
+async fn anthropic_list_models(api_key: String) -> Result<Vec<String>, String> {
+    let client = reqwest::Client::new();
+    let res = client
+        .get("https://api.anthropic.com/v1/models")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .send()
+        .await
+        .map_err(|e| format!("List Anthropic models request failed: {e}"))?;
+
+    let status = res.status();
+    let text = res
+        .text()
+        .await
+        .map_err(|e| format!("reading models response: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Anthropic API {status}: {text}"));
+    }
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("bad JSON: {e}"))?;
+    let data = parsed
+        .get("data")
+        .and_then(|d| d.as_array())
+        .ok_or_else(|| "no 'data' array in models response".to_string())?;
+
+    let mut out = Vec::new();
+    for item in data {
+        if let Some(id) = item.get("id").and_then(|i| i.as_str()) {
+            out.push(id.to_string());
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
 fn is_dynasty_save(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
@@ -308,6 +789,14 @@ pub fn run() {
             dynasty_media,
             dynasty_generate,
             dynasty_recruits,
+            dynasty_portal,
+            dynasty_roster,
+            dynasty_impact,
+            claude_complete,
+            openai_complete,
+            openai_list_models,
+            anthropic_list_models,
+            tts_elevenlabs,
             list_saves,
             archive_save,
             start_watch

@@ -4,7 +4,7 @@
 //   node cli.js delta <beforeSave> <after> -> prints WeekDelta JSON
 // Add --pretty for a human-readable summary instead of raw JSON.
 
-const { buildSnapshot, buildRecruits } = require('./snapshot');
+const { openSave, pickTable, readRecords, buildSnapshot, buildRecruits, buildRoster, buildPortal } = require('./snapshot');
 const { buildDelta } = require('./diff');
 const { buildMediaContext, generateRecap, generateCycle } = require('./generate');
 
@@ -25,6 +25,213 @@ async function main() {
   if (cmd === 'recruits') {
     const recruits = await buildRecruits(files[0]);
     return console.log(JSON.stringify({ recruits }));
+  }
+
+  if (cmd === 'portal') {
+    const portal = await buildPortal(files[0]);
+    return console.log(JSON.stringify(portal));
+  }
+
+  if (cmd === 'roster') {
+    // One parse: resolve the team, then read its roster off the same open file.
+    // --teamIndex N reads ANY team's roster (e.g. this week's opponent) directly.
+    const f = await openSave(files[0]);
+    const tiIdx = args.indexOf('--teamIndex');
+    let teamIndex = tiIdx >= 0 ? Number(args[tiIdx + 1]) : null;
+    if (teamIndex == null || Number.isNaN(teamIndex)) {
+      const snap = await buildSnapshot(f, opts);
+      teamIndex = snap.userTeam ? snap.userTeam.teamIndex : null;
+    }
+    const roster = await buildRoster(f, { teamIndex });
+    return console.log(JSON.stringify({ roster }));
+  }
+
+  // Consequence Sync: write the media-universe meters BACK into the save so they have real
+  // in-game impact. Payload (base64 JSON via --payload):
+  //   { teamIndex, confidence: [{name, value}], programPointsDelta, jobSecurityPct,
+  //     nil: [{name, value}], overall: [{name, value}] }
+  // `overall` sets a player's OverallRating (suspensions: a temporary drop buries him on the
+  // depth chart so the game benches him; the before value is returned so it can be restored).
+  // Safety: refuses when the file is locked (game running), takes a timestamped backup
+  // (keeps 5) before writing, and verifies every write by re-opening the saved file.
+  if (cmd === 'impact') {
+    const fs = require('fs');
+    const path = require('path');
+    const savePath = files[0];
+    const pIdx = args.indexOf('--payload');
+    if (pIdx < 0) return fail('impact: missing --payload');
+    const payload = JSON.parse(Buffer.from(args[pIdx + 1], 'base64').toString('utf8'));
+
+    // 1. Locked? (CFB27 holds the file open while running)
+    try {
+      const fd = fs.openSync(savePath, 'r+');
+      fs.closeSync(fd);
+    } catch (e) {
+      return console.log(JSON.stringify({ ok: false, error: 'locked', detail: 'Save file is locked — close College Football 27 first.' }));
+    }
+
+    // 2. Backup (keep the 5 newest per save name)
+    const dir = path.join(path.dirname(savePath), 'dynastywire-backups');
+    fs.mkdirSync(dir, { recursive: true });
+    const base = path.basename(savePath);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = path.join(dir, `${base}.${stamp}.bak`);
+    fs.copyFileSync(savePath, backupPath);
+    const old = fs.readdirSync(dir).filter((n) => n.startsWith(base + '.')).sort();
+    for (const n of old.slice(0, Math.max(0, old.length - 5))) {
+      try { fs.unlinkSync(path.join(dir, n)); } catch (e) { /* ignore */ }
+    }
+
+    // 3. Apply
+    const f = await openSave(savePath);
+    const applied = { confidence: [], programPoints: null, jobSecurity: null };
+    const teamIndex = payload.teamIndex;
+
+    if (Array.isArray(payload.confidence) && payload.confidence.length) {
+      const playerT = await readRecords(pickTable(f, 'Player'));
+      const wanted = new Map(payload.confidence.map((c) => [String(c.name).toLowerCase(), c.value]));
+      for (const p of playerT.records) {
+        if (p.isEmpty) continue;
+        try {
+          if (p['TeamIndex'] !== teamIndex) continue;
+          const nm = `${p['FirstName'] || ''} ${p['LastName'] || ''}`.trim().toLowerCase();
+          if (!wanted.has(nm)) continue;
+          const v = Math.max(5, Math.min(99, Math.round(wanted.get(nm))));
+          p['ConfidenceRating'] = v;
+          applied.confidence.push({ name: nm, value: v });
+        } catch (e) { /* skip unreadable rows */ }
+      }
+    }
+
+    if (typeof payload.programPointsDelta === 'number' && payload.programPointsDelta !== 0) {
+      const teamT = await readRecords(pickTable(f, 'Team'));
+      for (const t of teamT.records) {
+        if (t.isEmpty) continue;
+        try {
+          if (t['TeamIndex'] !== teamIndex) continue;
+          const cur = t['RemainingProgramPoints'] || 0;
+          const next = Math.max(0, cur + Math.round(payload.programPointsDelta));
+          t['RemainingProgramPoints'] = next;
+          applied.programPoints = { before: cur, after: next };
+          break;
+        } catch (e) { /* ignore */ }
+      }
+    }
+
+    if (typeof payload.jobSecurityPct === 'number') {
+      const coachT = await readRecords(pickTable(f, 'Coach'));
+      for (const r of coachT.records) {
+        if (r.isEmpty) continue;
+        try {
+          if (r['IsUserControlled'] === true || r['IsUserControlled'] === 1) {
+            const v = Math.max(1, Math.min(100, Math.round(payload.jobSecurityPct)));
+            const before = r['CurrentJobSecurityPercentage'];
+            r['CurrentJobSecurityPercentage'] = v;
+            applied.jobSecurity = { before, after: v };
+            break;
+          }
+        } catch (e) { /* ignore */ }
+      }
+    }
+
+    // NIL allotment — set each named player's CurrentNILCompensation. Verified writable +
+    // persistent on a real save. Available any time in the season.
+    applied.nil = [];
+    if (Array.isArray(payload.nil) && payload.nil.length) {
+      const playerT = await readRecords(pickTable(f, 'Player'));
+      const wanted = new Map(payload.nil.map((c) => [String(c.name).toLowerCase(), c.value]));
+      for (const p of playerT.records) {
+        if (p.isEmpty) continue;
+        try {
+          if (p['TeamIndex'] !== teamIndex) continue;
+          const nm = `${p['FirstName'] || ''} ${p['LastName'] || ''}`.trim().toLowerCase();
+          if (!wanted.has(nm)) continue;
+          const v = Math.max(0, Math.min(100000, Math.round(wanted.get(nm))));
+          const before = p['CurrentNILCompensation'];
+          p['CurrentNILCompensation'] = v;
+          applied.nil.push({ name: nm, before, after: v });
+        } catch (e) { /* skip unreadable rows */ }
+      }
+    }
+
+    // Player overall — suspensions drop it (the game auto-buries a 40 OVR on the depth
+    // chart) and restore it when served. Writes OverallRating, falling back to
+    // PlayerOverallRating where that's the field the save actually carries.
+    applied.overall = [];
+    if (Array.isArray(payload.overall) && payload.overall.length) {
+      const playerT = await readRecords(pickTable(f, 'Player'));
+      const wanted = new Map(payload.overall.map((c) => [String(c.name).toLowerCase(), c.value]));
+      for (const p of playerT.records) {
+        if (p.isEmpty) continue;
+        try {
+          if (p['TeamIndex'] !== teamIndex) continue;
+          const nm = `${p['FirstName'] || ''} ${p['LastName'] || ''}`.trim().toLowerCase();
+          if (!wanted.has(nm)) continue;
+          const v = Math.max(25, Math.min(99, Math.round(wanted.get(nm))));
+          const field = p['OverallRating'] != null ? 'OverallRating'
+            : p['PlayerOverallRating'] != null ? 'PlayerOverallRating' : 'OverallRating';
+          const before = p[field];
+          p[field] = v;
+          applied.overall.push({ name: nm, field, before, after: v });
+        } catch (e) { /* skip unreadable rows */ }
+      }
+    }
+
+    await f.save(savePath);
+
+    // 4. Verify by re-opening
+    const f2 = await openSave(savePath);
+    let verified = true;
+    if (applied.confidence.length) {
+      const pT2 = await readRecords(pickTable(f2, 'Player'));
+      const check = new Map(applied.confidence.map((c) => [c.name, c.value]));
+      let seen = 0;
+      for (const p of pT2.records) {
+        if (p.isEmpty) continue;
+        try {
+          if (p['TeamIndex'] !== teamIndex) continue;
+          const nm = `${p['FirstName'] || ''} ${p['LastName'] || ''}`.trim().toLowerCase();
+          if (!check.has(nm)) continue;
+          seen++;
+          if (p['ConfidenceRating'] !== check.get(nm)) verified = false;
+        } catch (e) { /* ignore */ }
+      }
+      if (seen !== applied.confidence.length) verified = false;
+    }
+    if (applied.nil.length) {
+      const pT2 = await readRecords(pickTable(f2, 'Player'));
+      const check = new Map(applied.nil.map((c) => [c.name, c.after]));
+      let seen = 0;
+      for (const p of pT2.records) {
+        if (p.isEmpty) continue;
+        try {
+          if (p['TeamIndex'] !== teamIndex) continue;
+          const nm = `${p['FirstName'] || ''} ${p['LastName'] || ''}`.trim().toLowerCase();
+          if (!check.has(nm)) continue;
+          seen++;
+          if (p['CurrentNILCompensation'] !== check.get(nm)) verified = false;
+        } catch (e) { /* ignore */ }
+      }
+      if (seen !== applied.nil.length) verified = false;
+    }
+    if (applied.overall.length) {
+      const pT2 = await readRecords(pickTable(f2, 'Player'));
+      const check = new Map(applied.overall.map((c) => [c.name, c]));
+      let seen = 0;
+      for (const p of pT2.records) {
+        if (p.isEmpty) continue;
+        try {
+          if (p['TeamIndex'] !== teamIndex) continue;
+          const nm = `${p['FirstName'] || ''} ${p['LastName'] || ''}`.trim().toLowerCase();
+          if (!check.has(nm)) continue;
+          seen++;
+          const c = check.get(nm);
+          if (p[c.field] !== c.after) verified = false;
+        } catch (e) { /* ignore */ }
+      }
+      if (seen !== applied.overall.length) verified = false;
+    }
+    return console.log(JSON.stringify({ ok: true, verified, applied, backup: backupPath }));
   }
 
   if (cmd === 'delta') {
@@ -174,7 +381,11 @@ function printDelta(d) {
   }
 }
 
-main().catch((e) => {
-  console.error('ingest error:', e.message);
-  process.exit(1);
-});
+main()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((e) => {
+    console.error('ingest error:', e.message);
+    process.exit(1);
+  });

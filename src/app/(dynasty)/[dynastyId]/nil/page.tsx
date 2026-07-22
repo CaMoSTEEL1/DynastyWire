@@ -1,9 +1,379 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { SectionHeader } from "@/components/ui/section-header";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
+import { useIssueTab } from "@/components/dynasty/use-issue-tab";
+import { useSaga } from "@/components/dynasty/use-saga";
+import { issueKey, readTab, writeTab } from "@/lib/dynasty/issue-cache";
+import { applyImpact, type ImpactResult, type RosterPlayer } from "@/lib/dynasty/client";
+
+// Points → money: 1 program point = $1,000 of NIL compensation. Transparent + fixed so the
+// budgeting math is easy to reason about ("I have 6,900 points = $6.9M to distribute").
+const POINTS_PER_K = 1;
+const fmtMoney = (k: number | null | undefined) => (k == null ? "—" : `$${k.toLocaleString()}K`);
+
+// Flavor GPA lives in the shared academics lib — the Situation Room uses the same numbers,
+// and an At-Risk player can (rarely) be ruled academically ineligible there.
+import { fakeGpa, GPA_COLOR } from "@/lib/dynasty/academics";
+import { loadSuspensions, isActive, type Suspension } from "@/lib/dynasty/suspensions";
+
+// Depth-chart order: group by position, sort by OVR (top = starter).
+function byDepthChart(roster: RosterPlayer[]): { pos: string; players: RosterPlayer[] }[] {
+  const groups = new Map<string, RosterPlayer[]>();
+  for (const p of roster) {
+    const pos = p.position ?? "ATH";
+    if (!groups.has(pos)) groups.set(pos, []);
+    groups.get(pos)!.push(p);
+  }
+  const POS_ORDER = ["QB", "HB", "FB", "WR", "TE", "LT", "LG", "C", "RG", "RT", "LE", "RE", "DT", "LOLB", "MLB", "ROLB", "CB", "FS", "SS", "K", "P"];
+  return [...groups.entries()]
+    .map(([pos, players]) => ({ pos, players: players.sort((a, b) => (b.overall ?? 0) - (a.overall ?? 0)) }))
+    .sort((a, b) => {
+      const ai = POS_ORDER.indexOf(a.pos); const bi = POS_ORDER.indexOf(b.pos);
+      return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+    });
+}
+
+// ── Brand-deal meetings (AD / booster) ────────────────────────────────────────
+interface BrandDeal {
+  brand: string; category: string; broker: "AD" | "Booster"; pitch: string;
+  stipendPoints: number; weeks: number; reputation: "clean" | "edgy" | "controversial";
+  upside: string; risk: string;
+  effects: { fanTrust: number; mediaHeat: number; boosterConfidence: number };
+}
+const REP_STYLE: Record<string, string> = {
+  clean: "text-dw-green border-dw-green/40",
+  edgy: "text-dw-yellow border-dw-yellow/40",
+  controversial: "text-dw-red border-dw-red/40",
+};
+
+function BrandDeals() {
+  const { generate, snapshot, currentSavePath, dynastyId, year, week } = useDynasty();
+  const saga = useSaga();
+  const teamIndex = snapshot?.userTeam?.teamIndex ?? null;
+  const [deals, setDeals] = useState<BrandDeal[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [signed, setSigned] = useState<Record<string, boolean>>({});
+  const [busyBrand, setBusyBrand] = useState<string | null>(null);
+
+  const cacheKey = issueKey(dynastyId, year, week);
+  const TAB = "brand-deals";
+
+  useEffect(() => {
+    let cancelled = false;
+    setDeals(null); setSigned({});
+    (async () => {
+      const rec = await readTab<{ deals: BrandDeal[]; signed: Record<string, boolean> }>(cacheKey, TAB);
+      if (!cancelled && rec?.data?.deals) { setDeals(rec.data.deals); setSigned(rec.data.signed ?? {}); }
+    })();
+    return () => { cancelled = true; };
+  }, [cacheKey]);
+
+  const persist = useCallback(async (d: BrandDeal[], s: Record<string, boolean>) => {
+    await writeTab(cacheKey, TAB, { status: "ready", data: { deals: d, signed: s }, error: null, generatedAt: Date.now() }, { dynastyId, year, week });
+  }, [cacheKey, dynastyId, year, week]);
+
+  const pull = useCallback(async () => {
+    setLoading(true); setErr(null);
+    try {
+      const data = await generate<{ deals: BrandDeal[]; error?: boolean }>("brand-deals", {}, { force: true });
+      if (!data || data.error || !Array.isArray(data.deals) || data.deals.length === 0) setErr("No offers on the table right now — try again.");
+      else { setDeals(data.deals); setSigned({}); await persist(data.deals, {}); }
+    } catch (e) { setErr(e instanceof Error ? e.message : "Couldn't reach the boardroom."); }
+    finally { setLoading(false); }
+  }, [generate, persist]);
+
+  const accept = useCallback(async (d: BrandDeal) => {
+    if (signed[d.brand] || busyBrand) return;
+    setBusyBrand(d.brand);
+    try {
+      // Reputational tradeoff hits the meters immediately.
+      await saga.adjustMeters(d.effects);
+      // The stipend boosts NIL headroom — add program points to the save (full run of the deal).
+      if (currentSavePath && teamIndex != null && d.stipendPoints > 0) {
+        await applyImpact(currentSavePath, { teamIndex, programPointsDelta: d.stipendPoints * d.weeks }).catch(() => {});
+      }
+      const nextSigned = { ...signed, [d.brand]: true };
+      setSigned(nextSigned);
+      if (deals) await persist(deals, nextSigned);
+    } finally { setBusyBrand(null); }
+  }, [signed, busyBrand, saga, currentSavePath, teamIndex, deals, persist]);
+
+  return (
+    <div className="mb-8 overflow-hidden rounded border border-dw-border bg-paper2">
+      <div className="h-1 w-full bg-gradient-to-r from-dw-accent2 via-dw-yellow to-dw-red" />
+      <div className="px-6 py-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="font-sans text-[10px] uppercase tracking-widest text-dw-accent2">Boardroom · Brand Deals</p>
+            <h3 className="font-headline text-xl uppercase tracking-wide text-ink">NIL Partnership Offers</h3>
+          </div>
+          <button
+            type="button"
+            onClick={() => void pull()}
+            disabled={loading}
+            className="rounded border border-dw-accent bg-dw-accent px-4 py-2 font-sans text-xs uppercase tracking-wider text-paper hover:bg-dw-accent2 disabled:opacity-50"
+          >
+            {loading ? "Taking the meeting…" : deals ? "New Offers" : "Take the Meeting"}
+          </button>
+        </div>
+        <p className="mt-2 font-serif text-xs text-ink3">
+          Your AD and lead booster bring deals to the table. Each stipend boosts your NIL
+          headroom (program points) — but not all money is good money. A controversial brand
+          pays more and poisons fan trust. Accepting applies the tradeoff and adds the stipend
+          to your save.
+        </p>
+        {err && <p className="mt-3 font-serif text-sm text-dw-red">{err}</p>}
+
+        {deals && (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {deals.map((d) => {
+              const isSigned = signed[d.brand];
+              const eff = d.effects;
+              return (
+                <div key={d.brand} className={cn("rounded border p-4", isSigned ? "border-dw-green/40 bg-dw-green/5" : "border-dw-border bg-paper")}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-headline text-sm uppercase tracking-wide text-ink">{d.brand}</span>
+                    <span className={cn("rounded border px-1.5 py-0.5 font-sans text-[9px] uppercase tracking-wider", REP_STYLE[d.reputation])}>{d.reputation}</span>
+                  </div>
+                  <p className="font-sans text-[10px] uppercase tracking-wider text-ink3">{d.category} · via {d.broker}</p>
+                  <p className="mt-2 font-serif text-sm text-ink2">{d.pitch}</p>
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-0.5 font-sans text-[11px]">
+                    <span className="text-dw-green">+{(d.stipendPoints * d.weeks).toLocaleString()} pts NIL headroom</span>
+                    <span className="text-ink3">{d.stipendPoints}/wk × {d.weeks}wk</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-sans text-[10px]">
+                    {eff.fanTrust !== 0 && <span className={eff.fanTrust > 0 ? "text-dw-green" : "text-dw-red"}>Fans {eff.fanTrust > 0 ? "+" : ""}{eff.fanTrust}</span>}
+                    {eff.mediaHeat !== 0 && <span className={eff.mediaHeat > 0 ? "text-dw-red" : "text-dw-green"}>Media heat {eff.mediaHeat > 0 ? "+" : ""}{eff.mediaHeat}</span>}
+                    {eff.boosterConfidence !== 0 && <span className={eff.boosterConfidence > 0 ? "text-dw-green" : "text-dw-red"}>Boosters {eff.boosterConfidence > 0 ? "+" : ""}{eff.boosterConfidence}</span>}
+                  </div>
+                  {d.risk && <p className="mt-1.5 font-serif text-[11px] italic text-ink3">{d.risk}</p>}
+                  <div className="mt-3">
+                    {isSigned ? (
+                      <span className="font-sans text-[10px] uppercase tracking-wider text-dw-green">✓ Signed</span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void accept(d)}
+                        disabled={busyBrand === d.brand}
+                        className="rounded border border-dw-accent bg-dw-accent/15 px-3 py-1.5 font-sans text-[10px] uppercase tracking-wider text-dw-accent hover:bg-dw-accent/25 disabled:opacity-40"
+                      >
+                        {busyBrand === d.brand ? "Signing…" : "Sign the Deal"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface NilPost { handle: string; displayName: string; type: string; body: string; likes: number; reposts: number }
+
+function NILManager() {
+  const { roster, snapshot, currentSavePath, generate, dynastyId, year, week } = useDynasty();
+  const team = snapshot?.userTeam ?? null;
+  const teamIndex = team?.teamIndex ?? null;
+
+  // Names currently serving a suspension — badged in the depth chart.
+  const [suspended, setSuspended] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    let cancelled = false;
+    loadSuspensions(dynastyId)
+      .then((l: Suspension[]) => {
+        if (cancelled) return;
+        setSuspended(new Set(l.filter((s) => isActive(s, year, week)).map((s) => s.playerName.toLowerCase())));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [dynastyId, year, week]);
+
+  // Draft NIL edits keyed by player name (only changed players are written).
+  const [edits, setEdits] = useState<Record<string, number>>({});
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ImpactResult | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [reactions, setReactions] = useState<NilPost[] | null>(null);
+
+  const depth = useMemo(() => byDepthChart(roster ?? []), [roster]);
+  const posOf = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const p of roster ?? []) m.set(p.name, p.position ?? null);
+    return m;
+  }, [roster]);
+
+  // The spendable pool. RemainingProgramPoints when the save exposes it, else the full budget.
+  const pool = (team?.pointsRemaining && team.pointsRemaining > 0 ? team.pointsRemaining : team?.pointBudget) ?? 0;
+
+  const changes = useMemo(() => {
+    const out: { name: string; from: number; to: number }[] = [];
+    for (const g of depth) for (const p of g.players) {
+      const cur = p.nilComp ?? 0;
+      const next = edits[p.name];
+      if (next != null && next !== cur) out.push({ name: p.name, from: cur, to: next });
+    }
+    return out;
+  }, [edits, depth]);
+
+  const netK = changes.reduce((s, c) => s + (c.to - c.from), 0); // total NIL added ($K)
+  const pointCost = Math.max(0, netK) * POINTS_PER_K;
+  const overBudget = pointCost > pool;
+
+  async function push() {
+    if (!currentSavePath || teamIndex == null || changes.length === 0 || busy) return;
+    setBusy(true); setErr(null);
+    try {
+      const res = await applyImpact(currentSavePath, {
+        teamIndex,
+        nil: changes.map((c) => ({ name: c.name, value: c.to })),
+        // Deduct the net points spent (only when adding NIL; refunds when lowering aren't credited back).
+        programPointsDelta: netK > 0 ? -pointCost : 0,
+      });
+      if (!res.ok) { setErr(res.detail || "The save refused the write. Close the game and try again."); return; }
+      setResult(res);
+      const dealsForWire = changes.map((c) => ({ name: c.name, position: posOf.get(c.name) ?? undefined, from: c.from, to: c.to }));
+      setEdits({});
+      // The wire reacts — big deals get big reactions, small deals barely register.
+      setReactions(null);
+      try {
+        const wire = await generate<{ posts: NilPost[]; error?: boolean }>("nil-reaction", { deals: dealsForWire }, { force: true });
+        if (wire && !wire.error && Array.isArray(wire.posts)) setReactions(wire.posts);
+      } catch { /* reactions are a bonus */ }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "NIL write failed.");
+    } finally { setBusy(false); }
+  }
+
+  if (!roster || roster.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mb-8 overflow-hidden rounded border border-dw-border bg-paper2">
+      <div className="h-1 w-full bg-gradient-to-r from-dw-green via-dw-accent2 to-dw-accent" />
+      <div className="px-6 py-5">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="font-sans text-[10px] uppercase tracking-widest text-dw-accent2">NIL Collective · Allot Anytime</p>
+            <h3 className="font-headline text-xl uppercase tracking-wide text-ink">Player NIL Deals</h3>
+          </div>
+          <div className="text-right">
+            <p className="font-sans text-[10px] uppercase tracking-widest text-ink3">Program Points</p>
+            <p className="font-headline text-lg font-bold text-ink">{pool.toLocaleString()} <span className="font-sans text-xs text-ink3">= {fmtMoney(Math.round(pool / POINTS_PER_K))} to give</span></p>
+          </div>
+        </div>
+        <p className="mt-2 font-serif text-xs text-ink3">
+          1 program point = $1K NIL. Raise a player&apos;s deal to reward production; it writes to your
+          save (backed up + verified) and applies in-game. Do it whenever during the season.
+        </p>
+
+        {result?.ok && (
+          <p className="mt-3 rounded border border-dw-green/30 bg-dw-green/5 px-3 py-2 font-sans text-[10px] uppercase tracking-wider text-dw-green">
+            NIL written to your save ✓{result.verified === false ? " (partial — see console)" : ""} · {result.applied?.nil?.length ?? 0} players updated
+          </p>
+        )}
+
+        {reactions && reactions.length > 0 && (
+          <div className="mt-3 space-y-2 rounded border border-dw-border bg-paper p-3">
+            <p className="font-sans text-[10px] uppercase tracking-widest text-dw-accent2">The Wire Reacts</p>
+            {reactions.map((p, i) => (
+              <div key={i} className="border-b border-dw-border/40 pb-2 last:border-0">
+                <p className="font-sans text-[11px] text-ink3">
+                  <span className="text-ink">{p.displayName}</span> {p.handle}
+                  <span className="ml-2 rounded border border-dw-border px-1 text-[9px] uppercase tracking-wider">{p.type}</span>
+                </p>
+                <p className="font-serif text-sm text-ink2">{p.body}</p>
+                <p className="mt-0.5 font-sans text-[9px] text-ink3">♥ {p.likes.toLocaleString()} · ↻ {p.reposts.toLocaleString()}</p>
+              </div>
+            ))}
+          </div>
+        )}
+        {err && <p className="mt-3 font-serif text-sm text-dw-red">{err}</p>}
+
+        <div className="mt-4 max-h-[28rem] space-y-4 overflow-y-auto pr-1">
+          {depth.map((g) => (
+            <div key={g.pos}>
+              <p className="font-sans text-[10px] uppercase tracking-widest text-ink3">{g.pos}</p>
+              <div className="mt-1 space-y-1">
+                {g.players.map((p, i) => {
+                  const cur = p.nilComp ?? 0;
+                  const val = edits[p.name] ?? cur;
+                  return (
+                    <div key={p.name} className="flex items-center gap-3 border-b border-dw-border/40 py-1.5 last:border-0">
+                      <span className="w-6 text-center font-sans text-[10px] text-ink3">{i === 0 ? "ST" : i + 1}</span>
+                      <span className="min-w-0 flex-1 truncate font-serif text-sm text-ink">
+                        {p.name} <span className="font-sans text-[10px] text-ink3">{p.overall} OVR{p.year ? ` · ${p.year}` : ""}</span>
+                        {suspended.has(p.name.toLowerCase()) && (
+                          <span className="ml-2 rounded border border-dw-red/50 px-1.5 py-0.5 font-sans text-[9px] uppercase tracking-wider text-dw-red">
+                            Suspended
+                          </span>
+                        )}
+                      </span>
+                      {(() => { const g = fakeGpa(p); return (
+                        <span
+                          className={cn("w-28 shrink-0 text-right font-sans text-[10px]", GPA_COLOR[g.status])}
+                          title={`${g.status} — a stable flavor GPA (the game doesn't track academics)`}
+                        >
+                          {g.gpa.toFixed(2)} GPA{g.status !== "Eligible" ? ` · ${g.status}` : ""}
+                        </span>
+                      ); })()}
+                      <span className="hidden w-24 text-right font-sans text-[10px] text-ink3 sm:block">worth {fmtMoney(p.nilBaseValue)}</span>
+                      <div className="flex items-center gap-1">
+                        <span className="font-sans text-[10px] text-ink3">$</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={val}
+                          onChange={(e) => setEdits((s) => ({ ...s, [p.name]: Math.max(0, Number(e.target.value) || 0) }))}
+                          className={cn(
+                            "w-20 rounded border bg-paper px-2 py-1 text-right font-sans text-xs text-ink focus:outline-none",
+                            val !== cur ? "border-dw-accent2" : "border-dw-border"
+                          )}
+                        />
+                        <span className="font-sans text-[10px] text-ink3">K</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-dw-border pt-4">
+          <p className="font-sans text-xs text-ink3">
+            {changes.length === 0
+              ? "Edit any player's deal to begin."
+              : `${changes.length} change${changes.length === 1 ? "" : "s"} · ${netK >= 0 ? "+" : ""}${fmtMoney(netK)} NIL · ${pointCost.toLocaleString()} points`}
+            {overBudget && <span className="ml-2 text-dw-red">over budget</span>}
+          </p>
+          <div className="flex gap-2">
+            {changes.length > 0 && (
+              <button type="button" onClick={() => setEdits({})} className="rounded border border-dw-border px-3 py-1.5 font-sans text-[10px] uppercase tracking-wider text-ink3 hover:text-ink">
+                Reset
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => void push()}
+              disabled={busy || changes.length === 0 || overBudget}
+              className="rounded border border-dw-accent bg-dw-accent px-4 py-2 font-sans text-xs uppercase tracking-wider text-paper hover:bg-dw-accent2 disabled:opacity-40"
+            >
+              {busy ? "Writing to save…" : "Push NIL to Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface MarketNote {
   label: string;
@@ -41,14 +411,20 @@ function TempBadge({ temp }: { temp: string }) {
 }
 
 export default function NILPage() {
-  const { snapshot, loading, error, generate, settings, currentSavePath } =
+  const { snapshot, loading, error, generate, hasApiKey, currentSavePath } =
     useDynasty();
 
   const [column, setColumn] = useState<NILMarketColumn | null>(null);
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
 
-  const canGenerate = Boolean(currentSavePath && settings.anthropicKey);
+  // Restore this week's market column from the persisted issue cache on mount.
+  const cachedColumn = useIssueTab<NILMarketColumn>("nil");
+  useEffect(() => {
+    if (!column && cachedColumn) setColumn(cachedColumn);
+  }, [cachedColumn, column]);
+
+  const canGenerate = Boolean(currentSavePath && hasApiKey);
 
   async function handleGenerate() {
     if (generating) return;
@@ -92,22 +468,13 @@ export default function NILPage() {
     <div>
       <SectionHeader title="NIL & PORTAL" subtitle="Money moves and roster drama" />
 
-      <div className="mt-6 space-y-6">
-        {/* Player-level NIL/portal detail needs roster data the save does not
-            yet expose. Degrade to a program NIL-market column — clearly labeled. */}
-        <div className="rounded border border-dashed border-dw-border bg-paper2 px-6 py-8 text-center">
-          <p className="font-headline text-sm uppercase tracking-widest text-dw-accent">
-            Player-Level NIL Coming Soon
-          </p>
-          <p className="mx-auto mt-3 max-w-md font-serif text-sm leading-relaxed text-ink2">
-            Individual NIL offers and transfer-portal moves will appear here once
-            the roster is read from your dynasty save. For now, here&apos;s the
-            program&apos;s market read.
-            {snapshot?.userTeam
-              ? ` Tracking ${snapshot.userTeam.name} at Week ${snapshot.week ?? "—"}.`
-              : ""}
-          </p>
-        </div>
+      {/* NIL economy: brand-deal meetings (headroom vs reputation) + player allotment. */}
+      <div className="mt-6">
+        <BrandDeals />
+        <NILManager />
+      </div>
+
+      <div className="space-y-6">
 
         <div className="rounded border border-dw-border bg-paper">
           <div className="flex items-center justify-between gap-4 border-b border-dw-border bg-paper2 px-4 py-3">
@@ -170,7 +537,7 @@ export default function NILPage() {
                 </div>
 
                 <div className="space-y-4">
-                  {column.notes.map((note, i) => (
+                  {(column.notes ?? []).map((note, i) => (
                     <div key={i} className="border-l-2 border-dw-border pl-4">
                       <h5 className="font-headline text-xs uppercase tracking-wider text-dw-accent2">
                         {note.label}

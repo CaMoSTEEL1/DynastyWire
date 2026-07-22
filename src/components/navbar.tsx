@@ -2,7 +2,6 @@
 
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
-import Link from "next/link";
 import {
   Newspaper,
   MessageCircle,
@@ -14,6 +13,11 @@ import {
   Settings,
   HelpCircle,
   UserCircle,
+  Flame,
+  Globe,
+  Snowflake,
+  DollarSign,
+  Coins,
 } from "lucide-react";
 import { useSettings } from "@/components/settings/settings-context";
 import { useTutorial } from "@/components/tutorial/tutorial-context";
@@ -24,12 +28,17 @@ interface NavbarProps {
 
 const navItems = [
   { label: "Front Page", slug: "", icon: Newspaper },
+  { label: "National", slug: "national", icon: Globe },
   { label: "Coach", slug: "coach", icon: UserCircle },
+  { label: "Situation Room", slug: "situation-room", icon: Flame },
   { label: "Social", slug: "social", icon: MessageCircle },
   { label: "Press Conference", slug: "press-conference", icon: Mic },
   { label: "Recruiting", slug: "recruiting", icon: Users },
+  { label: "NIL", slug: "nil", icon: DollarSign },
+  { label: "Offseason", slug: "offseason", icon: Snowflake },
   { label: "Rankings", slug: "rankings", icon: Trophy },
   { label: "Shows", slug: "shows", icon: Tv },
+  { label: "The Book", slug: "betting", icon: Coins },
   { label: "Trophy Room", slug: "trophy-room", icon: Award },
 ] as const;
 
@@ -47,27 +56,28 @@ export default function Navbar({ dynastyId }: NavbarProps) {
   }
 
   return (
-    <nav
-      className={cn(
-        "w-full bg-paper2 border-t border-b border-dw-border",
-        "overflow-x-auto scrollbar-hide"
-      )}
-    >
+    // The tab strip scrolls horizontally on narrow windows; Settings used to scroll off the
+    // right edge entirely and users couldn't find it. The nav is now a flex row with a
+    // PINNED action cluster (help + settings) that never scrolls away.
+    <nav className="flex w-full items-stretch border-t border-b border-dw-border bg-paper2">
       <ul
         className={cn(
-          "flex items-center gap-0",
-          "md:justify-center md:gap-1",
-          "min-w-max md:min-w-0",
+          "flex min-w-0 flex-1 items-center gap-0",
+          "md:gap-1",
+          "overflow-x-auto scrollbar-hide",
           "px-2 md:px-4"
         )}
       >
         {navItems.map(({ label, slug, icon: Icon }) => {
           const active = isActive(slug);
-          const href = slug === "" ? `/${dynastyId}` : `/${dynastyId}/${slug}`;
+          // Plain <a> full-page navigation (not next/link): client-side routing needs RSC
+          // payload fetches that fail silently over Tauri's asset protocol, eating the click.
+          // Each route exports its own index.html (trailingSlash), so hard navs always work.
+          const href = slug === "" ? `/${dynastyId}/` : `/${dynastyId}/${slug}/`;
 
           return (
             <li key={slug}>
-              <Link
+              <a
                 href={href}
                 className={cn(
                   "flex items-center gap-1.5 px-3 py-3 md:px-4 md:py-3",
@@ -81,48 +91,43 @@ export default function Navbar({ dynastyId }: NavbarProps) {
               >
                 <Icon className="w-4 h-4 shrink-0" />
                 <span>{label}</span>
-              </Link>
+              </a>
             </li>
           );
         })}
 
-        {/* Help button */}
-        <li className="ml-auto">
-          <button
-            type="button"
-            onClick={showTutorial}
-            className={cn(
-              "flex items-center gap-1.5 px-3 py-3 md:px-4 md:py-3",
-              "font-sans text-xs md:text-sm uppercase tracking-wider",
-              "transition-colors duration-200 whitespace-nowrap",
-              "border-b-2 border-transparent",
-              "text-ink2 hover:text-ink hover:border-ink3"
-            )}
-            aria-label="Help"
-          >
-            <HelpCircle className="w-4 h-4 shrink-0" />
-          </button>
-        </li>
-
-        {/* Settings gear — always last */}
-        <li>
-          <button
-            type="button"
-            onClick={toggle}
-            className={cn(
-              "flex items-center gap-1.5 px-3 py-3 md:px-4 md:py-3",
-              "font-sans text-xs md:text-sm uppercase tracking-wider",
-              "transition-colors duration-200 whitespace-nowrap",
-              "border-b-2 border-transparent",
-              "text-ink2 hover:text-ink hover:border-ink3"
-            )}
-            aria-label="Settings"
-          >
-            <Settings className="w-4 h-4 shrink-0" />
-            <span className="hidden md:inline">Settings</span>
-          </button>
-        </li>
       </ul>
+
+      {/* Pinned actions — outside the scrolling list so Settings is ALWAYS reachable. */}
+      <div className="flex shrink-0 items-center border-l border-dw-border bg-paper2 pr-1 md:pr-2">
+        <button
+          type="button"
+          onClick={showTutorial}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-3",
+            "font-sans text-xs md:text-sm uppercase tracking-wider",
+            "transition-colors duration-200 whitespace-nowrap",
+            "text-ink2 hover:text-ink"
+          )}
+          aria-label="Help"
+        >
+          <HelpCircle className="w-4 h-4 shrink-0" />
+        </button>
+        <button
+          type="button"
+          onClick={toggle}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-3",
+            "font-sans text-xs md:text-sm uppercase tracking-wider",
+            "transition-colors duration-200 whitespace-nowrap",
+            "text-ink2 hover:text-ink"
+          )}
+          aria-label="Settings"
+        >
+          <Settings className="w-4 h-4 shrink-0" />
+          <span className="hidden md:inline">Settings</span>
+        </button>
+      </div>
     </nav>
   );
 }

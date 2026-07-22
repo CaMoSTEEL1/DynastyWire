@@ -1,5 +1,4 @@
 import { cn } from "@/lib/utils";
-import Link from "next/link";
 
 export default function NotFound() {
   return (
@@ -29,7 +28,7 @@ export default function NotFound() {
         It may have been moved, removed, or never existed in the first place.
       </p>
 
-      <Link
+      <a
         href="/"
         className={cn(
           "mt-8 inline-block rounded bg-dw-accent px-6 py-2.5",
@@ -38,7 +37,7 @@ export default function NotFound() {
         )}
       >
         Back to the Wire
-      </Link>
+      </a>
     </div>
   );
 }

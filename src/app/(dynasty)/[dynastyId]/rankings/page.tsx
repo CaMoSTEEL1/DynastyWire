@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { SectionHeader } from "@/components/ui/section-header";
 import { RankingsBox } from "@/components/ui/rankings-box";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
+import { useIssueTab } from "@/components/dynasty/use-issue-tab";
 import type { RankingsTakeContent } from "@/components/front-page/types";
 
 export default function RankingsPage() {
@@ -13,6 +14,12 @@ export default function RankingsPage() {
   const [take, setTake] = useState<RankingsTakeContent | null>(null);
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
+
+  // Restore this week's take from the persisted issue cache on mount.
+  const cachedTake = useIssueTab<RankingsTakeContent>("rankings");
+  useEffect(() => {
+    if (!take && cachedTake) setTake(cachedTake);
+  }, [cachedTake, take]);
 
   const userTeamName = snapshot?.userTeam?.name ?? settings.userTeam ?? null;
 

@@ -2,6 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import type { ShowTranscript, ShowType } from "@/lib/shows/types";
+import { PodcastPlayer } from "./podcast-player";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 
@@ -11,6 +12,7 @@ const SHOW_ACCENT: Record<ShowType, string> = {
   portal: "text-dw-accent2",
   draft: "text-dw-green",
   hotseat: "text-dw-red",
+  podcast: "text-dw-accent2",
 };
 
 const SHOW_BORDER_ACCENT: Record<ShowType, string> = {
@@ -19,6 +21,7 @@ const SHOW_BORDER_ACCENT: Record<ShowType, string> = {
   portal: "border-dw-accent2/30",
   draft: "border-dw-green/30",
   hotseat: "border-dw-red/30",
+  podcast: "border-dw-accent2/30",
 };
 
 const SPEAKER_COLORS = [
@@ -82,12 +85,23 @@ export function TranscriptViewer({
           {transcript.subtitle} &mdash; Week {transcript.week}
         </p>
 
+        {/* Opt-in podcast audio — auto-plays when a show opens for opted-in users. */}
+        <PodcastPlayer
+          lines={(transcript.dialogue ?? [])
+            .filter((l) => !l.isStageDirection)
+            .map((l) => ({ speaker: l.speaker || "Host", text: l.text }))}
+          weekSeed={transcript.week || 0}
+          resetKey={`${transcript.title}::${transcript.week}`}
+          autoStart
+          label="Listen · Podcast Audio"
+        />
+
         <div className="mt-4 border-t border-dw-border pt-4">
           <p className="mb-2 font-sans text-xs font-medium uppercase tracking-wider text-ink3">
             On Air
           </p>
           <div className="flex flex-wrap gap-4">
-            {transcript.personas.map((persona) => (
+            {(transcript.personas ?? []).map((persona) => (
               <div key={persona.name} className="text-sm">
                 <span className={cn("font-medium", getSpeakerColor(persona.name))}>
                   {persona.name}
@@ -103,7 +117,7 @@ export function TranscriptViewer({
       </div>
 
       <div className="space-y-3">
-        {transcript.dialogue.map((line, i) => {
+        {(transcript.dialogue ?? []).map((line, i) => {
           const speakerColor = getSpeakerColor(line.speaker);
 
           return (

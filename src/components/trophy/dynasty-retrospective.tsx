@@ -45,7 +45,7 @@ export function DynastyRetrospective({
 
       {/* Chapters */}
       <div className="space-y-8">
-        {retrospective.chapters.map((chapter, idx) => (
+        {(retrospective.chapters ?? []).map((chapter, idx) => (
           <motion.section
             key={idx}
             initial={{ opacity: 0, y: 20 }}

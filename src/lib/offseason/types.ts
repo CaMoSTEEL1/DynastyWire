@@ -66,6 +66,37 @@ export interface SpringPreviewContent {
   preseasonRanking: number | null;
 }
 
+// The 9 in-game offseason stages (CurrentOffseasonStage 1..9), mapped to human labels for
+// the hub header. The exact per-stage boundaries vary by save, so the label is a guide; the
+// hub's content is driven by the REAL data present (record, signed class, portal), not by
+// asserting stage-specific events.
+export const OFFSEASON_STAGE_LABELS: string[] = [
+  "Season Wrapped",       // 1
+  "Awards & Honors",      // 2
+  "Draft Decisions",      // 3
+  "Transfer Portal Opens",// 4
+  "Portal & Roster Churn",// 5
+  "Coaching Carousel",    // 6
+  "National Signing Day", // 7
+  "Spring Practice",      // 8
+  "Preseason Setup",      // 9
+];
+
+export function offseasonStageLabel(stage: number | null | undefined, total: number | null | undefined): string {
+  if (stage == null) return "The Offseason";
+  const idx = Math.max(0, Math.min(OFFSEASON_STAGE_LABELS.length - 1, stage - 1));
+  return OFFSEASON_STAGE_LABELS[idx] ?? "The Offseason";
+}
+
+export interface OffseasonBrief {
+  headline: string;
+  stageLabel: string;
+  body: string;
+  storylines: { title: string; text: string }[];
+  lookAhead: string;
+  error?: boolean;
+}
+
 export interface OffseasonPhaseConfig {
   phase: OffseasonPhase;
   title: string;

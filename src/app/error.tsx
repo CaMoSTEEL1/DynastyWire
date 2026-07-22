@@ -46,6 +46,13 @@ export default function ErrorPage({ error, reset }: ErrorPageProps) {
         </p>
       )}
 
+      {/* First stack frames so bug reports pinpoint the crashing component. */}
+      {error.stack && (
+        <pre className="mt-3 max-w-lg overflow-x-auto rounded border border-dw-border bg-paper2 px-3 py-2 text-left font-mono text-[10px] leading-relaxed text-ink3/70">
+          {error.stack.split("\n").slice(0, 5).join("\n")}
+        </pre>
+      )}
+
       <button
         onClick={reset}
         className={cn(

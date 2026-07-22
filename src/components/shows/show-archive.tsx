@@ -9,6 +9,7 @@ const TYPE_BADGE_COLORS: Record<ShowType, string> = {
   portal: "bg-dw-accent2/10 text-dw-accent2 border-dw-accent2/20",
   draft: "bg-dw-green/10 text-dw-green border-dw-green/20",
   hotseat: "bg-dw-red/10 text-dw-red border-dw-red/20",
+  podcast: "bg-dw-accent2/10 text-dw-accent2 border-dw-accent2/20",
 };
 
 interface ArchivedShow {

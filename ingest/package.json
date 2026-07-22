@@ -19,9 +19,15 @@
     "@yao-pkg/pkg": "^6.21.0"
   },
   "pkg": {
-    "scripts": ["gen/**/*.js"],
-    "assets": ["node_modules/madden-franchise/data/**/*"],
-    "targets": ["node20-win-x64"],
+    "scripts": [
+      "gen/**/*.js"
+    ],
+    "assets": [
+      "node_modules/madden-franchise/data/**/*"
+    ],
+    "targets": [
+      "node22-win-x64"
+    ],
     "outputPath": "dist"
   }
 }

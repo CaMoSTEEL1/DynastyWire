@@ -3,8 +3,9 @@
 // Coaching carousel: generate the staff + rumor mill from the real program state
 // (ingest/gen/carousel.js). Rumors are read-only narrative (resolution was server-bound).
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
+import { useIssueTab } from "@/components/dynasty/use-issue-tab";
 import { SectionHeader } from "@/components/ui/section-header";
 import { StaffCard } from "@/components/carousel/staff-card";
 import { RumorCard } from "@/components/carousel/rumor-card";
@@ -23,6 +24,16 @@ export default function CarouselPage() {
   const [generating, setGenerating] = useState(false);
   const [tried, setTried] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Restore this week's staff + rumor mill from the persisted issue cache on mount.
+  const cachedCarousel = useIssueTab<CarouselResult>("carousel");
+  useEffect(() => {
+    if (staff.length === 0 && rumors.length === 0 && !tried && cachedCarousel && !cachedCarousel.error) {
+      setStaff(Array.isArray(cachedCarousel.staff) ? cachedCarousel.staff : []);
+      setRumors(Array.isArray(cachedCarousel.rumors) ? cachedCarousel.rumors : []);
+      setTried(true);
+    }
+  }, [cachedCarousel, staff.length, rumors.length, tried]);
 
   const run = useCallback(async () => {
     setGenerating(true);
