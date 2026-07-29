@@ -18,6 +18,8 @@ import {
   Snowflake,
   DollarSign,
   Coins,
+  Archive,
+  ListOrdered,
 } from "lucide-react";
 import { useSettings } from "@/components/settings/settings-context";
 import { useTutorial } from "@/components/tutorial/tutorial-context";
@@ -37,8 +39,10 @@ const navItems = [
   { label: "NIL", slug: "nil", icon: DollarSign },
   { label: "Offseason", slug: "offseason", icon: Snowflake },
   { label: "Rankings", slug: "rankings", icon: Trophy },
+  { label: "The Slate", slug: "scoreboard", icon: ListOrdered },
   { label: "Shows", slug: "shows", icon: Tv },
   { label: "The Book", slug: "betting", icon: Coins },
+  { label: "Archive", slug: "archive", icon: Archive },
   { label: "Trophy Room", slug: "trophy-room", icon: Award },
 ] as const;
 

@@ -40,6 +40,8 @@ import {
 import { generateInApp } from "@/lib/dynasty/gen";
 import { loadSaga } from "@/lib/dynasty/saga-store";
 import { enforceSuspensions, loadSuspensions, isActive, weeksLeft } from "@/lib/dynasty/suspensions";
+import { buildSeasonRecord, upsertSeason } from "@/lib/dynasty/archive";
+import { disburseWeekly } from "@/lib/dynasty/deals";
 import {
   ISSUE_TABS,
   eagerTabs,
@@ -129,9 +131,12 @@ const EMPTY_SETTINGS: DynastySettings = {
   openaiNoMaxTokens: null,
   hideRecruitOverall: null,
   consequenceSync: null,
+  nilWriteToSave: null,
   podcastAudio: null,
+  presserTakeover: null,
   budgetMode: null,
   elevenLabsKey: null,
+  customVoices: null,
   autoGenerate: null,
   autoGenerateTabs: null,
 };
@@ -259,7 +264,25 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
   );
   const year = snapshot?.year ?? snapshot?.dynastyYear ?? 0;
   const week = snapshot?.week ?? 0;
-  const currentIssueKey = snapshot?.userTeam ? `${dynastyId}::${year}::${week}` : null;
+  // One in-game week has TWO editions: the pregame preview (before you play) and the postgame
+  // issue (after). They must cache separately — with a shared key, the preview written before
+  // kickoff was served back as "this week's issue" after the game, and the recap never wrote.
+  // Postgame keeps the legacy key shape so issues cached by earlier builds still resolve.
+  const isPregame = useMemo(() => {
+    const row = snapshot?.userTeamRow;
+    if (snapshot == null || row == null || snapshot.week == null) return false;
+    const userGames = (snapshot.games ?? []).filter(
+      (g) => g.homeRow === row || g.awayRow === row
+    );
+    const maxYear = userGames.reduce((m, g) => (g.year != null && g.year > m ? g.year : m), -1);
+    const g = userGames.find(
+      (x) => (x.year == null || maxYear < 0 || x.year === maxYear) && x.week === snapshot.week
+    );
+    return !!g && !g.played;
+  }, [snapshot]);
+  const currentIssueKey = snapshot?.userTeam
+    ? `${dynastyId}::${year}::${week}${isPregame ? "::pre" : ""}`
+    : null;
 
   // The nav uses hard page navigations (Tauri's asset protocol breaks Next client routing),
   // so this provider remounts on every tab switch. The session warm-cache makes those
@@ -393,8 +416,33 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const ti = snapshot?.userTeam?.teamIndex;
     if (!currentSavePath || ti == null) return;
-    void enforceSuspensions(dynastyId, currentSavePath, ti, year, week).catch(() => {});
-  }, [dynastyId, currentSavePath, snapshot, year, week]);
+    void enforceSuspensions(
+      dynastyId, currentSavePath, ti, year, week, snapshot?.dynastyYear ?? null
+    ).catch(() => {});
+    // Brand deals pay their weekly slice here — once per in-game week, idempotent, and only
+    // when NIL-to-save is on. This is what makes a "500 over 10 weeks" deal actually arrive
+    // over ten weeks instead of landing in a lump the moment it's signed.
+    if (settings.nilWriteToSave !== false) {
+      void disburseWeekly(dynastyId, currentSavePath, ti, year, week).catch(() => {});
+    }
+  }, [dynastyId, currentSavePath, snapshot, year, week, settings.nilWriteToSave]);
+
+  // Season Archive checkpoint: continuously upsert THIS season's record (record, stat lines,
+  // games, leaders, storyline ledger) keyed by year. Idempotent, so by the time a new season
+  // starts, last year's final record is already saved — that's the durable multi-year memory
+  // the save itself doesn't keep. Runs off the parsed snapshot; no API cost, no save writes.
+  useEffect(() => {
+    if (!snapshot?.userTeam || year <= 0) return;
+    let cancelled = false;
+    (async () => {
+      const ledger = await loadSaga(dynastyId).then((s) => s?.ledger ?? []).catch(() => []);
+      if (cancelled) return;
+      const record = buildSeasonRecord(snapshot, roster, ledger, dynastyId);
+      if (record) await upsertSeason(record).catch(() => {});
+    })();
+    return () => { cancelled = true; };
+    // Rebuild when the record could have changed: new result, new roster data, new week.
+  }, [dynastyId, year, week, snapshot, roster]);
 
   // Watch-folder auto-sync: when the game overwrites the dynasty autosave, the Rust
   // watcher emits `dynasty-saved` and we re-ingest automatically. (The wow feature.)
@@ -406,6 +454,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
     if (!saveFile) return;
     const folder = saveFile.replace(/[\\/][^\\/]*$/, "");
     let unlisten: (() => void) | undefined;
+    let debounce: ReturnType<typeof setTimeout> | undefined;
     invoke("start_watch", { folder }).catch(() => {});
     // Only re-ingest when the CHANGE is to the active dynasty's file — ignore other saves /
     // autosaves in the same folder so switching dynasties stays clean.
@@ -417,7 +466,14 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       const changed =
         typeof evt.payload === "string" ? evt.payload.replace(/^.*[\\/]/, "").toUpperCase() : "";
       if (!changed || changed === stem || changed === `${stem}-AUTOSAVE`) {
-        refreshRef.current(true); // real change → full re-parse
+        // DEBOUNCE: the game writes the ~10MB save in bursts (and autosaves periodically), so a
+        // single save fires many FS events. Re-parsing on each one pins the CPU and lags the app.
+        // Coalesce the burst into ONE full re-parse ~2.5s after the writes settle.
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(() => {
+          debounce = undefined;
+          refreshRef.current(true); // real change → full re-parse
+        }, 2500);
       }
     })
       .then((u) => {
@@ -425,6 +481,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       })
       .catch(() => {});
     return () => {
+      if (debounce) clearTimeout(debounce);
       if (unlisten) unlisten();
     };
   }, [saveFile]);

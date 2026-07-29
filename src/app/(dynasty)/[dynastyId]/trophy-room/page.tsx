@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { DynastyRetrospective } from "@/components/trophy/dynasty-retrospective";
+import { SeasonRecords } from "@/components/trophy/season-records";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { useIssueTab } from "@/components/dynasty/use-issue-tab";
 import type { DynastyRetrospective as DynastyRetrospectiveType } from "@/lib/trophy/types";
@@ -167,25 +168,8 @@ export default function TrophyRoomPage() {
       {/* Divider */}
       <div className="h-px w-full bg-dw-border" />
 
-      {/* ── Coming Soon (multi-season history not yet mapped) ───────────── */}
-      <div>
-        <h3 className="mb-3 font-headline text-sm uppercase tracking-wider text-ink">
-          All-Time Records &amp; Season Archives
-        </h3>
-        <div className="rounded border border-dashed border-dw-border bg-paper2/60 px-6 py-10 text-center">
-          <p className="font-headline text-lg text-ink">Reading from your save…</p>
-          <div className="mx-auto mt-3 h-px w-16 bg-dw-accent" />
-          <p className="mt-4 font-serif text-sm leading-relaxed text-ink2">
-            Legacy scores, national and conference championships, award cases, and
-            season-by-season archives need multi-season history that isn&apos;t mapped
-            from the dynasty file yet. As DynastyWire ingests more of your save, the full
-            trophy case will fill in here.
-          </p>
-          <p className="mt-4 font-sans text-xs uppercase tracking-wider text-ink3">
-            Coming soon
-          </p>
-        </div>
-      </div>
+      {/* ── The Vault: multi-season records + export ───────────────────── */}
+      <SeasonRecords />
     </div>
   );
 }

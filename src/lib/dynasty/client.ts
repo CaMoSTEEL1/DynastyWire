@@ -91,6 +91,13 @@ export interface SnapshotGame {
   awayScore: number | null;
   played: boolean;
   simmed: boolean | null;
+  /** Overtime points, when the game went past regulation. */
+  homeOT?: number | null;
+  awayOT?: number | null;
+  /** Points by quarter, [Q1, Q2, Q3, Q4] — the parser has always sent these; the scouting
+   * desk reads them to tell a fast starter from a team that plays you close and fades. */
+  homeQuarters?: (number | null)[] | null;
+  awayQuarters?: (number | null)[] | null;
 }
 
 export interface DynastyCalendar {
@@ -182,6 +189,41 @@ export interface PortalBoard {
   atRisk: PortalRisk[];
 }
 
+/** One prospect's REAL commitment, destination included. */
+export interface RecruitCommit {
+  name: string;
+  position: string | null;
+  stars: number | null;
+  nationalRank: number | null;
+  stage: "Signed" | "Committed";
+  /** The school he actually committed to (resolved from the save). */
+  school: string;
+  schoolRank: number | null;
+}
+
+/** A program's incoming class, aggregated. */
+export interface CommitSchool {
+  school: string;
+  teamRank: number | null;
+  count: number;
+  /** Commits ranked inside the national top 300 (or 4★+). */
+  blueChips: number;
+  avgRank: number | null;
+  top: string[];
+}
+
+/** League-wide commitment board: who's winning the trail and who went where. */
+export interface CommitmentBoard {
+  bySchool: CommitSchool[];
+  notable: RecruitCommit[];
+  total: number;
+}
+
+/** Who committed WHERE, league-wide — real destinations straight from the save. */
+export async function getCommitments(savePath: string): Promise<CommitmentBoard> {
+  return JSON.parse(await invoke<string>("dynasty_commitments", { savePath }));
+}
+
 /** League-wide transfer-portal board built from real depth-chart + dealbreaker data. */
 export async function getPortal(savePath: string): Promise<PortalBoard> {
   return JSON.parse(await invoke<string>("dynasty_portal", { savePath }));
@@ -262,6 +304,24 @@ export interface RosterStats {
   forcedFumbles?: number | null;
 }
 
+/** The scouting slice of a player's trait ratings (see ingest/snapshot.js SCOUT_RATING_FIELDS).
+ * Every field is 0-99 and every field is optional — an older cached roster won't carry them.
+ * These are an INPUT to scouting language, never something the UI prints. */
+export interface RosterRatings {
+  speed?: number; accel?: number; agility?: number; strength?: number;
+  awareness?: number; playRec?: number; pursuit?: number;
+  tackle?: number; hitPower?: number;
+  manCover?: number; zoneCover?: number; press?: number;
+  catching?: number; catchTraffic?: number;
+  routeShort?: number; routeMed?: number; routeDeep?: number; release?: number;
+  breakTackle?: number; trucking?: number; juke?: number; vision?: number;
+  powerMoves?: number; finesseMoves?: number; blockShed?: number;
+  passBlock?: number; runBlock?: number;
+  throwPower?: number; throwShort?: number; throwMid?: number; throwDeep?: number;
+  throwPressure?: number; throwRun?: number;
+  kickPower?: number; kickAccuracy?: number;
+}
+
 export interface RosterPlayer {
   name: string;
   position: string | null;
@@ -279,6 +339,13 @@ export interface RosterPlayer {
   dealbreaker?: string | null;
   /** Latest-season stat line (top-40 players only). */
   stats?: RosterStats | null;
+  /** The save's own archetype for this player: "DT_SpeedRusher", "CB_MantoMan",
+   * "WR_PhysicalRouteRunner". Decoded for display by lib/dynasty/traits.ts. */
+  archetype?: string | null;
+  /** Ability tier the game assigns: None / Bronze / Silver / Gold / Platinum. */
+  abilityTier?: string | null;
+  /** Scouting trait ratings — the input behind "why he's a threat" and "where to go at him". */
+  ratings?: RosterRatings | null;
 }
 
 /** A team's real roster. No teamIndex = the user's team; pass a teamIndex to read any
@@ -306,6 +373,30 @@ export interface ImpactPayload {
   /** Suspensions: set a player's OverallRating (a temporary drop buries him on the depth
    * chart so the game benches him; the sidecar returns the before value for restoration). */
   overall?: { name: string; value: number }[];
+  /** Availability — the REAL bench lever (the game sits players by InjuryStatus, not by
+   * rating). `out: true` holds a player out for `weeks`; `out: false` restores the exact
+   * prior state captured when he was held out. */
+  availability?: {
+    name: string;
+    out: boolean;
+    weeks?: number;
+    week?: number | null;
+    year?: number | null;
+    restore?: InjurySnapshot | null;
+  }[];
+}
+
+/** A player's injury fields exactly as they were before we held him out. */
+export interface InjurySnapshot {
+  status?: string | null;
+  type?: string | null;
+  severity?: string | null;
+  total?: number | null;
+  min?: number | null;
+  max?: number | null;
+  stage?: string | null;
+  week?: number | null;
+  year?: number | null;
 }
 
 export interface ImpactResult {
@@ -319,6 +410,7 @@ export interface ImpactResult {
     jobSecurity?: { before: number | null; after: number } | null;
     nil?: { name: string; before: number | null; after: number }[];
     overall?: { name: string; field: string; before: number | null; after: number }[];
+    availability?: { name: string; out: boolean; weeks?: number; before?: InjurySnapshot }[];
   };
   backup?: string;
 }
@@ -504,6 +596,10 @@ export interface DynastySettings {
   // ---- Global (shared across dynasties) ----
   anthropicKey: string | null; // BYO-key, stored locally only
   elevenLabsKey: string | null;
+  /** Cast shows from the user's own ElevenLabs voices (cloned/designed/saved) instead of the
+   * premade stock ones. null = on; false = force premades. Accounts with no custom voices
+   * fall back to premades on their own, so this only matters as an opt-out. */
+  customVoices: boolean | null;
   // OpenAI-compatible provider (optional alternative to the Anthropic key): any service
   // exposing a /v1/chat/completions endpoint — OpenAI, OpenRouter, Groq, local models.
   provider: "anthropic" | "openai" | null; // null = anthropic
@@ -517,8 +613,16 @@ export interface DynastySettings {
   /** Consequence Sync: write meters back into the save (player confidence, program points,
    * job security). Opt-in — it modifies the save file (with automatic backups). */
   consequenceSync: boolean | null;
+  /** Write NIL / program-point changes into the save (brand deals, NIL allotments, and the
+   * Situation Room stipends). Default ON (null = on). Turn OFF for a zero-to-hero / no-NIL
+   * run: the app still runs the drama and moves your hot seat, it just never touches your
+   * players' money or your program points. */
+  nilWriteToSave: boolean | null;
   /** Podcast audio: read shows aloud via ElevenLabs (needs the ElevenLabs key). Opt-in. */
   podcastAudio: boolean | null;
+  /** The podium takeover: when a new game week lands, the press conference takes over the
+   * screen instead of waiting in a tab. null = on; false = never interrupt. */
+  presserTakeover: boolean | null;
   /** Budget mode — cheaper model + leaner auto-write to cut API cost. null = ON (default). */
   budgetMode: boolean | null;
   // Weekly Issue auto-population (design Q3). Default-on: when a new in-game week is
@@ -542,6 +646,7 @@ export async function loadSettings(): Promise<DynastySettings> {
     coachName: (await store.get<string>("coachName")) ?? null,
     anthropicKey: (await store.get<string>("anthropicKey")) ?? null,
     elevenLabsKey: (await store.get<string>("elevenLabsKey")) ?? null,
+    customVoices: (await store.get<boolean>("customVoices")) ?? null,
     provider: (await store.get<"anthropic" | "openai">("provider")) ?? null,
     openaiBaseUrl: (await store.get<string>("openaiBaseUrl")) ?? null,
     openaiKey: (await store.get<string>("openaiKey")) ?? null,
@@ -549,7 +654,9 @@ export async function loadSettings(): Promise<DynastySettings> {
     openaiNoMaxTokens: (await store.get<boolean>("openaiNoMaxTokens")) ?? null,
     hideRecruitOverall: (await store.get<boolean>("hideRecruitOverall")) ?? null,
     consequenceSync: (await store.get<boolean>("consequenceSync")) ?? null,
+    nilWriteToSave: (await store.get<boolean>("nilWriteToSave")) ?? null,
     podcastAudio: (await store.get<boolean>("podcastAudio")) ?? null,
+    presserTakeover: (await store.get<boolean>("presserTakeover")) ?? null,
     budgetMode: (await store.get<boolean>("budgetMode")) ?? null,
     autoGenerate: (await store.get<boolean>("autoGenerate")) ?? null,
     autoGenerateTabs: (await store.get<string[]>("autoGenerateTabs")) ?? null,

@@ -143,6 +143,9 @@ export interface StoryOption {
   label: string;
   approach: string;
   tone: "hardline" | "measured" | "protective" | "pragmatic";
+  /** What this move costs — who it upsets, what political capital it spends. Every option
+   * carries one, so no choice reads as free. Optional for decks cached by an older build. */
+  cost?: string;
 }
 
 export interface Situation {
@@ -154,6 +157,21 @@ export interface Situation {
   source: string;
   stakes: string;
   options: StoryOption[];
+  /** When this grew out of an earlier decision, one line naming it. The desk now sees the
+   * season's decision history, so storylines can compound instead of resetting each week. */
+  callback?: string;
+}
+
+/** A situation the coach chose to sit on. It comes back next week, one severity hotter —
+ * that's what makes "let it ride" a real decision rather than a free skip. */
+export interface DeferredSituation {
+  storylineId: string;
+  week: number;
+  year: number;
+  headline: string;
+  playerName: string | null;
+  severity: StorySeverity;
+  category: StoryCategory;
 }
 
 export interface StorylinesResult {
@@ -227,6 +245,24 @@ export interface LedgerEntry {
   at: number;
 }
 
+/** Where the PROGRAM itself is coming from. A TeamBuilder school or an FCS team that just
+ * jumped up has a completely different story than a blue blood, and the media should know
+ * it — this is what makes "we moved up from FCS two years ago" part of every story. */
+export type ProgramSituation =
+  | "established"
+  | "fcs-jump"
+  | "new-program"
+  | "rebuild"
+  | "fallen-giant";
+
+export const PROGRAM_SITUATIONS: { id: ProgramSituation; label: string; desc: string }[] = [
+  { id: "established", label: "Established FBS", desc: "A normal FBS program with its own history — nothing unusual about how it got here." },
+  { id: "fcs-jump", label: "Moved Up from FCS", desc: "This program just made the jump to FBS. Everything is new: the level, the money, the schedule, the doubters." },
+  { id: "new-program", label: "Brand-New Program", desc: "A created/TeamBuilder school playing its first seasons. No history, no alumni base, everything is being written now." },
+  { id: "rebuild", label: "Rebuild from the Bottom", desc: "A long-struggling program being dragged back to relevance." },
+  { id: "fallen-giant", label: "Fallen Giant", desc: "A program with real history that fell off, expected to return to what it was." },
+];
+
 export interface CoachBackstory {
   archetype: "disciplinarian" | "players-coach" | "nil-merchant" | "hometown-savior";
   customPath: string;
@@ -235,6 +271,13 @@ export interface CoachBackstory {
   boosterName: string;
   reporterName: string;
   rivalCoachName: string;
+  /** The program's own origin — drives how the media frames the school itself. */
+  programSituation?: ProgramSituation | null;
+  /** The user's own words about the program's situation (e.g. "moved up from FCS in 2029,
+   * year two in the Sun Belt, still playing in a 20k stadium"). */
+  programNote?: string;
+  /** Generated narrative of the program's origin/identity. */
+  programBio?: string;
 }
 
 /** A message in a coach↔recruit text thread (recruiting hub). Persisted so conversations
@@ -258,6 +301,8 @@ export interface SagaState {
   recruitDossiers?: Record<string, unknown>;
   /** figure ("ad"|"booster"|"reporter") → the running coach↔figure text thread. */
   figureThreads?: Record<string, RecruitThreadMessage[]>;
+  /** Situations the coach sat on, waiting to come back hotter. Cleared once they return. */
+  deferred?: DeferredSituation[];
   seededAt: number;
   updatedAt: number;
 }

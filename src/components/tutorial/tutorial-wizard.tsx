@@ -117,9 +117,9 @@ const steps: TutorialStep[] = [
   },
   {
     icon: Zap,
-    title: "What\u2019s New in v0.1.7",
+    title: "What\u2019s New in v0.1.9",
     description:
-      "\u2022 Costs slashed: budget mode on by default + cached week context, so a season now costs what a single week used to.\n\u2022 Choose exactly which sections auto-write each week.\n\u2022 The Book adds spread betting, win probability, and a season record.\n\u2022 Podcast audio is now gapless and stitched for a real broadcast feel \u2014 with a Listen button on shows and the national radio segment.\n\u2022 Player suspensions: rare serious incidents and failed grades bench a player in your actual save, and the whole media universe knows he\u2019s out.\n\u2022 Smarter NIL valuations, GPA on the depth chart, and a pile of polish.",
+      "\u2022 The Podium: when a new week lands, the app becomes a room \u2014 full screen, one reporter at a time. No extra credits.\n\u2022 The scouting report is built from real math now: unit edges, mismatches, tendencies, quarter splits \u2014 and film language instead of OVR columns.\n\u2022 The Situation Room reads the pressure already in your save (buried stars, underpaid guys) instead of inventing drama.\n\u2022 The Slate: the whole league\u2019s week \u2014 scores, ranked matchups, upsets \u2014 read straight from your save, free.\n\u2022 The Archive: every week the Wire has written, re-readable and exportable to JSON.\n\u2022 Your program gets a backstory too \u2014 FCS jump, brand-new TeamBuilder school, fallen giant.\n\u2022 Fixes: players landing on the wrong team, pregame weeks read as finished games, records ignoring bye weeks, and suspensions that now actually hold a player out.",
   },
 ];
 

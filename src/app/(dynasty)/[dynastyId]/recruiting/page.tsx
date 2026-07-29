@@ -14,6 +14,7 @@ import { useIssueTab } from "@/components/dynasty/use-issue-tab";
 import { useSaga } from "@/components/dynasty/use-saga";
 import { getRecruits, type Recruit } from "@/lib/dynasty/client";
 import { findRecruitEntry, recruitThreadKey } from "@/lib/dynasty/saga";
+import { starString } from "@/lib/dynasty/stars";
 import { TREND_CONFIG } from "@/lib/recruiting/types";
 
 // ── Dossier types (shape the recruit-dossier generator returns) ────────────────
@@ -48,8 +49,10 @@ interface RecruitingColumn {
 const DOSSIER_TABS = ["Backstory", "Film", "Buzz", "Social", "Texts"] as const;
 type DossierTab = (typeof DOSSIER_TABS)[number];
 
-function stars(n: number | null): string {
-  return n != null ? "★".repeat(Math.max(0, Math.min(5, n))) : "—";
+// Stars aren't stored in the save — they're derived from the prospect's real national rank.
+// See lib/dynasty/stars.ts.
+function stars(stored: number | null, nationalRank?: number | null): string {
+  return starString(stored, nationalRank);
 }
 
 function TrendBadge({ trend }: { trend: string }) {
@@ -140,7 +143,7 @@ function DossierModal({
               <span className="font-sans text-[10px] uppercase tracking-widest text-ink3">
                 {recruit.nationalRank ? `#${recruit.nationalRank} nat'l` : "Prospect"}
               </span>
-              <span className="text-dw-accent2">{stars(recruit.stars)}</span>
+              <span className="text-dw-accent2">{stars(recruit.stars, recruit.nationalRank)}</span>
             </div>
             <h2 className="font-headline text-2xl uppercase tracking-wide text-ink">{recruit.name}</h2>
             <p className="font-sans text-xs text-ink3">
@@ -498,7 +501,7 @@ export default function RecruitingPage() {
                         <td className="py-2 pr-2 font-sans text-ink3">{r.nationalRank ?? "—"}</td>
                         <td className="py-2 pr-2 font-headline text-ink hover:text-dw-accent">{r.name}</td>
                         <td className="py-2 pr-2 text-ink2">{r.position ?? "—"}</td>
-                        <td className="py-2 pr-2 text-dw-accent2">{stars(r.stars)}</td>
+                        <td className="py-2 pr-2 text-dw-accent2">{stars(r.stars, r.nationalRank)}</td>
                         {!hideOvr && <td className="py-2 pr-2 text-ink2">{r.overall ?? "—"}</td>}
                         <td className="py-2 pr-2">
                           {r.committedToUser ? (

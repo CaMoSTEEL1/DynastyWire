@@ -94,6 +94,14 @@ export interface OffseasonBrief {
   body: string;
   storylines: { title: string; text: string }[];
   lookAhead: string;
+  /** League-wide transfer-portal read: who's winning/losing the portal and the notable
+   * names on the move. Winners are analysis (the save doesn't expose landing spots);
+   * losers + movers are grounded in the real portal board. */
+  portalReport?: {
+    winners: { team: string; note: string }[];
+    losers: { team: string; note: string }[];
+    movers: { player: string; note: string }[];
+  } | null;
   error?: boolean;
 }
 

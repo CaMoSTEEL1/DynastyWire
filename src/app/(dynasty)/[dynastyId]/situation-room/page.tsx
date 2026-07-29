@@ -23,6 +23,16 @@ import {
   SUSPENDED_OVR,
   type Suspension,
 } from "@/lib/dynasty/suspensions";
+import { playerLine } from "@/lib/dynasty/scouting";
+import {
+  kindLabel,
+  playerStandings,
+  pressureBoard,
+  STANDING_LABEL,
+  type PlayerStanding,
+  type PressurePoint,
+  type Standing,
+} from "@/lib/dynasty/pressure";
 import { cn } from "@/lib/utils";
 import {
   CATEGORY_LABEL,
@@ -422,10 +432,13 @@ function OpenCard({
   situation,
   busy,
   onDecide,
+  onDefer,
 }: {
   situation: Situation;
   busy: boolean;
   onDecide: (option: StoryOption) => void;
+  /** Absent for situations that cannot be ignored (an academic ruling has already happened). */
+  onDefer?: () => void;
 }) {
   return (
     <div className="rounded border border-dw-border bg-paper2 px-5 py-5">
@@ -444,6 +457,11 @@ function OpenCard({
       </div>
 
       <h3 className="mt-2 font-headline text-xl uppercase tracking-wide text-ink">{situation.headline}</h3>
+      {situation.callback && (
+        <p className="mt-1.5 border-l-2 border-dw-accent2 pl-2 font-serif text-xs italic text-dw-accent2">
+          This traces back: {situation.callback}
+        </p>
+      )}
       <p className="mt-2 font-serif text-ink leading-relaxed">{situation.dek}</p>
 
       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1">
@@ -473,13 +491,112 @@ function OpenCard({
               <span className="font-sans text-[10px] uppercase tracking-wider text-ink3">{o.tone}</span>
             </div>
             <p className="mt-0.5 font-serif text-sm text-ink2 leading-snug">{o.approach}</p>
+            {o.cost && (
+              <p className="mt-1 font-sans text-[11px] text-dw-yellow">
+                <span className="uppercase tracking-wider text-ink3">Costs you:</span> {o.cost}
+              </p>
+            )}
           </button>
         ))}
+
+        {onDefer && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onDefer}
+            className="w-full rounded border border-dashed border-dw-border bg-transparent px-4 py-2.5 text-left transition-colors hover:border-dw-yellow/60 disabled:opacity-40"
+          >
+            <div className="flex items-center justify-between">
+              <span className="font-sans text-sm font-semibold uppercase tracking-wider text-ink3">Let it ride</span>
+              <span className="font-sans text-[10px] uppercase tracking-wider text-ink3">no decision</span>
+            </div>
+            <p className="mt-0.5 font-serif text-sm text-ink3 leading-snug">
+              Sit on it and hope it goes away. It won&apos;t — it comes back next week, hotter.
+            </p>
+          </button>
+        )}
       </div>
 
       {busy && (
         <p className="mt-3 font-sans text-xs uppercase tracking-wider text-dw-accent">The fallout is landing…</p>
       )}
+    </div>
+  );
+}
+
+// ── The Pressure Board ────────────────────────────────────────────────────────
+// Computed from the roster, not generated: who on THIS team is already unhappy and why.
+// Free, instant, and it can't invent a grievance — the same contract as the scouting desk's
+// instant read. It also seeds the generator, so the week's situations are about these men.
+
+const HEAT_STYLE: Record<number, { label: string; style: string }> = {
+  3: { label: "Boiling", style: "border-dw-red/40 bg-dw-red/5 text-dw-red" },
+  2: { label: "Real", style: "border-dw-yellow/40 bg-dw-yellow/5 text-dw-yellow" },
+  1: { label: "Simmering", style: "border-dw-border bg-paper text-ink3" },
+};
+
+function PressureBoard({ board }: { board: PressurePoint[] }) {
+  if (board.length === 0) return null;
+  return (
+    <div className="rounded border border-dw-border bg-paper2 p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="font-headline text-xs uppercase tracking-widest text-ink3">The Pressure Board</h3>
+        <p className="font-sans text-[10px] text-ink3">off your roster · no AI</p>
+      </div>
+      <p className="mt-0.5 font-serif text-[11px] font-light text-ink3">
+        Real grievances already sitting in your building
+      </p>
+      <ul className="mt-3 space-y-2">
+        {board.map((pp, i) => {
+          const heat = HEAT_STYLE[pp.heat];
+          return (
+            <li key={i} className={cn("rounded border px-3 py-2", heat.style.replace(/text-\S+/, ""))}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={cn("rounded border px-1.5 py-0.5 font-sans text-[9px] uppercase tracking-wider", heat.style)}>
+                  {heat.label}
+                </span>
+                <span className="font-sans text-[10px] uppercase tracking-wider text-ink3">{kindLabel(pp.kind)}</span>
+              </div>
+              <p className="mt-1 font-sans text-xs uppercase tracking-wider text-ink">
+                {playerLine(pp.player)} <span className="text-ink3">{pp.player.position ?? ""}</span>
+              </p>
+              <p className="mt-0.5 font-serif text-[13px] leading-snug text-ink2">{pp.why}</p>
+              <p className="mt-0.5 font-serif text-[11px] italic text-ink3">{pp.risk}</p>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+// ── The Room ──────────────────────────────────────────────────────────────────
+// Who's got your back and who you burned, rolled up from every decision you've made.
+
+const STANDING_STYLE: Record<Standing, string> = {
+  backed: "text-dw-green",
+  burned: "text-dw-red",
+  mixed: "text-dw-yellow",
+  neutral: "text-ink3",
+};
+
+function TheRoom({ standings }: { standings: PlayerStanding[] }) {
+  const shown = standings.filter((s) => s.standing !== "neutral").slice(0, 6);
+  if (shown.length === 0) return null;
+  return (
+    <div className="rounded border border-dw-border bg-paper2 p-4">
+      <h3 className="font-headline text-xs uppercase tracking-widest text-ink3">The Room</h3>
+      <p className="mt-0.5 font-serif text-[11px] font-light text-ink3">How your calls landed with the men involved</p>
+      <ul className="mt-3 space-y-1.5">
+        {shown.map((s) => (
+          <li key={s.name} className="flex items-baseline justify-between gap-2 border-b border-dw-border/40 pb-1.5">
+            <span className="font-sans text-xs uppercase tracking-wider text-ink">{s.name}</span>
+            <span className={cn("font-sans text-[10px] uppercase tracking-wider", STANDING_STYLE[s.standing])}>
+              {STANDING_LABEL[s.standing]}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -637,7 +754,11 @@ function ConsequenceSyncPanel({
   meters: SagaMeters;
   resolvedThisWeek: Resolution[];
 }) {
-  const { snapshot, roster, currentSavePath, dynastyId, year, week } = useDynasty();
+  const { snapshot, roster, currentSavePath, dynastyId, year, week, settings } = useDynasty();
+  // NIL-to-save off (Settings → Immersion) → the sync still writes confidence + job
+  // security, but the booster program-points stipend is zeroed. That's the money faucet
+  // JUSTIN's zero-to-hero complaint was about ("50 NIL a week for Georgia State").
+  const writeNil = settings.nilWriteToSave !== false;
   const weekKey = issueKey(dynastyId, year, week);
   const [synced, setSynced] = useState<ImpactResult | null>(null);
   const [checked, setChecked] = useState(false);
@@ -661,10 +782,12 @@ function ConsequenceSyncPanel({
   }, [weekKey]);
 
   const teamIndex = snapshot?.userTeam?.teamIndex ?? null;
-  const plan = useMemo(
-    () => (teamIndex != null ? buildImpactPlan(meters, roster, teamIndex, resolvedThisWeek) : null),
-    [meters, roster, teamIndex, resolvedThisWeek]
-  );
+  const plan = useMemo(() => {
+    if (teamIndex == null) return null;
+    const p = buildImpactPlan(meters, roster, teamIndex, resolvedThisWeek);
+    if (!writeNil) p.payload.programPointsDelta = 0; // NIL-to-save off → no money movement
+    return p;
+  }, [meters, roster, teamIndex, resolvedThisWeek, writeNil]);
 
   const push = useCallback(async () => {
     if (!plan || !currentSavePath || busy) return;
@@ -707,9 +830,13 @@ function ConsequenceSyncPanel({
         </p>
         <p className="flex justify-between">
           <span className="text-ink3">Program points</span>
-          <span className={cn(ppDelta >= 0 ? "text-dw-green" : "text-dw-red")}>
-            {ppDelta >= 0 ? `+${ppDelta}` : ppDelta}
-          </span>
+          {writeNil ? (
+            <span className={cn(ppDelta >= 0 ? "text-dw-green" : "text-dw-red")}>
+              {ppDelta >= 0 ? `+${ppDelta}` : ppDelta}
+            </span>
+          ) : (
+            <span className="text-ink3" title="NIL-to-save is off (Settings → Immersion)">off</span>
+          )}
         </p>
         <p className="flex justify-between">
           <span className="text-ink3">Player confidence</span>
@@ -781,8 +908,8 @@ function SuspensionsCard({ list, year, week }: { list: Suspension[]; year: numbe
       <div>
         <h3 className="font-headline text-xs uppercase tracking-widest text-dw-red">Suspended</h3>
         <p className="mt-0.5 font-serif text-[11px] font-light text-ink3">
-          Enforced in your save — a suspended player&apos;s rating is temporarily dropped to {SUSPENDED_OVR} OVR
-          so the depth chart buries him, then restored automatically once served.
+          Enforced in your save — a suspended player is held out of the lineup for the full
+          term (his ratings are never touched), then reinstated automatically once served.
         </p>
       </div>
       <div className="space-y-2">
@@ -803,9 +930,9 @@ function SuspensionsCard({ list, year, week }: { list: Suspension[]; year: numbe
                 {s.source === "academics" ? "Academic ruling" : "Team discipline"} ·{" "}
                 {left > 0
                   ? s.applied
-                    ? `benched in save (${s.originalOverall ?? "—"} → ${SUSPENDED_OVR} OVR)`
+                    ? "held out in your save ✓"
                     : "save write pending — close CFB27, then reopen the Wire"
-                  : "rating restore pending — close CFB27, then reopen the Wire"}
+                  : "reinstatement pending — close CFB27, then reopen the Wire"}
               </p>
             </div>
           );
@@ -875,6 +1002,27 @@ export default function SituationRoomPage() {
     [situations, dynastyId, year, week]
   );
 
+  // What's actually brewing on the roster, computed from the save — free, no API call, and
+  // it can't invent a grievance. Visible before you ever open the desk.
+  const board = useMemo(() => pressureBoard(roster ?? []), [roster]);
+
+  // Where each player stands with the coach after a season of decisions.
+  const standings = useMemo(
+    () =>
+      playerStandings(
+        Object.values(saga.state?.resolved ?? {}).map((r) => ({
+          playerName: r.playerName,
+          week: r.week,
+          year: r.year,
+          headline: r.headline,
+          decision: r.option.label,
+          tone: r.option.tone,
+          suspended: !!r.fallout.suspension?.weeks,
+        }))
+      ),
+    [saga.state?.resolved]
+  );
+
   // Restore this week's desk from the persisted issue cache (survives navigation + app
   // restarts) — resolved situations already persist via the saga.
   const cachedDesk = useIssueTab<StorylinesResult>("storylines");
@@ -885,18 +1033,46 @@ export default function SituationRoomPage() {
     }
   }, [cachedDesk, situations]);
 
+  // Everything the coach has already decided, newest first — the continuity feed. Without
+  // it the desk has amnesia and every week reads like the first week of the job.
+  const recentDecisions = useMemo(() => {
+    const resolved = Object.values(saga.state?.resolved ?? {});
+    return resolved
+      .sort((a, b) => b.year - a.year || b.week - a.week || b.resolvedAt - a.resolvedAt)
+      .slice(0, 8)
+      .map((r) => ({
+        week: r.week,
+        year: r.year,
+        headline: r.headline,
+        playerName: r.playerName,
+        decision: r.option.label,
+        tone: r.option.tone,
+        outcome: r.fallout.outcome,
+        suspended: !!r.fallout.suspension?.weeks,
+      }));
+  }, [saga.state?.resolved]);
+
+  const deferred = useMemo(() => saga.state?.deferred ?? [], [saga.state?.deferred]);
+  const deferredIds = useMemo(() => new Set(deferred.map((d) => d.storylineId)), [deferred]);
+
   const openDesk = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const data = await generate<StorylinesResult>("storylines", {
-        backstory: saga.state?.backstory || null
+        backstory: saga.state?.backstory || null,
+        // The season's decision history + what he sat on. This is what lets storylines
+        // compound instead of resetting every week.
+        recentDecisions,
+        deferred,
       });
       if (data?.error || !Array.isArray(data?.situations) || data.situations.length === 0) {
         setError("Quiet week off the field. Check back after your next game.");
         setSituations([]);
       } else {
         setSituations(data.situations);
+        // The desk has brought the ignored items back — stop re-sending them.
+        if (deferred.length) await saga.clearDeferred(deferred.map((d) => d.storylineId));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't reach the desk. Check your save + API key.");
@@ -904,7 +1080,31 @@ export default function SituationRoomPage() {
       setLoading(false);
       setTried(true);
     }
-  }, [generate, saga.state?.backstory]);
+    // `saga` is intentionally not a dep: the hook object is rebuilt on every state change,
+    // which would re-create openDesk (and re-trigger callers) on every meter tick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generate, saga.state?.backstory, recentDecisions, deferred]);
+
+  // Sitting on something is a decision too — it banks the situation and next week's desk is
+  // told to bring it back one severity level hotter, with worse options.
+  // The deferred item is NOT spliced out of `situations`: storyline ids are derived from the
+  // array index, so removing one would re-key every situation after it and orphan any
+  // resolution already saved under the old id. It stays in place and the render skips it.
+  const letItRide = useCallback(
+    async (situation: Situation, id: string) => {
+      await saga.defer({
+        storylineId: id,
+        week,
+        year,
+        headline: situation.headline,
+        playerName: situation.player?.name ?? null,
+        severity: situation.severity,
+        category: situation.category,
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [week, year]
+  );
 
   const decide = useCallback(
     async (situation: Situation, id: string, option: StoryOption) => {
@@ -951,7 +1151,9 @@ export default function SituationRoomPage() {
           const ti = snapshot?.userTeam?.teamIndex;
           if (currentSavePath && ti != null) {
             // Write the bench-him drop now (retries on the next ingest if the game is open).
-            const fresh = await enforceSuspensions(dynastyId, currentSavePath, ti, year, week).catch(() => null);
+            const fresh = await enforceSuspensions(
+              dynastyId, currentSavePath, ti, year, week, snapshot?.dynastyYear ?? null
+            ).catch(() => null);
             if (fresh) setSuspensions(fresh);
             else setSuspensions(await loadSuspensions(dynastyId));
           } else {
@@ -964,7 +1166,7 @@ export default function SituationRoomPage() {
         setBusyId(null);
       }
     },
-    [generate, saga, week, year, academicId, dynastyId, currentSavePath, snapshot?.userTeam?.teamIndex]
+    [generate, saga, week, year, academicId, dynastyId, currentSavePath, snapshot?.userTeam?.teamIndex, snapshot?.dynastyYear]
   );
 
   // Own-words podium answer inside a situation's media gauntlet: the room judges the exact
@@ -1086,6 +1288,20 @@ export default function SituationRoomPage() {
               </div>
             )}
 
+            {deferred.length > 0 && (
+              <div className="rounded border border-dw-yellow/40 bg-dw-yellow/5 px-4 py-3">
+                <p className="font-sans text-[10px] uppercase tracking-widest text-dw-yellow">Still hanging over you</p>
+                <ul className="mt-1 space-y-0.5">
+                  {deferred.map((d) => (
+                    <li key={d.storylineId} className="font-serif text-sm text-ink2">
+                      {d.headline}
+                      <span className="text-ink3"> — ignored in Wk {d.week}. It comes back hotter.</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {error && !loading && (
               <div className="rounded border border-dw-red/30 bg-dw-red/10 px-6 py-8 text-center font-serif text-dw-red">{error}</div>
             )}
@@ -1129,6 +1345,9 @@ export default function SituationRoomPage() {
               })()}
               {(situations ?? []).map((s, i) => {
                 const id = ids[i];
+                // Sat on: it stays in the array (ids are index-derived) but leaves the desk
+                // until it comes back hotter next week.
+                if (deferredIds.has(id)) return null;
                 const res = resolved[id];
                 if (res) {
                   return (
@@ -1147,7 +1366,15 @@ export default function SituationRoomPage() {
                     />
                   );
                 }
-                return <OpenCard key={id} situation={s} busy={busyId === id} onDecide={(o) => void decide(s, id, o)} />;
+                return (
+                  <OpenCard
+                    key={id}
+                    situation={s}
+                    busy={busyId === id}
+                    onDecide={(o) => void decide(s, id, o)}
+                    onDefer={() => void letItRide(s, id)}
+                  />
+                );
               })}
             </div>
           </div>
@@ -1155,6 +1382,8 @@ export default function SituationRoomPage() {
 
         {/* Sidebar: Relationships & Outside Forces */}
         <div className="space-y-6">
+          <PressureBoard board={board} />
+          <TheRoom standings={standings} />
           <SuspensionsCard list={suspensions} year={year} week={week} />
           {saga.state?.backstory ? (
             <OutsideForcesSidebar

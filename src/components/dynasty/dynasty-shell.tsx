@@ -16,6 +16,7 @@ import NavBar from "@/components/navbar";
 import BreakingTicker from "@/components/breaking-ticker";
 import SettingsDrawer from "@/components/settings/settings-drawer";
 import IssueLoadingOverlay from "./issue-loading";
+import PresserOverlay from "@/components/press-conference/presser-overlay";
 import { TutorialProvider } from "@/components/tutorial/tutorial-context";
 import TutorialWizard from "@/components/tutorial/tutorial-wizard";
 
@@ -120,6 +121,8 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>
         <SettingsDrawer />
         <IssueLoadingOverlay />
+        {/* The podium takes over the screen when a game week lands — see presser-overlay. */}
+        <PresserOverlay />
         <TutorialWizard />
       </TutorialProvider>
     </SettingsProvider>

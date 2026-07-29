@@ -10,12 +10,12 @@
 // game just means "retry on the next ingest", never a lost suspension.
 
 import { LazyStore } from "@tauri-apps/plugin-store";
-import { applyImpact } from "./client";
+import { applyImpact, type InjurySnapshot } from "./client";
 
 const store = new LazyStore("dynastywire.suspensions.json");
 
-/** The temporary rating a suspended player carries — low enough that any position group
- * benches him, high enough to stay plausible in menus. */
+/** @deprecated Kept only so older UI copy still compiles. Suspensions no longer touch
+ * ratings — see the note on enforceSuspensions. */
 export const SUSPENDED_OVR = 40;
 
 export interface Suspension {
@@ -28,9 +28,13 @@ export interface Suspension {
   weeks: number;
   startYear: number;
   startWeek: number;
-  /** The player's real OVR captured by the save write — restored when served. */
+  /** The player's real OVR captured by the save write — restored when served.
+   * @deprecated ratings are no longer touched; kept so old records still load. */
   originalOverall: number | null;
-  /** True while the temporary drop is live in the save file. */
+  /** The player's injury fields exactly as they were before we held him out, so a genuinely
+   * hurt player is put back the way he was instead of blanket-healed. */
+  priorInjury?: InjurySnapshot | null;
+  /** True while the hold-out is live in the save file. */
   applied: boolean;
   /** True once served AND the original rating is back (or nothing was ever written). */
   lifted: boolean;
@@ -102,7 +106,8 @@ export async function enforceSuspensions(
   savePath: string,
   teamIndex: number,
   year: number,
-  week: number
+  week: number,
+  dynastyYear?: number | null
 ): Promise<Suspension[]> {
   if (inFlight) return loadSuspensions(dynastyId);
   inFlight = true;
@@ -113,25 +118,29 @@ export async function enforceSuspensions(
       if (s.lifted) continue;
       const left = weeksLeft(s, year, week);
       if (left > 0 && !s.applied) {
-        // Serve it: drop the rating so the depth chart buries him.
+        // Hold him out for the remaining term. VERIFIED against a real save: the game sits
+        // players by InjuryStatus (injured players keep their true rating), so this is the
+        // lever that actually removes him from the field.
         const res = await applyImpact(savePath, {
           teamIndex,
-          overall: [{ name: s.playerName, value: SUSPENDED_OVR }],
+          availability: [
+            { name: s.playerName, out: true, weeks: left, week, year: dynastyYear ?? null },
+          ],
         }).catch(() => null);
         const hit = res?.ok
-          ? res.applied?.overall?.find((o) => o.name === s.playerName.toLowerCase())
+          ? res.applied?.availability?.find((a) => a.name === s.playerName.toLowerCase() && a.out)
           : null;
         if (hit) {
           s.applied = true;
-          if (typeof hit.before === "number") s.originalOverall = hit.before;
+          s.priorInjury = hit.before ?? null;
           changed = true;
         }
       } else if (left <= 0) {
-        // Served: put the real rating back (or close out one that never got written).
-        if (s.applied && s.originalOverall != null) {
+        // Served: put his exact prior state back (healthy, or the injury he already had).
+        if (s.applied) {
           const res = await applyImpact(savePath, {
             teamIndex,
-            overall: [{ name: s.playerName, value: s.originalOverall }],
+            availability: [{ name: s.playerName, out: false, restore: s.priorInjury ?? null }],
           }).catch(() => null);
           if (res?.ok) {
             s.applied = false;

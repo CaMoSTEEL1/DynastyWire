@@ -794,11 +794,68 @@ function makeStatsResolver(f, currentSeasonYear) {
   };
 }
 
+// The scouting-relevant slice of a player's 50+ trait ratings. Verified present on a real
+// CFB27 save (every name below resolved on the Player table). Kept curated on purpose: the
+// whole roster ships to the frontend, so this is the difference between a lean payload and
+// 70 players x 50 numbers.
+const SCOUT_RATING_FIELDS = {
+  speed: 'SpeedRating',
+  accel: 'AccelerationRating',
+  agility: 'AgilityRating',
+  strength: 'StrengthRating',
+  awareness: 'AwarenessRating',
+  playRec: 'PlayRecognitionRating',
+  pursuit: 'PursuitRating',
+  tackle: 'TackleRating',
+  hitPower: 'HitPowerRating',
+  manCover: 'ManCoverageRating',
+  zoneCover: 'ZoneCoverageRating',
+  press: 'PressRating',
+  catching: 'CatchingRating',
+  catchTraffic: 'CatchInTrafficRating',
+  routeShort: 'ShortRouteRunningRating',
+  routeMed: 'MediumRouteRunningRating',
+  routeDeep: 'DeepRouteRunningRating',
+  release: 'ReleaseRating',
+  breakTackle: 'BreakTackleRating',
+  trucking: 'TruckingRating',
+  juke: 'JukeMoveRating',
+  vision: 'BCVisionRating',
+  powerMoves: 'PowerMovesRating',
+  finesseMoves: 'FinesseMovesRating',
+  blockShed: 'BlockSheddingRating',
+  passBlock: 'PassBlockRating',
+  runBlock: 'RunBlockRating',
+  throwPower: 'ThrowPowerRating',
+  throwShort: 'ThrowAccuracyShortRating',
+  throwMid: 'ThrowAccuracyMidRating',
+  throwDeep: 'ThrowAccuracyDeepRating',
+  throwPressure: 'ThrowUnderPressureRating',
+  throwRun: 'ThrowOnTheRunRating',
+  kickPower: 'KickPowerRating',
+  kickAccuracy: 'KickAccuracyRating',
+};
+
+function scoutRatings(p) {
+  const out = {};
+  let any = false;
+  for (const [key, field] of Object.entries(SCOUT_RATING_FIELDS)) {
+    const v = num(p, field);
+    if (v != null) {
+      out[key] = v;
+      any = true;
+    }
+  }
+  return any ? out : null;
+}
+
 async function buildRoster(pathOrFile, opts = {}) {
   const teamIndex = opts.teamIndex;
   if (teamIndex == null) return [];
   const isPath = typeof pathOrFile === 'string';
-  const cf = isPath ? cacheFile(pathOrFile, `roster|v6|${teamIndex}`) : null;
+  // v7 adds archetype + scouting trait ratings. The tag MUST be bumped whenever the shape
+  // changes or every existing save serves a cached roster missing the new fields.
+  const cf = isPath ? cacheFile(pathOrFile, `roster|v7|${teamIndex}`) : null;
   if (cf) {
     const cached = readCache(cf);
     if (cached) return cached;
@@ -840,6 +897,16 @@ async function buildRoster(pathOrFile, opts = {}) {
       nilBaseValue: num(p, 'BaseNILValue'),
       nilComp: num(p, 'CurrentNILCompensation'),
       dealbreaker: str(p, 'RecruitingDealbreaker'),
+      // The save's own archetype for this man — "DT_SpeedRusher", "CB_MantoMan",
+      // "MLB_RunStopper", "WR_PhysicalRouteRunner". This is what a scouting report is
+      // actually about: not how good he is, but what KIND of player he is.
+      archetype: str(p, 'PlayerType'),
+      // Ability tier the game assigns (None/Bronze/Silver/Gold/Platinum) — a quick read on
+      // whether he has a game-breaking trait at all.
+      abilityTier: str(p, 'PhysicalAbility1'),
+      // The trait ratings a coach games plans against. Curated deliberately: enough to say
+      // WHY he's a threat and WHERE he can be attacked, without shipping all 52 per player.
+      ratings: scoutRatings(p),
       _rec: p,
     });
   }
@@ -861,4 +928,125 @@ async function buildRoster(pathOrFile, opts = {}) {
   return capped;
 }
 
-module.exports = { openSave, pickTable, readRecords, buildSnapshot, buildRecruits, buildRoster, buildPortal };
+// ── League-wide commitment tracker ──────────────────────────────────────────────
+// Who committed WHERE, across the whole country. VERIFIED reference walk on a real CFB27
+// save: Recruit.RecruitStage (Signed/Committed/SoftCommitted) tells us who's locked in, and
+// Recruit.TopSchoolsList -> ProspectTargetSchool[] -> ProspectTargetSchoolN { TeamId,
+// TeamInfluence } holds the destination — the committed school is the slot with the highest
+// TeamInfluence (TeamId is a TeamIndex -> Team). Landing spots ARE in the save; they're just
+// three reference-hops deep. Returns per-school class aggregates + the notable individual
+// commitments, both compact.
+async function buildCommitments(pathOrFile, opts = {}) {
+  const isPath = typeof pathOrFile === 'string';
+  const cf = isPath ? cacheFile(pathOrFile, `commitments|v2`) : null;
+  if (cf) { const cached = readCache(cf); if (cached) return cached; }
+  const f = isPath ? await openSave(pathOrFile) : pathOrFile;
+
+  const teamT = await readRecords(pickTable(f, 'Team'));
+  const playerT = await readRecords(pickTable(f, 'Player'));
+  const recruitT = await readRecords(pickTable(f, 'Recruit'));
+  if (!teamT || !recruitT) return { bySchool: [], notable: [], total: 0 };
+
+  // TeamIndex -> { name, rank }
+  const teamByIndex = new Map();
+  for (const t of teamT.records) {
+    if (t.isEmpty) continue;
+    const ti = num(t, 'TeamIndex');
+    if (ti == null) continue;
+    teamByIndex.set(ti, {
+      name: str(t, 'DisplayName') || str(t, 'LongName') || str(t, 'ShortName') || `Team ${ti}`,
+      rank: rankOrNull(num(t, 'MediaPoll_CurrentRank')),
+    });
+  }
+
+  // Referenced tables are resolved by tableId (the slot arrays live in their own tables).
+  const byTableId = new Map();
+  const getTable = async (id) => {
+    if (byTableId.has(id)) return byTableId.get(id);
+    const t = f.tables.find((x) => x.header && x.header.tableId === id) || null;
+    if (t) await readRecords(t);
+    byTableId.set(id, t);
+    return t;
+  };
+  const refFull = (rec, field) => {
+    try {
+      const fld = rec.fields[field];
+      if (fld && fld.referenceData && fld.referenceData.rowNumber != null) {
+        return { tableId: fld.referenceData.tableId, row: fld.referenceData.rowNumber };
+      }
+    } catch (e) { /* not a ref */ }
+    return null;
+  };
+
+  const tally = new Map(); // school -> aggregate
+  const notable = [];
+  let total = 0;
+
+  for (const r of recruitT.records) {
+    if (r.isEmpty) continue;
+    const stage = str(r, 'RecruitStage');
+    if (!stage || !/sign|commit/i.test(stage)) continue;
+
+    const ls = refFull(r, 'TopSchoolsList');
+    if (!ls) continue;
+    const listT = await getTable(ls.tableId);
+    const listRow = listT && listT.records[ls.row];
+    if (!listRow) continue;
+
+    // Destination = the target-school slot with the highest influence.
+    let best = null;
+    for (let i = 0; i < 10; i++) {
+      const si = refFull(listRow, `ProspectTargetSchool${i}`);
+      if (!si) continue;
+      const tt = await getTable(si.tableId);
+      const row = tt && tt.records[si.row];
+      if (!row) continue;
+      const inf = num(row, 'TeamInfluence') || 0;
+      const tid = num(row, 'TeamId');
+      if (tid == null) continue;
+      if (best == null || inf > best.inf) best = { tid, inf };
+    }
+    if (!best || best.inf <= 0) continue; // no clear commitment yet
+    const dest = teamByIndex.get(best.tid);
+    if (!dest) continue;
+
+    // Player details off the linked Player row.
+    const pr = refFull(r, 'Player');
+    let name = null, position = null, stars = num(r, 'ProspectStarRating');
+    if (pr && playerT) {
+      const p = playerT.records[pr.row];
+      if (p) {
+        name = [str(p, 'FirstName'), str(p, 'LastName')].filter(Boolean).join(' ') || null;
+        position = str(p, 'Position');
+        if (stars == null) stars = num(p, 'ProspectStarRating');
+      }
+    }
+    if (!name) continue;
+    const natRankRaw = num(r, 'NationalRank');
+    const nationalRank = natRankRaw != null && natRankRaw > 0 ? natRankRaw : null;
+    const signed = /^Signed/i.test(stage);
+    const blueChip = (nationalRank != null && nationalRank <= 300) || (stars != null && stars >= 4);
+
+    total++;
+    const e = tally.get(dest.name) || { school: dest.name, teamRank: dest.rank, count: 0, blueChips: 0, sumRank: 0, rankedCount: 0, top: [] };
+    e.count++;
+    if (blueChip) e.blueChips++;
+    if (nationalRank != null) { e.sumRank += nationalRank; e.rankedCount++; }
+    if (e.top.length < 3) e.top.push(name);
+    tally.set(dest.name, e);
+
+    notable.push({ name, position, stars, nationalRank, stage: signed ? 'Signed' : 'Committed', school: dest.name, schoolRank: dest.rank });
+  }
+
+  const bySchool = [...tally.values()]
+    .map((e) => ({ school: e.school, teamRank: e.teamRank, count: e.count, blueChips: e.blueChips, avgRank: e.rankedCount ? Math.round(e.sumRank / e.rankedCount) : null, top: e.top }))
+    // "Winning the trail" = most blue-chips, then class size, then best average rank.
+    .sort((a, b) => b.blueChips - a.blueChips || b.count - a.count || (a.avgRank ?? 9e9) - (b.avgRank ?? 9e9));
+  notable.sort((a, b) => (a.nationalRank ?? 9e9) - (b.nationalRank ?? 9e9));
+
+  const result = { bySchool: bySchool.slice(0, 40), notable: notable.slice(0, 80), total };
+  if (cf) writeCache(cf, result);
+  return result;
+}
+
+module.exports = { openSave, pickTable, readRecords, buildSnapshot, buildRecruits, buildRoster, buildPortal, buildCommitments };

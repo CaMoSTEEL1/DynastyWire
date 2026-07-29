@@ -17,6 +17,19 @@ import {
   type WeekDelta,
 } from "./client";
 import type { CoachBackstory } from "./saga";
+import {
+  EDGE_LABEL,
+  SEVERITY_LABEL,
+  TIER_LABEL,
+  formLine,
+  playerLine,
+  scoutingMath,
+  starterLine,
+  tierFor,
+} from "./scouting";
+import { STANDING_LABEL, playerStandings, pressureBoard, pressureLine } from "./pressure";
+import { weekStateOf } from "./week-state";
+import { attackLine, profileLine } from "./traits";
 
 export type { LlmConfig, RosterPlayer };
 
@@ -604,7 +617,25 @@ export function buildMediaContext(
         "school name, and never default to a famous one."
   );
   if (u) {
-    parts.push(`Record: ${u.wins}-${u.losses}` + (u.confWins != null ? ` (${u.confWins}-${u.confLosses} conf)` : ""));
+    // The record is authoritative AND already final for this week. Stated bare, models added
+    // the week's result to it a second time ("4-3" + a loss reported as "now 4-4"), and
+    // inferred games played from the week number — which is wrong the moment a bye exists.
+    const gp = (u.wins ?? 0) + (u.losses ?? 0) + (u.ties ?? 0);
+    const wkNum = d.weekPlayed;
+    const byes = wkNum != null && wkNum > gp ? wkNum - gp : 0;
+    parts.push(
+      `Record: ${u.wins}-${u.losses}` +
+        (u.confWins != null ? ` (${u.confWins}-${u.confLosses} conf)` : "") +
+        ` — ${gp} games played. THIS RECORD IS FINAL AND ALREADY INCLUDES this week's result.` +
+        " Do NOT add this week's win or loss to it, and do NOT state any other record."
+    );
+    if (byes > 0 && wkNum != null) {
+      parts.push(
+        `NOTE: it is Week ${wkNum} but only ${gp} games have been played — this team has had ` +
+          `${byes} bye week${byes === 1 ? "" : "s"}. NEVER infer games played, or a record, from ` +
+          "the week number."
+      );
+    }
     parts.push(
       u.rankMedia
         ? `AP ranking: #${u.rankMedia}`
@@ -680,11 +711,12 @@ export function buildMediaContext(
     parts.push("");
   }
 
-  let weekState: MediaContext["weekState"] = "game";
+  // Single source of truth, shared with the UI (see week-state.ts) so a screen can never
+  // announce "post-game" while the model was told kickoff hasn't happened.
+  const weekState: MediaContext["weekState"] = weekStateOf(after, d);
   if (!g) {
     // No result this week. This is NOT a vacuum for the model to fill with an invented
-    // game — it's one of three real states, each with its own storytelling frame.
-    const gamesPlayed = (u?.wins ?? 0) + (u?.losses ?? 0);
+    // game — it's one of four real states (weekState, above), each with its own frame.
     const row = after.userTeamRow;
     const nextGame =
       row != null
@@ -699,13 +731,7 @@ export function buildMediaContext(
       : "Next opponent: not on the schedule yet.";
     opponentName = nextOpp?.name ?? null;
 
-    // This week's matchup is on the schedule but kickoff hasn't happened — that's PREGAME,
-    // not a bye and not a result. (The "phantom score for a game we haven't played" bug.)
-    const upcomingThisWeek =
-      nextGame != null && nextGame.week != null && d.weekPlayed != null && nextGame.week === d.weekPlayed;
-
-    if (gamesPlayed === 0) {
-      weekState = "preseason";
+    if (weekState === "preseason") {
       parts.push("=== SEASON NOT STARTED (Week 0 / preseason — source of truth) ===");
       parts.push(
         `${school} has NOT played a game yet this season. There is NO result to cover.`,
@@ -715,8 +741,9 @@ export function buildMediaContext(
         "season means for the program and the coach, and the opener ahead.",
         nextOppLine
       );
-    } else if (upcomingThisWeek) {
-      weekState = "pregame";
+    } else if (weekState === "pregame") {
+      // This week's matchup is on the schedule but kickoff hasn't happened — not a bye and
+      // not a result. (The "phantom score for a game we haven't played" bug.)
       parts.push("=== THIS WEEK'S GAME: NOT PLAYED YET (source of truth) ===");
       parts.push(
         `${school} (${u?.wins ?? 0}-${u?.losses ?? 0}) plays ${nextOpp?.rankMedia ? `#${nextOpp.rankMedia} ` : ""}${nextOpp?.name ?? "their next opponent"}${nextOpp ? ` (${nextOpp.wins ?? 0}-${nextOpp.losses ?? 0})` : ""} THIS WEEK (Week ${d.weekPlayed}). Kickoff has NOT happened.`,
@@ -727,8 +754,7 @@ export function buildMediaContext(
         "stack up (use the real rosters and stat lines provided), injuries, stakes, and the",
         "buildup. Predictions are allowed only as clearly-framed opinion."
       );
-    } else if (d.weekPlayed != null && d.weekPlayed >= 17) {
-      weekState = "season-over";
+    } else if (weekState === "season-over") {
       parts.push("=== NO GAME THIS WEEK — LATE/POST SEASON (source of truth) ===");
       parts.push(
         `${school} (${u?.wins ?? 0}-${u?.losses ?? 0}) did not play this week. Do NOT invent a game or result.`,
@@ -738,7 +764,6 @@ export function buildMediaContext(
         nextOppLine
       );
     } else {
-      weekState = "bye";
       parts.push("=== BYE WEEK (source of truth) ===");
       parts.push(
         `${school} (${u?.wins ?? 0}-${u?.losses ?? 0}) is on a BYE. There is NO game and NO result this week.`,
@@ -805,7 +830,10 @@ export function buildMediaContext(
         .filter(Boolean)
         .join(", ");
       const stat = fmtStats(p);
-      parts.push(`  ${p.name}${bits ? ` (${bits})` : ""}${stat ? ` — ${stat}` : ""}`);
+      // EVERY line carries its team. Untagged names were the #1 hallucination: with two
+      // bare name lists in context, the model routinely credited one team's players to the
+      // other ("Rice's defense, anchored by <an FAU linebacker>").
+      parts.push(`  [${opponentName}] ${p.name}${bits ? ` (${bits})` : ""}${stat ? ` — ${stat}` : ""}`);
     }
     parts.push(
       `These are the ONLY valid ${opponentName} player names. Anyone on ${opponentName} not`,
@@ -844,8 +872,10 @@ export function buildMediaContext(
       ]
         .filter(Boolean)
         .join(", ");
+      // Team-tagged, same as the opponent block — this is what stops your own players from
+      // being written up as the other team's.
       parts.push(
-        `  ${p.name}${bits ? ` (${bits})` : ""}${stat ? ` — ${stat}` : ""}${flags ? ` [${flags}]` : ""}`
+        `  [${school}] ${p.name}${bits ? ` (${bits})` : ""}${stat ? ` — ${stat}` : ""}${flags ? ` [${flags}]` : ""}`
       );
     }
     parts.push(
@@ -856,7 +886,22 @@ export function buildMediaContext(
       "ONE LINE = ONE PLAYER: each stat line belongs to that single named player and NO ONE else.",
       "NEVER combine or add up two players' numbers, and never attribute one player's stats to",
       "another. If two players share a position (e.g. two QBs), keep them separate — the STARTER",
-      "is the one with more starts/games played; the other is the backup with his own smaller line."
+      "is the one with more starts/games played; the other is the backup with his own smaller line.",
+      `ROSTER SEPARATION — THE MOST COMMON ERROR. Every player line is tagged with the team`,
+      `that owns him, like "[${school}] Name". A player tagged [${school}] plays for ${school}`,
+      "and NOWHERE else; a player tagged with another school plays for THAT school. NEVER move a",
+      "player between teams, never credit one team's player to the other team, and never write a",
+      "sentence like \"<their school>'s defense, anchored by <a player tagged with YOUR school>\".",
+      "Before you name anyone, check his tag. If a name is not tagged in this context at all, do",
+      "not use it — describe the role instead (\"their left tackle\").",
+      "THESE ARE YOUR TEAM'S OWN PRODUCTION — what YOUR players did, on offense or on defense.",
+      "A passing/rushing/receiving total here is YARDAGE YOUR OFFENSE GAINED, never yardage your",
+      "defense GAVE UP. NEVER flip your own player's stat into something the OPPONENT did to you",
+      "(e.g. a QB's 500 pass yards is HIS production, NOT '500 yards you allowed'). You are NOT",
+      "given any opponent box score or per-team yards-allowed splits — so NEVER state, ask about,",
+      "or reference how many yards/points your defense 'gave up' or the opponent 'racked up' by",
+      "category. Only the final score and margin are known; everything else about the opponent's",
+      "statline is UNKNOWN and must not be invented."
     );
     parts.push("");
     parts.push(PERSONALITY_RULES);
@@ -899,6 +944,26 @@ export function buildMediaContext(
     if (backstory.reporterName) parts.push(`  Lead beat writer: ${backstory.reporterName} (byline/reporter of record for this program)`);
     if (backstory.rivalCoachName) parts.push(`  Rival head coach: ${backstory.rivalCoachName}`);
     parts.push("");
+
+    // The PROGRAM's own identity — an FCS team that just moved up, or a brand-new
+    // TeamBuilder school, must not be covered like a generic established FBS program.
+    const sit = backstory.programSituation;
+    if (sit && sit !== "established") {
+      parts.push("=== PROGRAM IDENTITY (this is what this school IS — never contradict it) ===");
+      parts.push(SITUATION_BRIEF[sit] ?? "");
+      if (backstory.programNote) parts.push(`The coach's own account of the program: ${backstory.programNote}`);
+      if (backstory.programBio) parts.push(backstory.programBio);
+      parts.push(
+        "Frame coverage around this reality: the stakes, the doubters, the resources, and what",
+        "counts as success here are all set by it. NEVER invent a decorated history, a national",
+        "title, or traditions this program does not have."
+      );
+      parts.push("");
+    } else if (backstory.programBio) {
+      parts.push("=== PROGRAM IDENTITY ===");
+      parts.push(backstory.programBio);
+      parts.push("");
+    }
   }
 
   return {
@@ -1223,7 +1288,7 @@ function buildSpec(kind: string, ctx: MediaContext, extra: Extra): PromptSpec {
       return buildGradeSpec(ctx, extra);
 
     case "storylines":
-      return buildStorylinesSpec(ctx);
+      return buildStorylinesSpec(ctx, extra);
 
     case "storyline-fallout":
       return buildFalloutSpec(ctx, extra);
@@ -1437,40 +1502,88 @@ function buildOffseasonBriefSpec(ctx: MediaContext, extra: Extra): PromptSpec {
   const record = extra.record ? String(extra.record) : null;
   const isChamp = extra.isChamp === true;
   const commits = Array.isArray(extra.commits) ? (extra.commits as { name: string; position: string; nationalRank: number | null }[]) : [];
-  const portalIn = typeof extra.portalIn === "number" ? extra.portalIn : 0;
-  const portalOut = typeof extra.portalOut === "number" ? extra.portalOut : 0;
   const atRisk = typeof extra.atRisk === "number" ? extra.atRisk : 0;
+
+  // League-wide portal intelligence (see offseason/page.tsx). The save exposes who is IN the
+  // portal and from WHICH program — never a landing/destination — so "losers" and "movers"
+  // are hard fact, but "who wins the portal" is analysis, never an invented commitment.
+  type Mover = { name: string; position: string | null; overall: number | null; team: string; teamRank: number | null; chance: number };
+  type TeamLoss = { team: string; teamRank: number | null; count: number; topOverall: number; names: string[] };
+  const leagueMovers = Array.isArray(extra.leagueMovers) ? (extra.leagueMovers as Mover[]) : [];
+  const teamLosses = Array.isArray(extra.teamLosses) ? (extra.teamLosses as TeamLoss[]) : [];
+  const userDepartures = Array.isArray(extra.userDepartures) ? (extra.userDepartures as Mover[]) : [];
+  // REAL commitment data — destinations resolved from the save, so "who went where" is fact.
+  type TopClass = { school: string; teamRank: number | null; count: number; blueChips: number; avgRank: number | null; top: string[] };
+  type Commit = { name: string; position: string | null; nationalRank: number | null; stage: string; school: string };
+  const topClasses = Array.isArray(extra.topClasses) ? (extra.topClasses as TopClass[]) : [];
+  const notableCommits = Array.isArray(extra.notableCommits) ? (extra.notableCommits as Commit[]) : [];
 
   const commitLines = commits
     .slice(0, 24)
     .map((c) => `  ${c.name} (${c.position}${c.nationalRank ? `, #${c.nationalRank} nat'l` : ""})`);
+  const moverLines = leagueMovers
+    .slice(0, 16)
+    .map((m) => `  ${m.name} (${m.position ?? "?"}${m.overall != null ? `, ${m.overall} OVR` : ""}) — LEFT ${m.teamRank ? `#${m.teamRank} ` : ""}${m.team}${m.chance ? `, ${m.chance}% gone` : ""}`);
+  const lossLines = teamLosses
+    .slice(0, 10)
+    .map((t) => `  ${t.teamRank ? `#${t.teamRank} ` : ""}${t.team}: ${t.count} in the portal (top ${t.topOverall} OVR)${t.names.length ? ` — ${t.names.join(", ")}` : ""}`);
+  const userLossLines = userDepartures.slice(0, 12).map((m) => `  ${m.name} (${m.position ?? "?"}${m.overall != null ? `, ${m.overall} OVR` : ""})`);
+  const classLines = topClasses
+    .slice(0, 12)
+    .map((c) => `  ${c.teamRank ? `#${c.teamRank} ` : ""}${c.school}: ${c.count} commits, ${c.blueChips} blue-chip${c.avgRank ? `, avg nat'l rank ${c.avgRank}` : ""}${c.top.length ? ` — ${c.top.join(", ")}` : ""}`);
+  const commitLinesLeague = notableCommits
+    .slice(0, 24)
+    .map((c) => `  ${c.nationalRank ? `#${c.nationalRank} ` : ""}${c.name} (${c.position ?? "?"}) → ${c.school} [${c.stage}]`);
 
   return {
-    maxTokens: 2200,
+    maxTokens: 2600,
     prompt: [
-      `You are ${ctx.school}'s beat writer filing the OFFSEASON briefing for the coach's program.`,
+      `You are a national college-football insider filing the OFFSEASON portal briefing, anchored to ${ctx.school} but covering the whole league.`,
       `Current offseason stage: ${stageLabel}${stageNum != null && totalStages != null ? ` (stage ${stageNum} of ${totalStages})` : ""}.`,
       "Return JSON with this exact schema:",
       JSON.stringify({
-        headline: "string (offseason A1 headline)",
+        headline: "string (offseason A1 headline about the portal landscape)",
         stageLabel: "string (short label for this stage)",
-        body: "string (2-3 paragraphs, \\n\\n separated: the state of the program right now this offseason)",
+        body: "string (2-3 paragraphs, \\n\\n separated: FIRST the national portal picture — how the transfer landscape is shaping up around the league, who's gaining and who's bleeding — THEN bring it home to what it means for " + ctx.school + ")",
+        portalReport: {
+          winners: [{ team: "string", note: "1 sentence: what they landed (grounded in the REAL classes below)" }],
+          losers: [{ team: "string", note: "1 sentence: what they're losing (grounded in the departures below)" }],
+          movers: [{ player: "string", note: "1 sentence: the commit and WHERE HE WENT, or a portal name and who he left" }],
+        },
         storylines: [{ title: "string", text: "string (2-3 sentences)" }],
-        lookAhead: "string (1-2 sentences on what's next / next season's outlook)",
+        lookAhead: "string (1-2 sentences: what next week of the window could bring)",
       }),
       "",
       "HARD RULES:",
       "- It is the OFFSEASON. There are NO games. Do NOT invent, recap, or reference any game or score.",
-      "- Ground everything in the REAL data below — the record just finished, the signed class, the portal.",
-      "- Name real signees from the list. Do NOT invent recruits or players not provided.",
-      "- 3-4 storylines fit for THIS stage of the offseason (recruiting class, portal moves, roster",
-      "  turnover, expectations). Confident, specific beat-writer voice — no filler.",
+      "- RECRUIT COMMITMENTS BELOW ARE REAL AND INCLUDE THE DESTINATION SCHOOL. Use them exactly —",
+      "  name the player and the school he actually picked. Never reassign a commit to another school.",
+      "- PORTAL TRANSFERS ARE DIFFERENT: the board shows who ENTERED the portal and the team he LEFT,",
+      "  never where he lands. NEVER say a portal player 'committed to', 'signed with', or 'is headed",
+      "  to' a school — only who he left. That destination genuinely isn't decided yet.",
+      "- Every team and player you name must come from the real lists below (or the context).",
+      "- 3-4 storylines. Confident, specific national-insider voice — no filler.",
+      "- 3-5 winners, 3-6 losers, 4-8 movers where the data supports it (fewer if it doesn't).",
       "",
-      "=== REAL PROGRAM STATE ===",
-      record ? `Just-finished season record: ${record}${isChamp ? " — NATIONAL CHAMPIONS" : ""}` : "",
-      `Transfer portal: ${portalIn} incoming, ${portalOut} outgoing, ${atRisk} current players flagged as flight risks.`,
-      commitLines.length ? `Signed recruiting class (${commitLines.length}):` : "Signed recruiting class: none yet this stage.",
+      "=== YOUR PROGRAM (anchor the story here) ===",
+      record ? `${ctx.school} just finished ${record}${isChamp ? " — NATIONAL CHAMPIONS" : ""}.` : "",
+      `${ctx.school} flight risks flagged: ${atRisk}.`,
+      userLossLines.length ? `${ctx.school} players in the portal:` : `${ctx.school} portal departures: none surfaced yet this stage.`,
+      ...userLossLines,
+      commitLines.length ? `${ctx.school} signed class (${commitLines.length}):` : `${ctx.school} signed class: none yet this stage.`,
       ...commitLines,
+      "",
+      "=== LEAGUE RECRUITING BOARD (REAL commitments — destination is FACT, use it) ===",
+      classLines.length ? "Programs winning the trail (incoming classes):" : "No classes resolved yet this stage.",
+      ...classLines,
+      commitLinesLeague.length ? "Notable commitments — player → the school he picked:" : "",
+      ...commitLinesLeague,
+      "",
+      "=== LEAGUE PORTAL BOARD (real — who ENTERED the portal, and from where; NO destinations) ===",
+      moverLines.length ? "Notable names on the move:" : "No league-wide portal entries surfaced yet this stage.",
+      ...moverLines,
+      lossLines.length ? "Programs bleeding the most talent (the losers):" : "",
+      ...lossLines,
       "",
       "Program context:",
       ctx.userContext,
@@ -1533,25 +1646,52 @@ function buildOffseasonSpec(ctx: MediaContext, extra: Extra): PromptSpec {
   return { prompt: head.concat(bodies[phase]).join("\n"), maxTokens: 1800 };
 }
 
+// How each program situation should be written. This is what lets a TeamBuilder school or an
+// FCS team that just moved up have its OWN story instead of being written like a generic
+// FBS program — a heavily requested gap.
+const SITUATION_BRIEF: Record<string, string> = {
+  established:
+    "An established FBS program with its own history, traditions, and settled expectations.",
+  "fcs-jump":
+    "This program RECENTLY MOVED UP FROM FCS to FBS. That jump is the defining fact of its identity: a smaller stadium and budget, a schedule full of programs with more money, recruits who used to be out of reach, national media that doesn't take it seriously yet, and a fan base that remembers winning at the old level. Every 'can they hang at this level?' question is live.",
+  "new-program":
+    "This is a BRAND-NEW program playing its first seasons — no history, no alumni base, no traditions yet. Everything is being established for the first time: the first signature win, the first rivalry, the first star. The media frames it as a program being built from nothing.",
+  rebuild:
+    "A long-struggling program being dragged back toward relevance. Losing is the baseline expectation, so progress reads as remarkable and every setback feels familiar to the fan base.",
+  "fallen-giant":
+    "A program with REAL history that fell off badly. The pressure is restoration: fans and boosters remember what it was, and anything short of returning to that standard reads as failure.",
+};
+
 function buildBackstorySpec(ctx: MediaContext, extra: Extra): PromptSpec {
   const archetype = String(extra.archetype ?? "players-coach");
   const customPath = String(extra.customPath ?? "");
+  const situation = typeof extra.programSituation === "string" ? extra.programSituation : "established";
+  const programNote = String(extra.programNote ?? "");
+  const brief = SITUATION_BRIEF[situation] ?? SITUATION_BRIEF.established;
   const prompt = [
     "You are a premier sports biographer and narrative designer for a college-football simulator.",
-    "Write a rich, detailed, immersive backstory and ecosystem for a head coach.",
+    "Write a rich, detailed, immersive backstory for BOTH a head coach AND the program he runs.",
     "Respond with a JSON object matching this exact schema:",
-    '{ "archetype": "disciplinarian"|"players-coach"|"nil-merchant"|"hometown-savior", "customPath": "the custom path input saved back", "bio": "2-3 paragraphs (150-220 words), prestige sports-journalism tone", "adName": "fictional realistic Athletic Director name", "boosterName": "fictional realistic chief billionaire booster name", "reporterName": "fictional realistic lead beat writer name", "rivalCoachName": "fictional realistic rival head coach name" }',
+    '{ "archetype": "disciplinarian"|"players-coach"|"nil-merchant"|"hometown-savior", "customPath": "the custom path input saved back", "bio": "2-3 paragraphs (150-220 words), prestige sports-journalism tone", "programBio": "1-2 paragraphs (90-150 words) on the PROGRAM itself — where it came from, where it stands, what it is trying to become", "adName": "fictional realistic Athletic Director name", "boosterName": "fictional realistic chief billionaire booster name", "reporterName": "fictional realistic lead beat writer name", "rivalCoachName": "fictional realistic rival head coach name" }',
     "",
     "Rules:",
     "- The bio must feel lived-in, textured, and dramatic. Address the pressure of this job.",
     "- Archetype selected: " + archetype + ". Reflect its profile (disciplinarian=old-school/integrity; players-coach=empathy/culture; nil-merchant=transactional/portal; hometown-savior=local hero/expectation).",
     '- Incorporate the custom career path if provided: "' + customPath + '".',
+    "",
+    "THE PROGRAM'S SITUATION (shapes programBio, and the coach's bio should acknowledge it):",
+    `- ${brief}`,
+    programNote ? `- The user's own description of this program, treat as FACT: "${programNote}"` : "",
+    "- programBio must be specific to THIS situation — never generic 'storied program' filler for",
+    "  a school that just moved up or doesn't exist yet.",
+    "",
     `- Coach Name: ${ctx.coachName}`,
     `- School: ${ctx.school}`,
+    ctx.snapshot.userTeam?.prestige != null ? `- Program prestige: ${ctx.snapshot.userTeam.prestige}/10` : "",
     "- Do not mention any real living people or actual active college coaches.",
     "- Fictional names must sound authentic to college sports.",
-  ].join("\n");
-  return { prompt, maxTokens: 1500 };
+  ].filter(Boolean).join("\n");
+  return { prompt, maxTokens: 1900 };
 }
 
 function buildGradeSpec(ctx: MediaContext, extra: Extra): PromptSpec {
@@ -1584,8 +1724,52 @@ function buildGradeSpec(ctx: MediaContext, extra: Extra): PromptSpec {
   return { prompt, maxTokens: 1024 };
 }
 
-function buildStorylinesSpec(ctx: MediaContext): PromptSpec {
+function buildStorylinesSpec(ctx: MediaContext, extra: Extra): PromptSpec {
   const security = ctx.snapshot.coach?.jobSecurity ?? "unknown";
+
+  // What's really brewing, computed from the roster (buried stars, NIL grievances, seniors
+  // on the bench, confidence collapses, academic risk). Situations built on these are about
+  // the user's ACTUAL team instead of plausible fiction.
+  const board = pressureBoard(ctx.roster ?? []);
+  const boardLines = board.map(pressureLine);
+
+  // Continuity: what the coach has already decided this season, and where each player
+  // stands with him because of it. Without this the desk has amnesia — every week reads
+  // like the first week of the job, which is the single least immersive thing it could do.
+  const priors = Array.isArray(extra.recentDecisions)
+    ? (extra.recentDecisions as Array<Record<string, unknown>>)
+    : [];
+  const priorLines = priors.slice(0, 8).map((d) => {
+    const wk = d.week != null ? `Wk ${d.week}` : "earlier";
+    const who = d.playerName ? ` (${d.playerName})` : "";
+    return `  ${wk}: "${d.headline ?? ""}"${who} → you went ${d.decision ?? "?"} [${d.tone ?? "measured"}]${d.suspended ? ", and you suspended him" : ""}. Fallout: ${d.outcome ?? "—"}`;
+  });
+
+  const standings = playerStandings(
+    priors.map((d) => ({
+      playerName: typeof d.playerName === "string" ? d.playerName : null,
+      week: typeof d.week === "number" ? d.week : 0,
+      year: typeof d.year === "number" ? d.year : 0,
+      headline: String(d.headline ?? ""),
+      decision: String(d.decision ?? ""),
+      tone: String(d.tone ?? "measured"),
+      suspended: d.suspended === true,
+    }))
+  );
+  const standingLines = standings
+    .filter((s) => s.standing !== "neutral")
+    .slice(0, 6)
+    .map((s) => `  ${s.name}: ${STANDING_LABEL[s.standing]} (${s.history.length} decision${s.history.length === 1 ? "" : "s"})`);
+
+  // A situation the coach chose to sit on last week. It does not go away — it comes back
+  // worse, which is what makes "let it ride" an actual decision instead of a free skip.
+  const deferred = Array.isArray(extra.deferred)
+    ? (extra.deferred as Array<Record<string, unknown>>)
+    : [];
+  const deferredLines = deferred.map(
+    (d) => `  "${d.headline ?? ""}"${d.playerName ? ` (${d.playerName})` : ""} — ignored in Wk ${d.week ?? "?"}, severity was ${d.severity ?? "brewing"}`
+  );
+
   const prompt = [
     "You are the situation desk for a college-football head coach simulator. Generate the",
     "off-field situations landing on the coach's desk THIS WEEK as JSON with this exact schema:",
@@ -1597,13 +1781,39 @@ function buildStorylinesSpec(ctx: MediaContext): PromptSpec {
     '  "player": {"name": "realistic full name", "position": "QB/RB/WR/LB/etc", "year": "Fr/So/Jr/Sr"} | null,',
     "  \"source\": \"how the coach found out\",",
     '  "stakes": "one line on what is on the line if this is mishandled",',
-    '  "options": [{"id": "a|b|c", "label": "<=5 word stance", "approach": "one line on the move", "tone": "hardline|measured|protective|pragmatic"}]',
+    '  "callback": "one line naming the EARLIER decision this grows out of, or empty string" ,',
+    '  "options": [{"id": "a|b|c", "label": "<=5 word stance", "approach": "one line on the move", "tone": "hardline|measured|protective|pragmatic", "cost": "one line on what this move costs you — who it upsets, what it spends"}]',
     "}]}",
     "",
     "Rules:",
     "- Generate 2 to 3 situations. At least one MUST involve a specific named player (player != null).",
     "- Give EACH situation exactly 3 options with genuinely different philosophies — there is no clean answer.",
+    "- EVERY option needs an honest `cost`. If an option looks free, you have written it wrong.",
     "- Ground the situations in the actual result and the pressure the coach is under.",
+    boardLines.length
+      ? [
+          "- BUILD FROM THE PRESSURE BOARD BELOW. It is computed from the real roster — those grievances",
+          "  already exist. At least one situation MUST come from a BOILING or real pressure point, using",
+          "  that exact player. Do not invent a grievance when a real one is listed.",
+        ].join("\n")
+      : "",
+    priorLines.length
+      ? [
+          "- CONTINUITY IS THE POINT. You are handed what this coach already decided. Situations should",
+          "  grow out of that history: a player he protected pushes his luck; a player he suspended comes",
+          "  back with something to prove or a chip on his shoulder; the beat writer returns to a story he",
+          "  was fed a line about. When a situation is a direct consequence of an earlier decision, fill",
+          "  `callback` with one line naming it. At least one situation should be a callback when the",
+          "  history below supports one. Never contradict what already happened.",
+        ].join("\n")
+      : "",
+    deferredLines.length
+      ? [
+          "- THE COACH IGNORED SOMETHING. Every item under IGNORED LAST WEEK must return this week, one",
+          "  severity level HOTTER (brewing→developing→crisis), with worse options than it had before.",
+          "  Nothing the coach sat on quietly resolves itself.",
+        ].join("\n")
+      : "",
     `- ${rosterLine(ctx)} When a situation involves one of YOUR players, use a real name from the roster.`,
     "- PERSONALITY DRIVES THE DRAMA: each roster player carries a personality. Pick situations that",
     "  fit who they are — an Intense player benched behind a hot freshman confronts the staff; an",
@@ -1623,10 +1833,24 @@ function buildStorylinesSpec(ctx: MediaContext): PromptSpec {
     "",
     `Coach's current job security: ${security}.`,
     "",
+    boardLines.length ? "=== THE PRESSURE BOARD (computed from the real roster — these grievances EXIST) ===" : null,
+    ...boardLines,
+    boardLines.length ? "" : null,
+    priorLines.length ? "=== WHAT THIS COACH HAS ALREADY DECIDED THIS SEASON ===" : null,
+    ...priorLines,
+    priorLines.length ? "" : null,
+    standingLines.length ? "=== WHERE PLAYERS STAND WITH HIM BECAUSE OF IT ===" : null,
+    ...standingLines,
+    standingLines.length ? "" : null,
+    deferredLines.length ? "=== IGNORED LAST WEEK (must come back hotter) ===" : null,
+    ...deferredLines,
+    deferredLines.length ? "" : null,
     "Context (source of truth — never contradict the record or result):",
     ctx.userContext,
-  ].join("\n");
-  return { prompt, maxTokens: 2000 };
+  ]
+    .filter((l) => l != null)
+    .join("\n");
+  return { prompt, maxTokens: 2600 };
 }
 
 // Look up a player's save-assigned personality by name (case-insensitive).
@@ -1838,7 +2062,7 @@ function buildBrandDealsSpec(ctx: MediaContext): PromptSpec {
           category: "e.g. Truck Dealership, Energy Drink, Crypto Exchange, Local BBQ, Sportsbook, Fashion Label",
           broker: "AD|Booster",
           pitch: "1-2 sentences: what they're offering and why they want THIS program",
-          stipendPoints: "integer program points per week (clean deals 50-150, edgy 150-300, controversial 300-600)",
+          stipendPoints: "integer 0-100 — RELATIVE richness of this offer for its tier, NOT a currency amount (60 = modest for its tier, 100 = the richest offer of that tier). The app converts this into real program points scaled to the program's stature.",
           weeks: "integer 2-6 (how many weeks the stipend runs)",
           reputation: "clean|edgy|controversial",
           upside: "one line on the good side of the money",
@@ -1940,7 +2164,7 @@ function buildScoutingSpec(ctx: MediaContext, extra: Extra): PromptSpec {
   const oppName = String(extra.oppName ?? "the next opponent");
   const oppRecord = extra.oppRecord ? String(extra.oppRecord) : null;
   const oppRank = typeof extra.oppRank === "number" ? extra.oppRank : null;
-  const oppOvr = typeof extra.oppRatingOVR === "number" ? extra.oppRatingOVR : null;
+  // Team OVR is deliberately NOT read any more — the report grades in words, not numbers.
   const oppRoster = Array.isArray(extra.oppRoster) ? (extra.oppRoster as RosterPlayer[]) : [];
 
   // Stat leaders from real numbers.
@@ -1962,14 +2186,10 @@ function buildScoutingSpec(ctx: MediaContext, extra: Extra): PromptSpec {
   const sacker = withDef((d) => d?.sacks ?? 0);
   const picker = withDef((d) => d?.ints ?? 0);
 
-  // Run/pass identity straight from their production.
-  const passYds = passer?.stats?.offense?.passYds ?? 0;
-  const rushYds = oppRoster.reduce((s, p) => s + (p.stats?.offense?.rushYds ?? 0), 0);
-  const identity =
-    passYds > rushYds * 1.4 ? "pass-heavy" : rushYds > passYds * 1.1 ? "run-heavy" : "balanced";
-
+  // Ratings never enter the prompt — the model can only repeat what it is given, so the
+  // no-OVR rule has to hold on the way IN as well as the way out.
   const leaderLine = (label: string, p: RosterPlayer | null) =>
-    p ? `  ${label}: ${p.name} (${p.position}, ${p.overall} OVR) — ${fmtStats(p) ?? "—"}` : null;
+    p ? `  ${label}: ${playerLine(p)} ${p.position ?? "?"} — ${fmtStats(p) ?? "—"}` : null;
 
   const leaders = [
     leaderLine("Passer", passer),
@@ -1980,45 +2200,241 @@ function buildScoutingSpec(ctx: MediaContext, extra: Extra): PromptSpec {
     leaderLine("Ball hawk", picker),
   ].filter(Boolean) as string[];
 
-  // Depth: the top handful by OVR, real names, so "key players" are grounded.
+  // Depth: the top handful in depth-chart order, real names + board grade in words, so
+  // "key players" are grounded without ever handing over a rating.
   const keyGuys = oppRoster
     .filter((p) => p.overall != null)
     .slice(0, 14)
-    .map((p) => `  ${p.name} (${p.position}, ${p.overall} OVR${p.year ? `, ${p.year}` : ""})${fmtStats(p) ? ` — ${fmtStats(p)}` : ""}`);
+    .map((p) => {
+      const prof = profileLine(p);
+      return `  ${playerLine(p)} ${p.position ?? "?"} — ${TIER_LABEL[tierFor(p.overall)]}${prof ? ` — ${prof}` : ""}${fmtStats(p) ? ` — ${fmtStats(p)}` : ""}`;
+    });
+
+  // The deterministic half of the report: graded unit edges, individual mismatches, their
+  // soft spots, injuries, play-calling tendency, special teams, plus the schedule-derived
+  // half a real report opens with (form, common opponents, series, quarter splits). Computed
+  // from the save so the model never guesses — and so the prose can't contradict the panel
+  // the UI shows next to it.
+  //
+  // NOTE: nothing below hands the model a rating number. Staffs don't have an OVR column, so
+  // the report doesn't either — grades and tiers go in, grades and tiers come out.
+  const oppRow = typeof extra.oppRow === "number" ? extra.oppRow : null;
+  const m = scoutingMath(ctx.roster ?? [], oppRoster, {
+    games: ctx.snapshot?.games ?? [],
+    teams: ctx.snapshot?.teams ?? {},
+    myRow: ctx.snapshot?.userTeamRow,
+    theirRow: oppRow,
+  });
+  const t = m.tendencies;
+
+  const edgeLines = m.edges
+    .filter((e) => e.verdict != null)
+    .map((e) => `  ${e.label}: us ${e.myGrade ?? "?"} / them ${e.theirGrade ?? "?"} — ${EDGE_LABEL[e.verdict!]}`);
+  // Each line carries the computed instruction as well as the verdict — that instruction is
+  // what the UI shows the coach, so handing it to the model keeps the prose from arguing
+  // with the panel directly above it.
+  const matchupLines = m.matchups
+    .filter((x) => x.verdict != null)
+    .map(
+      (x) =>
+        `  ${x.label}: ${EDGE_LABEL[x.verdict!]} (us ${x.myGrade ?? "?"} / them ${x.theirGrade ?? "?"}) — read: ${x.call}`
+    );
+  const mismatchLines = m.mismatches.map((x) => {
+    const how = attackLine(x.theirs.player);
+    return `  ${starterLine(x.mine, true)} vs their ${starterLine(x.theirs, true)} — ${SEVERITY_LABEL[x.severity]} edge to us${how ? `. He is a ${how}` : ""}`;
+  });
+  // Archetype + trait read: WHY he's a threat, WHERE he can be attacked. Straight out of
+  // the save's PlayerType and trait ratings, translated to coach-speak (see traits.ts) so
+  // the report says "speed rusher · bull rush" instead of a number nobody can act on.
+  const weakLines = m.weakLinks.map((s) => {
+    const how = attackLine(s.player);
+    return `  ${starterLine(s, true)}${how ? ` — ${how}` : ""}`;
+  });
+  const threatLines = m.threats.map((s) => {
+    const prof = profileLine(s.player);
+    const stat = fmtStats(s.player);
+    return `  ${starterLine(s, true)}${prof ? ` — ${prof}` : ""}${stat ? ` — ${stat}` : ""}`;
+  });
+  const injuryLines = m.injuries
+    .slice(0, 6)
+    .map((i) => `  ${playerLine(i.player)} ${i.player.position ?? "?"}: ${i.status}`);
+  const dropOffLines = m.dropOffs.map(
+    (d) =>
+      `  ${d.slot} ${playerLine(d.starter)} — big fall-off behind him${d.backup ? ` (next man: ${playerLine(d.backup)})` : " (no real backup on the roster)"}`
+  );
+
+  const sc = m.schedule;
+  const formLines = sc ? sc.form.games.map((g) => `  ${formLine(g)}`) : [];
+  const commonLines = sc
+    ? sc.common.map(
+        (c) =>
+          `  vs ${c.opponent}: we went ${formLine(c.yours)}, they went ${formLine(c.theirs)} (${c.swing >= 0 ? "+" : ""}${c.swing} point swing our way)`
+      )
+    : [];
+  const seriesLines = sc ? sc.series.map((g) => `  ${formLine(g)}`) : [];
+
+  const st = m.specialTeams;
+  const stLines = [
+    st.kicker
+      ? `  K ${st.kicker.name}${st.kicker.fgAtt > 0 ? ` — ${st.kicker.fgMade}/${st.kicker.fgAtt} FG` : ""}${st.kicker.fgLong ? `, long ${st.kicker.fgLong}` : ""}${st.kicker.att50 ? `, ${st.kicker.made50 ?? 0}/${st.kicker.att50} from 50+` : ""}`
+      : null,
+    st.punter
+      ? `  P ${st.punter.name}${st.punter.avg ? ` — ${st.punter.avg} yd avg` : ""}${st.punter.in20 ? `, ${st.punter.in20} inside the 20` : ""}`
+      : null,
+    ...st.returnThreats.map(
+      (r) => `  Return threat: ${r.name}${r.position ? ` (${r.position})` : ""} — ${r.retYds} return yds, ${r.kickRetTDs + r.puntRetTDs} return TD`
+    ),
+  ].filter(Boolean) as string[];
+
+  const tendencyLine = [
+    t.passRate != null ? `they pass on ${t.passRate}% of snaps (${t.passAtt} att vs ${t.rushAtt} carries)` : null,
+    t.yardsPerAtt != null ? `${t.yardsPerAtt} yds/attempt` : null,
+    t.completionPct != null ? `${t.completionPct}% completions` : null,
+    t.yardsPerCarry != null ? `${t.yardsPerCarry} yds/carry` : null,
+    `${t.passTDs} pass TD / ${t.passInts} INT`,
+    t.sacksPerGame != null ? `their defense: ${t.sacksPerGame} sacks per game` : null,
+    t.takeawaysPerGame != null ? `${t.takeawaysPerGame} takeaways per game` : null,
+    t.tflPerGame != null ? `${t.tflPerGame} TFL per game` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const prompt = [
     `You are ${ctx.school}'s analytics staff building the scouting report on ${oppName} for the head coach's desk, ahead of the next game.`,
+    "The coach reads this and then PLAYS THE GAME himself. Write it to be used with a controller in hand:",
+    "name the man to target, the call to make, and what to stay away from.",
     "Return JSON with this exact schema:",
     JSON.stringify({
       opponent: "string (the opponent name)",
-      summary: "string (2-3 sentence bottom-line: who they are and how dangerous)",
-      offense: { identity: "run-heavy|pass-heavy|balanced", scheme: "string (short, inferred from their numbers)", keyPlayers: [{ name: "string", note: "string (why he matters, with a real stat)" }], howToStop: "string (2-3 sentences)" },
-      defense: { identity: "string (short, inferred)", keyPlayers: [{ name: "string", note: "string (real stat)" }], howToAttack: "string (2-3 sentences)" },
+      bottomLine: "string (ONE sentence: can we win this, and the single lever that decides it)",
+      summary: "string (2-3 sentence read: who they are and how dangerous)",
+      offense: {
+        identity: "run-heavy|pass-heavy|balanced",
+        scheme: "string (short, inferred from their production — e.g. 'spread RPO', 'pro-style under center', 'gap-scheme power')",
+        tendency: "string (1-2 sentences on HOW they call a game, quoting the real split/efficiency numbers given below)",
+        keyPlayers: [{ name: "string (with his jersey number)", note: "string (WHAT HE IS and why that hurts — his archetype and trait read, plus a real stat)", assignment: "string (who on our side handles him and how — 'bracket him with the nickel and the free safety')" }],
+        howToStop: "string (2-3 sentences of plan)",
+        calls: ["3-4 CONCRETE defensive calls to make against them — coverage shells, fronts, blitz/contain decisions, who to double. Each 8-16 words, usable as-is."],
+      },
+      defense: {
+        identity: "string (short, inferred)",
+        scheme: "string (short, inferred — front and coverage tendency)",
+        keyPlayers: [{ name: "string (with his jersey number)", note: "string (real stat)", assignment: "string (how we block/avoid him)" }],
+        howToAttack: "string (2-3 sentences of plan)",
+        calls: ["3-4 CONCRETE offensive concepts to call against them — formations, run/pass concepts, tempo, who to isolate. Each 8-16 words, usable as-is."],
+      },
+      attack: [{ target: "string (a REAL opponent player by jersey + name, or a named spot)", why: "string (the trait/archetype hole that makes him the target)", how: "string (the concept that gets him)" }],
+      beware: [{ threat: "string (a REAL opponent player, jersey + name)", why: "string (his real production)", how: "string (how to neutralize him)" }],
+      openingScript: ["EXACTLY 3 plays to open the game with, in order. Real concepts, chosen to test what this specific defense showed on film. Each 6-14 words."],
+      situational: {
+        firstDown: "string (one line — what they do on first down and your answer)",
+        thirdDown: "string (one line)",
+        redZone: "string (one line)",
+        fourthDown: "string (one line — when to go for it against this defense, and their kicker's real range)",
+      },
+      adjustments: {
+        ifTrailing: "string (one line — what changes if we're down two scores in the second half)",
+        ifLeading: "string (one line — how we close it out, tied to when in a game they do their damage)",
+      },
+      gameFlow: "string (1-2 sentences on how the game likely unfolds, built on their quarter-by-quarter scoring profile and recent form)",
+      injuryImpact: "string (what their injury list actually changes for us — or empty string if nobody is out)",
+      seriesRead: "string (what the common opponents and prior meetings tell us — or empty string if there are none)",
+      specialTeams: "string (1-2 lines: kicker range, punt game, return threat, and what it means for your 4th-down math)",
       xFactor: "string (the one player or matchup that decides the game)",
-      keys: ["3-4 short bullet keys to the game"],
+      keys: ["4-5 short bullet keys to the game"],
+      prediction: { call: "string (who wins and roughly how)", confidence: "lock|lean|toss-up|underdog" },
     }),
     "",
     "HARD RULES:",
+    "- NEVER cite a rating, an OVR, or any 0-99 player number. This report is written the way a real",
+    "  staff writes one: jersey number, name, class, real production, and a grade in WORDS",
+    "  ('elite', 'all-conference', 'first-year starter', 'weak spot', 'B+ unit'). A sentence like",
+    "  '#12 Reed, an 88 overall corner' is WRONG. '#12 Reed, an all-conference corner' is right.",
+    "- Refer to opponent players by jersey number and name on first mention (e.g. '#7 Danny Cole').",
     "- Use ONLY the real opponent players listed below, by their real names. Never invent a player.",
     "- Every claim about a player must match his real stat line. Do not inflate or invent numbers.",
-    `- Their offensive identity from the numbers is: ${identity}. Reflect that honestly.`,
-    "- keyPlayers: 2-3 per side, the genuinely dangerous ones (stat leaders / highest OVR).",
-    "- Be specific and useful — this is a real game plan, not hype filler. Confident coaching-staff voice.",
+    "- The GRADED EDGES and MISMATCHES below are computed from the actual save. Treat them as fact and",
+    "  build the plan on them. NEVER contradict them — do not tell the coach to run into a front he loses to,",
+    "  and do not call a unit a weakness when the grades say it's a strength.",
+    `- Their play-calling identity from the numbers is: ${t.identity}. Reflect that honestly.`,
+    "- EVERY player you name must come with WHY, in football terms, from his archetype and trait",
+    "  read below — 'a speed rusher who wins with his first step', 'a man-coverage corner who",
+    "  can't play zone', 'a run-stopping MIKE who's a liability up the seam'. Never write that",
+    "  someone is simply 'good' or 'dangerous': say what he DOES.",
+    "- Weaknesses come with the answer attached. 'Their CB2 is beat in man' is half a thought;",
+    "  'isolate him with your WR1 and run vertical' is the note the coach uses.",
+    "- attack: 2-3 entries. beware: 2-3 entries. Ground each one in a real player and real production.",
+    "- calls must be real football, specific enough to act on: 'Cover 2 shell, keep the safety over #7'",
+    "  beats 'play good defense'. No filler, no hedging, no repeating the same idea twice.",
+    "- Do NOT invent situational data you were not given. There are no third-down or red-zone splits in",
+    "  this data: write those lines as reasoned coaching judgement from what IS here (personnel, tendency,",
+    "  quarter splits), never as a fabricated statistic.",
+    "- If a number below is missing, say nothing about it rather than guessing.",
+    "- Confident coaching-staff voice. This is a game plan, not hype.",
     "",
     `=== ${oppName.toUpperCase()} — TEAM ===`,
-    `Record: ${oppRecord ?? "n/a"}${oppRank ? ` · AP #${oppRank}` : ""}${oppOvr ? ` · Team OVR ${oppOvr}` : ""}`,
-    `Offensive tendency (from their production): ${identity} (≈${passYds} pass yds vs ≈${rushYds} rush yds on the season)`,
+    `Record: ${oppRecord ?? "n/a"}${oppRank ? ` · AP #${oppRank}` : ""}`,
+    `Play-calling / efficiency (real): ${t.identity}${tendencyLine ? ` — ${tendencyLine}` : ""}`,
+    t.games != null ? `Games played so far: ${t.games}` : null,
+    `Experience: ${m.experience.read}`,
     "",
+    sc && sc.form.games.length ? "=== THEIR RECENT FORM (real results, most recent first) ===" : null,
+    ...formLines,
+    sc && sc.form.streak
+      ? `  Streak: ${sc.form.streak} · scoring ${sc.form.pointsForPerGame ?? "?"} per game, allowing ${sc.form.pointsAgainstPerGame ?? "?"} (avg margin ${sc.form.averageMargin! >= 0 ? "+" : ""}${sc.form.averageMargin})`
+      : null,
+    formLines.length ? "" : null,
+    commonLines.length ? "=== COMMON OPPONENTS (the most honest comparison we have) ===" : null,
+    ...commonLines,
+    commonLines.length ? "" : null,
+    seriesLines.length ? "=== THE SERIES (prior meetings, our result first) ===" : null,
+    ...seriesLines,
+    seriesLines.length ? "" : null,
+    sc?.quarters.read ? "=== WHEN THEY DO THEIR DAMAGE (quarter-by-quarter, real) ===" : null,
+    sc?.quarters.read
+      ? `  Scoring by quarter (per game): ${sc.quarters.scoredPerQuarter.join(" / ")} · allowing: ${sc.quarters.allowedPerQuarter.join(" / ")} (over ${sc.quarters.games} games)`
+      : null,
+    sc?.quarters.read ? `  Read: ${sc.quarters.read}` : null,
+    sc?.quarters.read ? "" : null,
+    "=== GRADED EDGES, UNIT BY UNIT (computed from both real rosters — FACT, report-card grades) ===",
+    ...(edgeLines.length ? edgeLines : ["  (rosters unavailable — do not claim any edge)"]),
+    m.overallVerdict ? `  Overall on-field talent: ${EDGE_LABEL[m.overallVerdict]} for us` : null,
+    "",
+    "=== THE FOUR PHASE MATCHUPS (computed — always stated FROM OUR SIDE) ===",
+    ...(matchupLines.length ? matchupLines : ["  (unavailable)"]),
+    "",
+    "=== YOUR BEST INDIVIDUAL MISMATCHES (computed) ===",
+    ...(mismatchLines.length ? mismatchLines : ["  (no clear individual mismatch — say so rather than inventing one)"]),
+    "",
+    "=== THEIR SOFTEST ON-FIELD SPOTS (computed, lowest-rated starters) ===",
+    ...(weakLines.length ? weakLines : ["  (unavailable)"]),
+    "",
+    "=== THEIR MOST DANGEROUS STARTERS (computed) ===",
+    ...(threatLines.length ? threatLines : ["  (unavailable)"]),
+    "",
+    dropOffLines.length ? "=== SPOTS THEY CANNOT AFFORD TO LOSE (starter-to-backup fall-off) ===" : null,
+    ...dropOffLines,
+    dropOffLines.length ? "" : null,
+    injuryLines.length ? "=== THEIR INJURIES (from the save — real) ===" : null,
+    ...injuryLines,
+    injuryLines.length ? "" : null,
+    stLines.length ? "=== THEIR SPECIAL TEAMS (real) ===" : null,
+    ...stLines,
+    stLines.length ? "" : null,
     "=== STAT LEADERS (real) ===",
     ...leaders,
     "",
-    "=== KEY PERSONNEL (real, by OVR) ===",
+    "=== KEY PERSONNEL (real, depth-chart order) ===",
     ...keyGuys,
     "",
     "Season context for your own team:",
     ctx.userContext,
-  ].join("\n");
-  return { prompt, maxTokens: 2200 };
+  ]
+    .filter((l) => l != null)
+    .join("\n");
+  // Biggest prompt + biggest schema in the app: an undersized budget truncates the JSON
+  // mid-object and the whole call sheet is lost.
+  return { prompt, maxTokens: 5200 };
 }
 
 function buildRecruitTextSpec(ctx: MediaContext, extra: Extra): PromptSpec {
@@ -2299,11 +2715,13 @@ function normalize(
           .filter((d) => d && typeof d.brand === "string")
           .map((d) => {
             const rep = d.reputation === "controversial" ? "controversial" : d.reputation === "edgy" ? "edgy" : "clean";
-            const stipend = Math.max(0, Math.min(800, Math.round(Number(d.stipendPoints) || 0)));
+            // 0-100 richness-within-tier, not a currency amount. deals.ts turns this into the
+            // real per-week points using the program's prestige (see scaleStipend).
+            const stipend = Math.max(0, Math.min(100, Math.round(Number(d.stipendPoints) || 0)));
             const weeks = Math.max(1, Math.min(8, Math.round(Number(d.weeks) || 3)));
             // Deterministic meter tradeoff from reputation + money — "not all money is good money."
             const base = { clean: { fanTrust: 3, mediaHeat: 0, boosterConfidence: 2 }, edgy: { fanTrust: -3, mediaHeat: 4, boosterConfidence: 4 }, controversial: { fanTrust: -9, mediaHeat: 11, boosterConfidence: 6 } }[rep];
-            const moneyBump = Math.round(stipend / 120); // bigger money, happier booster
+            const moneyBump = Math.round(stipend / 50); // richer offer, happier booster (0-2)
             return {
               brand: String(d.brand),
               category: typeof d.category === "string" ? d.category : "",
@@ -2338,6 +2756,20 @@ function normalize(
 
   if (kind === "offseason-brief") {
     if (!parsed || typeof parsed !== "object" || typeof parsed.body !== "string") return { error: true };
+    const pairList = (v: unknown, aKey: string, bKey: string) =>
+      Array.isArray(v)
+        ? (v as Record<string, unknown>[])
+            .filter((x) => x && typeof x[aKey] === "string")
+            .map((x) => ({ [aKey]: String(x[aKey]), [bKey]: typeof x[bKey] === "string" ? String(x[bKey]) : "" }))
+        : [];
+    const pr = parsed.portalReport as Record<string, unknown> | undefined;
+    const portalReport = pr && typeof pr === "object"
+      ? {
+          winners: pairList(pr.winners, "team", "note") as { team: string; note: string }[],
+          losers: pairList(pr.losers, "team", "note") as { team: string; note: string }[],
+          movers: pairList(pr.movers, "player", "note") as { player: string; note: string }[],
+        }
+      : null;
     return {
       headline: typeof parsed.headline === "string" ? parsed.headline : "The Offseason",
       stageLabel: typeof parsed.stageLabel === "string" ? parsed.stageLabel : "",
@@ -2348,6 +2780,7 @@ function normalize(
             .map((s) => ({ title: typeof s.title === "string" ? s.title : "", text: String(s.text) }))
         : [],
       lookAhead: typeof parsed.lookAhead === "string" ? parsed.lookAhead : "",
+      portalReport,
     };
   }
 
@@ -2358,28 +2791,69 @@ function normalize(
       Array.isArray(v)
         ? (v as Record<string, unknown>[])
             .filter((x) => x && typeof x.name === "string")
-            .map((x) => ({ name: String(x.name), note: typeof x.note === "string" ? x.note : "" }))
+            .map((x) => ({
+              name: String(x.name),
+              note: typeof x.note === "string" ? x.note : "",
+              assignment: typeof x.assignment === "string" ? x.assignment : "",
+            }))
+        : [];
+    const str = (v: unknown) => (typeof v === "string" ? v : "");
+    const strList = (v: unknown) =>
+      Array.isArray(v) ? (v as unknown[]).filter((k) => typeof k === "string" && k.trim()).map(String) : [];
+    // attack/beware entries: keep only the ones that actually name a target — a bullet with
+    // no subject is worse than one fewer bullet.
+    const triples = (v: unknown, headKey: string) =>
+      Array.isArray(v)
+        ? (v as Record<string, unknown>[])
+            .filter((x) => x && typeof x[headKey] === "string" && String(x[headKey]).trim())
+            .map((x) => ({ target: String(x[headKey]), why: str(x.why), how: str(x.how) }))
         : [];
     const off = side(parsed.offense);
     const def = side(parsed.defense);
+    const sit = side(parsed.situational);
+    const adj = side(parsed.adjustments);
+    const pred = side(parsed.prediction);
     const ok = typeof parsed.summary === "string" || kp(off.keyPlayers).length || kp(def.keyPlayers).length;
     if (!ok) return { error: true };
     return {
-      opponent: typeof parsed.opponent === "string" ? parsed.opponent : "",
-      summary: typeof parsed.summary === "string" ? parsed.summary : "",
+      opponent: str(parsed.opponent),
+      bottomLine: str(parsed.bottomLine),
+      summary: str(parsed.summary),
       offense: {
         identity: typeof off.identity === "string" ? off.identity : "balanced",
-        scheme: typeof off.scheme === "string" ? off.scheme : "",
+        scheme: str(off.scheme),
+        tendency: str(off.tendency),
         keyPlayers: kp(off.keyPlayers),
-        howToStop: typeof off.howToStop === "string" ? off.howToStop : "",
+        howToStop: str(off.howToStop),
+        calls: strList(off.calls),
       },
       defense: {
-        identity: typeof def.identity === "string" ? def.identity : "",
+        identity: str(def.identity),
+        scheme: str(def.scheme),
         keyPlayers: kp(def.keyPlayers),
-        howToAttack: typeof def.howToAttack === "string" ? def.howToAttack : "",
+        howToAttack: str(def.howToAttack),
+        calls: strList(def.calls),
       },
-      xFactor: typeof parsed.xFactor === "string" ? parsed.xFactor : "",
-      keys: Array.isArray(parsed.keys) ? (parsed.keys as unknown[]).filter((k) => typeof k === "string").map(String) : [],
+      attack: triples(parsed.attack, "target"),
+      beware: triples(parsed.beware, "threat"),
+      openingScript: strList(parsed.openingScript).slice(0, 3),
+      situational: {
+        firstDown: str(sit.firstDown),
+        thirdDown: str(sit.thirdDown),
+        redZone: str(sit.redZone),
+        fourthDown: str(sit.fourthDown),
+      },
+      adjustments: {
+        ifTrailing: str(adj.ifTrailing),
+        ifLeading: str(adj.ifLeading),
+      },
+      gameFlow: str(parsed.gameFlow),
+      injuryImpact: str(parsed.injuryImpact),
+      seriesRead: str(parsed.seriesRead),
+      specialTeams: str(parsed.specialTeams),
+      xFactor: str(parsed.xFactor),
+      keys: strList(parsed.keys),
+      prediction: { call: str(pred.call), confidence: str(pred.confidence) },
     };
   }
 

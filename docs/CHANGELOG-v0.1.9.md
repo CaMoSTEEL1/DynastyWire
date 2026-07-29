@@ -1,4 +1,4 @@
-# Dynasty Wire v0.1.7
+# Dynasty Wire v0.1.9
 
 ## 💸 API costs slashed — a season no longer costs what a week did
 
@@ -43,7 +43,7 @@
 
 ## 📖 Help tour expanded
 
-- The Help tour (the "?" up top) now walks through every part of the app — National Desk, Coach, Situation Room, NIL, The Book, Shows, Offseason, cost control — and ends with a "What's New in v0.1.7" recap.
+- The Help tour (the "?" up top) now walks through every part of the app — National Desk, Coach, Situation Room, NIL, The Book, Shows, Offseason, cost control — and ends with a "What's New in v0.1.8" recap.
 
 ## 🧑‍🏫 Coach & program polish
 

@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { SectionHeader } from "@/components/ui/section-header";
-import { getRecruits, getPortal, type Recruit, type PortalBoard } from "@/lib/dynasty/client";
+import { getRecruits, getPortal, getCommitments, type Recruit, type PortalBoard, type CommitmentBoard } from "@/lib/dynasty/client";
 import { issueKey, readTab, writeTab } from "@/lib/dynasty/issue-cache";
 import {
   OFFSEASON_PHASES,
@@ -73,6 +73,7 @@ export default function OffseasonPage() {
   const [brief, setBrief] = useState<OffseasonBrief | null>(null);
   const [commits, setCommits] = useState<Recruit[] | null>(null);
   const [portal, setPortal] = useState<PortalBoard | null>(null);
+  const [board, setBoard] = useState<CommitmentBoard | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -94,14 +95,31 @@ export default function OffseasonPage() {
     setLoading(true);
     setErr(null);
     try {
-      const [recruits, portalBoard] = await Promise.all([
+      const [recruits, portalBoard, commitBoard] = await Promise.all([
         getRecruits(currentSavePath).catch(() => [] as Recruit[]),
         getPortal(currentSavePath).catch(() => ({ active: false, transferred: [], atRisk: [] } as PortalBoard)),
+        getCommitments(currentSavePath).catch(() => ({ bySchool: [], notable: [], total: 0 } as CommitmentBoard)),
       ]);
+      setBoard(commitBoard);
       const cls = recruits.filter((r) => r.committedToUser).sort((a, b) => (a.nationalRank ?? 9e9) - (b.nationalRank ?? 9e9));
       setCommits(cls);
       setPortal(portalBoard);
       const record = snapshot?.userTeam ? `${snapshot.userTeam.wins}-${snapshot.userTeam.losses}` : null;
+      const uName = snapshot?.userTeam?.name ?? null;
+
+      // League-wide portal intel computed from the fresh board (the render-state useMemos
+      // lag a tick). Landing spots aren't in the save — this is who ENTERED and from where.
+      const movers = [...portalBoard.transferred].sort((a, b) => (b.overall ?? 0) - (a.overall ?? 0));
+      const lossMap = new Map<string, { team: string; teamRank: number | null; count: number; topOverall: number; names: string[] }>();
+      for (const t of portalBoard.transferred) {
+        const e = lossMap.get(t.team) ?? { team: t.team, teamRank: t.teamRank, count: 0, topOverall: 0, names: [] };
+        e.count++; e.topOverall = Math.max(e.topOverall, t.overall ?? 0);
+        if (e.names.length < 3) e.names.push(t.name);
+        lossMap.set(t.team, e);
+      }
+      const losses = [...lossMap.values()].sort((a, b) => b.count - a.count || b.topOverall - a.topOverall);
+      const depart = movers.filter((m) => uName && m.team === uName);
+
       const data = await generate<OffseasonBrief>(
         "offseason-brief",
         {
@@ -111,8 +129,12 @@ export default function OffseasonPage() {
           record,
           isChamp: (snapshot?.userTeam?.rankMedia ?? 99) === 1,
           commits: cls.slice(0, 24).map((c) => ({ name: c.name, position: c.position, nationalRank: c.nationalRank })),
-          portalIn: portalBoard.transferred.length,
-          portalOut: 0,
+          leagueMovers: movers.slice(0, 16),
+          teamLosses: losses.slice(0, 10),
+          userDepartures: depart.slice(0, 12),
+          // REAL commitments with destinations — who's winning the trail and who went where.
+          topClasses: commitBoard.bySchool.slice(0, 12),
+          notableCommits: commitBoard.notable.slice(0, 24),
           atRisk: portalBoard.atRisk.length,
         },
         { force: true }
@@ -151,6 +173,10 @@ export default function OffseasonPage() {
     for (const c of commits ?? []) { const p = c.position ?? "ATH"; m[p] = (m[p] || 0) + 1; }
     return m;
   }, [commits]);
+
+  // The user's team name — used to highlight their program in the league-wide panels.
+  // (Portal aggregates for the brief are computed inline in buildHub from the fresh board.)
+  const userTeamName = snapshot?.userTeam?.name ?? null;
 
   if (needsOnboarding) {
     return (
@@ -211,6 +237,49 @@ export default function OffseasonPage() {
                   ))}
                 </div>
               )}
+              {brief.portalReport && (brief.portalReport.winners.length > 0 || brief.portalReport.losers.length > 0 || brief.portalReport.movers.length > 0) && (
+                <div className="rounded border border-dw-border bg-paper p-4">
+                  <p className="mb-3 font-sans text-[10px] uppercase tracking-widest text-dw-accent2">Offseason Landscape — Around the League</p>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {brief.portalReport.winners.length > 0 && (
+                      <div>
+                        <p className="mb-1.5 font-headline text-xs uppercase tracking-wider text-dw-green">Winning the Offseason</p>
+                        <ul className="space-y-1.5">
+                          {brief.portalReport.winners.map((w, i) => (
+                            <li key={i} className="font-serif text-sm text-ink2">
+                              <span className="font-sans text-xs uppercase tracking-wider text-ink">{w.team}</span> — {w.note}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {brief.portalReport.losers.length > 0 && (
+                      <div>
+                        <p className="mb-1.5 font-headline text-xs uppercase tracking-wider text-dw-red">Bleeding Talent</p>
+                        <ul className="space-y-1.5">
+                          {brief.portalReport.losers.map((l, i) => (
+                            <li key={i} className="font-serif text-sm text-ink2">
+                              <span className="font-sans text-xs uppercase tracking-wider text-ink">{l.team}</span> — {l.note}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                  {brief.portalReport.movers.length > 0 && (
+                    <div className="mt-4 border-t border-dw-border pt-3">
+                      <p className="mb-1.5 font-headline text-xs uppercase tracking-wider text-dw-accent2">Notable Movement</p>
+                      <ul className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
+                        {brief.portalReport.movers.map((m, i) => (
+                          <li key={i} className="font-serif text-sm text-ink2">
+                            <span className="font-sans text-xs uppercase tracking-wider text-ink">{m.player}</span> — {m.note}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
               {brief.lookAhead && (
                 <p className="font-serif text-sm text-ink2"><span className="font-sans text-[10px] uppercase tracking-widest text-dw-accent2">Looking ahead:</span> {brief.lookAhead}</p>
               )}
@@ -218,6 +287,69 @@ export default function OffseasonPage() {
           )}
         </div>
       </div>
+
+      {/* Commitment tracker — REAL destinations pulled from the save (who went where). */}
+      {board && board.total > 0 && (
+        <div className="rounded border border-dw-border bg-paper2 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-headline text-sm uppercase tracking-widest text-ink">
+              Commitment Tracker — Around the League
+            </h3>
+            <span className="font-sans text-xs text-ink3">{board.total.toLocaleString()} commitments league-wide</span>
+          </div>
+          <div className="mt-4 grid gap-5 lg:grid-cols-2">
+            <div>
+              <p className="mb-2 font-sans text-[10px] uppercase tracking-widest text-dw-green">Winning the Trail</p>
+              <ul className="space-y-1">
+                {board.bySchool.slice(0, 10).map((s) => {
+                  const mine = s.school === userTeamName;
+                  return (
+                    <li
+                      key={s.school}
+                      className={cn(
+                        "flex items-center justify-between gap-2 border-b border-dw-border/50 py-1 last:border-0",
+                        mine && "bg-dw-accent2/10 px-1.5"
+                      )}
+                    >
+                      <span className="min-w-0 truncate font-serif text-sm text-ink2">
+                        <span className={cn("font-sans text-xs uppercase tracking-wider", mine ? "text-dw-accent2" : "text-ink")}>
+                          {s.teamRank ? `#${s.teamRank} ` : ""}{s.school}
+                        </span>
+                        {s.top.length > 0 && <span className="text-ink3"> · {s.top.slice(0, 2).join(", ")}</span>}
+                      </span>
+                      <span className="shrink-0 font-sans text-[10px] text-ink3">
+                        <span className="text-dw-green">{s.blueChips} BC</span> · {s.count}
+                        {s.avgRank ? ` · avg #${s.avgRank}` : ""}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+            <div>
+              <p className="mb-2 font-sans text-[10px] uppercase tracking-widest text-dw-accent2">Where the Best Went</p>
+              <ul className="max-h-64 space-y-1 overflow-y-auto pr-1">
+                {board.notable.slice(0, 20).map((c, i) => (
+                  <li key={i} className="flex items-center justify-between gap-2 border-b border-dw-border/50 py-1 last:border-0">
+                    <span className="min-w-0 truncate font-serif text-sm text-ink2">
+                      <span className="font-sans text-[10px] text-ink3">{c.nationalRank ? `#${c.nationalRank}` : "—"}</span>{" "}
+                      <span className="font-sans text-xs uppercase tracking-wider text-ink">{c.name}</span>
+                      {c.position ? <span className="text-ink3"> · {c.position}</span> : null}
+                    </span>
+                    <span className={cn("shrink-0 font-sans text-[10px]", c.school === userTeamName ? "text-dw-accent2" : "text-ink3")}>
+                      → {c.school}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          <p className="mt-3 font-serif text-[11px] italic text-ink3">
+            Real commitments read straight from your save — updates every week of the window as the
+            class fills in. Portal destinations aren&apos;t decided in-game yet, so those show origin only.
+          </p>
+        </div>
+      )}
 
       {/* Real data panels */}
       <div className="grid gap-6 lg:grid-cols-2">

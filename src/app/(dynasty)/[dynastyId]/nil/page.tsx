@@ -22,6 +22,7 @@ const fmtMoney = (k: number | null | undefined) =>
 import { fakeGpa, GPA_COLOR } from "@/lib/dynasty/academics";
 import { loadSuspensions, isActive, type Suspension } from "@/lib/dynasty/suspensions";
 import { playerMarketValue } from "@/lib/dynasty/valuation";
+import { scaleStipend, signDeal } from "@/lib/dynasty/deals";
 
 // Depth-chart order: group by position, sort by OVR (top = starter).
 function byDepthChart(roster: RosterPlayer[]): { pos: string; players: RosterPlayer[] }[] {
@@ -54,7 +55,15 @@ const REP_STYLE: Record<string, string> = {
 };
 
 function BrandDeals() {
-  const { generate, snapshot, currentSavePath, dynastyId, year, week } = useDynasty();
+  const { generate, snapshot, dynastyId, year, week, settings } = useDynasty();
+  const writeNil = settings.nilWriteToSave !== false; // default on
+  // Deal value is OUR call, not the model's: scaled to this program's prestige so a rebuild
+  // gets local money and a blue blood gets national money.
+  const prestige = snapshot?.userTeam?.prestige ?? null;
+  const perWeek = useCallback(
+    (d: BrandDeal) => scaleStipend(d.stipendPoints, d.reputation, prestige),
+    [prestige]
+  );
   const saga = useSaga();
   const teamIndex = snapshot?.userTeam?.teamIndex ?? null;
   const [deals, setDeals] = useState<BrandDeal[] | null>(null);
@@ -91,20 +100,31 @@ function BrandDeals() {
   }, [generate, persist]);
 
   const accept = useCallback(async (d: BrandDeal) => {
+    // The per-brand `signed` guard (persisted with the week's deals) makes this idempotent —
+    // a signed deal never re-applies, even if the card re-renders or the tab is reopened.
     if (signed[d.brand] || busyBrand) return;
     setBusyBrand(d.brand);
     try {
-      // Reputational tradeoff hits the meters immediately.
+      // Reputational tradeoff hits the meters immediately (this always happens, even with
+      // NIL-to-save turned off — the hot seat still moves).
       await saga.adjustMeters(d.effects);
-      // The stipend boosts NIL headroom — add program points to the save (full run of the deal).
-      if (currentSavePath && teamIndex != null && d.stipendPoints > 0) {
-        await applyImpact(currentSavePath, { teamIndex, programPointsDelta: d.stipendPoints * d.weeks }).catch(() => {});
+      // Register the deal on the ledger — NO money moves here. Its weekly slice is paid out
+      // once per in-game week by disburseWeekly(). (The old code wrote the ENTIRE run's
+      // points the moment you signed, which is what people saw as a runaway payout.)
+      if (writeNil && d.stipendPoints > 0) {
+        await signDeal(dynastyId, {
+          brand: d.brand,
+          pointsPerWeek: perWeek(d),
+          weeks: Math.max(1, Math.round(d.weeks || 1)),
+          startYear: year,
+          startWeek: week,
+        }).catch(() => {});
       }
       const nextSigned = { ...signed, [d.brand]: true };
       setSigned(nextSigned);
       if (deals) await persist(deals, nextSigned);
     } finally { setBusyBrand(null); }
-  }, [signed, busyBrand, saga, currentSavePath, teamIndex, deals, persist]);
+  }, [signed, busyBrand, saga, writeNil, dynastyId, year, week, perWeek, deals, persist]);
 
   return (
     <div className="mb-8 overflow-hidden rounded border border-dw-border bg-paper2">
@@ -125,10 +145,11 @@ function BrandDeals() {
           </button>
         </div>
         <p className="mt-2 font-serif text-xs text-ink3">
-          Your AD and lead booster bring deals to the table. Each stipend boosts your NIL
-          headroom (program points) — but not all money is good money. A controversial brand
-          pays more and poisons fan trust. Accepting applies the tradeoff and adds the stipend
-          to your save.
+          Your AD and lead booster bring deals to the table. Offers are sized to your
+          program&apos;s stature — a rebuild gets local money, a blue blood gets national money —
+          and the stipend pays out <strong className="text-ink2">week by week</strong>, not all at
+          once. Not all money is good money: a controversial brand pays more and poisons fan
+          trust.{!writeNil && " NIL-to-save is off, so nothing is written to your save."}
         </p>
         {err && <p className="mt-3 font-serif text-sm text-dw-red">{err}</p>}
 
@@ -146,8 +167,10 @@ function BrandDeals() {
                   <p className="font-sans text-[10px] uppercase tracking-wider text-ink3">{d.category} · via {d.broker}</p>
                   <p className="mt-2 font-serif text-sm text-ink2">{d.pitch}</p>
                   <div className="mt-2 flex flex-wrap gap-x-4 gap-y-0.5 font-sans text-[11px]">
-                    <span className="text-dw-green">+{(d.stipendPoints * d.weeks).toLocaleString()} pts NIL headroom</span>
-                    <span className="text-ink3">{d.stipendPoints}/wk × {d.weeks}wk</span>
+                    <span className="text-dw-green">+{perWeek(d).toLocaleString()} pts per week</span>
+                    <span className="text-ink3">
+                      × {d.weeks}wk · {(perWeek(d) * d.weeks).toLocaleString()} total
+                    </span>
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-sans text-[10px]">
                     {eff.fanTrust !== 0 && <span className={eff.fanTrust > 0 ? "text-dw-green" : "text-dw-red"}>Fans {eff.fanTrust > 0 ? "+" : ""}{eff.fanTrust}</span>}
@@ -182,9 +205,10 @@ function BrandDeals() {
 interface NilPost { handle: string; displayName: string; type: string; body: string; likes: number; reposts: number }
 
 function NILManager() {
-  const { roster, snapshot, currentSavePath, generate, dynastyId, year, week } = useDynasty();
+  const { roster, snapshot, currentSavePath, generate, dynastyId, year, week, settings } = useDynasty();
   const team = snapshot?.userTeam ?? null;
   const teamIndex = team?.teamIndex ?? null;
+  const writeNil = settings.nilWriteToSave !== false; // default on
 
   // Names currently serving a suspension — badged in the depth chart.
   const [suspended, setSuspended] = useState<Set<string>>(new Set());
@@ -232,6 +256,7 @@ function NILManager() {
 
   async function push() {
     if (!currentSavePath || teamIndex == null || changes.length === 0 || busy) return;
+    if (!writeNil) { setErr("NIL-to-save is turned off in Settings → Immersion. Turn it on to write deals to your save."); return; }
     setBusy(true); setErr(null);
     try {
       const res = await applyImpact(currentSavePath, {
@@ -372,10 +397,11 @@ function NILManager() {
             <button
               type="button"
               onClick={() => void push()}
-              disabled={busy || changes.length === 0 || overBudget}
+              disabled={busy || changes.length === 0 || overBudget || !writeNil}
+              title={writeNil ? undefined : "NIL-to-save is off (Settings → Immersion)"}
               className="rounded border border-dw-accent bg-dw-accent px-4 py-2 font-sans text-xs uppercase tracking-wider text-paper hover:bg-dw-accent2 disabled:opacity-40"
             >
-              {busy ? "Writing to save…" : "Push NIL to Save"}
+              {busy ? "Writing to save…" : !writeNil ? "NIL Writes Off" : "Push NIL to Save"}
             </button>
           </div>
         </div>

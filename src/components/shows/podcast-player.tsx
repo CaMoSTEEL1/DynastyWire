@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
-import { voiceForPersona, synthLine } from "@/lib/dynasty/tts";
+import { voiceForPersonaAsync, synthLine } from "@/lib/dynasty/tts";
 import { Play, Pause, Square, Loader2 } from "lucide-react";
 
 export interface SpokenLine {
@@ -54,18 +54,24 @@ export function PodcastPlayer({
     let p = clips.current.get(i);
     if (!p) {
       const l = lines[i];
-      const voice = voiceForPersona(l.speaker || "Host", weekSeed);
-      p = synthLine(settings.elevenLabsKey as string, voice, l.text, {
-        previousText: lines[i - 1]?.text,
-        nextText: lines[i + 1]?.text,
-      });
+      const apiKey = settings.elevenLabsKey as string;
+      // Voice comes from the user's own ElevenLabs library when they have one (see
+      // voiceForPersonaAsync); the stock premades are the fallback.
+      p = voiceForPersonaAsync(apiKey, l.speaker || "Host", weekSeed, {
+        preferCustom: settings.customVoices !== false,
+      }).then((voice) =>
+        synthLine(apiKey, voice, l.text, {
+          previousText: lines[i - 1]?.text,
+          nextText: lines[i + 1]?.text,
+        })
+      );
       // A failed synth must not poison the cache (or fire an unhandled rejection from the
       // prefetch path) — drop it so the next attempt retries.
       p.catch(() => clips.current.delete(i));
       clips.current.set(i, p);
     }
     return p;
-  }, [hasKey, lines, settings.elevenLabsKey, weekSeed]);
+  }, [hasKey, lines, settings.elevenLabsKey, settings.customVoices, weekSeed]);
 
   const playFrom = useCallback(async (i: number) => {
     if (!hasKey || stopped.current || i >= lines.length) { setPlaying(false); setIdx(-1); return; }

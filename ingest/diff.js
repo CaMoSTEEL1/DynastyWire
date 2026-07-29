@@ -75,37 +75,31 @@ function buildDelta(before, after) {
     .filter((m) => (m.from && m.from <= 25) || (m.to && m.to <= 25))
     .sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
 
-  // The week actually played = the most common week among this diff's results
-  // (robust against stray placeholder game records that carry bowl/playoff week numbers).
-  let weekPlayed = modeWeek(results);
-
-  // The "this week's game" must sit within the current week progression. CFB27 saves carry
-  // stray played records past the current week (e.g. a placeholder Week 17 game while the
-  // season is only at Week 10); picking by highest week number grabs those. Bound selection
-  // to <= the current week so we surface the real most-recent result.
+  // "This week's game" is the user's game AT the current week (SeasonInfo.CurrentWeek), and
+  // its result is set ONLY when that game is actually played:
+  //   • current-week game PLAYED   → POSTGAME (userResult = it)
+  //   • current-week game UNPLAYED → PREGAME  (userResult stays null; the media context
+  //                                            previews the matchup instead of recapping)
+  //   • no current-week game       → BYE / season boundary (userResult null; handled downstream)
+  //
+  // THE BUG THIS FIXES: the old logic picked the latest PLAYED user game <= currentWeek, so the
+  // moment you advanced to a new week without playing, it grabbed the PRIOR week's result and
+  // the whole app (front page, press conference, podcasts) rendered a postgame recap of LAST
+  // week — the "I can only do postgame / it only talks about the previous game" reports.
   const currentWeek = after.week;
-  const withinSeason = (w) => currentWeek == null || w == null || w <= currentWeek;
-
-  // Fallback for userResult if none found in this diff (or if before === after)
-  let userResult =
-    results
-      .filter((r) => r.userInvolved && withinSeason(r.week))
-      .sort((a, b) => (b.week ?? 0) - (a.week ?? 0))[0] || null;
-
-  if (!userResult && after.userTeamRow != null) {
-    // Find all games involving the user's team
-    const userGames = after.games.filter(g =>
-      g.homeRow === after.userTeamRow || g.awayRow === after.userTeamRow
+  let userResult = null;
+  if (after.userTeamRow != null && currentWeek != null) {
+    const userGames = after.games.filter(
+      (g) => g.homeRow === after.userTeamRow || g.awayRow === after.userTeamRow
     );
-    if (userGames.length > 0) {
-      // Latest PLAYED game within the current week; else the next scheduled game to preview.
-      const played = userGames.filter(g => g.played && withinSeason(g.week));
-      const upcoming = userGames.filter(g => withinSeason(g.week));
-      const targetGame = played.length > 0
-        ? played.sort((a, b) => (b.year ?? 0) - (a.year ?? 0) || (b.week ?? 0) - (a.week ?? 0))[0]
-        : (upcoming.length > 0 ? upcoming : userGames).sort((a, b) => (a.year ?? 0) - (b.year ?? 0) || (a.week ?? 0) - (b.week ?? 0))[0];
-
-      const g = targetGame;
+    // Same-season guard: prior seasons' rows live in the save with the SAME week numbers.
+    // Without this, a played Week-1 game from LAST season matches "week === currentWeek"
+    // and resurrects the fabricated-result bug on every season rollover.
+    const maxYear = userGames.reduce((m, g) => (g.year != null && g.year > m ? g.year : m), -1);
+    const sameSeason = (y) => y == null || maxYear < 0 || y === maxYear;
+    const thisWeek = userGames.find((g) => sameSeason(g.year) && g.week === currentWeek);
+    const g = thisWeek && thisWeek.played ? thisWeek : null; // unplayed/none → pregame/bye
+    if (g) {
       const homeWon = (g.homeScore || 0) >= (g.awayScore || 0);
       const winnerRow = homeWon ? g.homeRow : g.awayRow;
       const loserRow = homeWon ? g.awayRow : g.homeRow;
@@ -125,16 +119,16 @@ function buildDelta(before, after) {
         userInvolved: true,
         simmed: g.simmed,
       };
-
-      if (!results.some(r => r.week === g.week && r.home === userResult.home && r.away === userResult.away)) {
+      if (!results.some((r) => r.week === g.week && r.home === userResult.home && r.away === userResult.away)) {
         results.push(userResult);
       }
     }
   }
 
-  if (weekPlayed == null) {
-    weekPlayed = userResult ? userResult.week : after.week;
-  }
+  // weekPlayed drives pregame/postgame framing in gen.ts, so it must be the CURRENT week the
+  // dynasty is on — not the mode of the diff (which lags to last week on a pregame ingest).
+  let weekPlayed = currentWeek != null ? currentWeek : modeWeek(results);
+  if (weekPlayed == null) weekPlayed = userResult ? userResult.week : after.week;
 
   return {
     weekPlayed,

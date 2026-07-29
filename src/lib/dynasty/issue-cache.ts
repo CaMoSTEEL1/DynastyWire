@@ -30,8 +30,10 @@ export interface Issue {
 const store = new LazyStore("dynastywire.issues.json");
 const INDEX_KEY = "__index";
 const ISSUE_PREFIX = "issue::";
-// Keep a season-and-change of issues; older ones are pruned when a new one is written.
-const MAX_ISSUES = 20;
+// How many weekly issues to keep. This is the backing store for the Archive browser, so it
+// holds several seasons rather than one — it's a few hundred KB of local JSON, and losing
+// old weeks is exactly what users asked us to stop doing.
+const MAX_ISSUES = 90;
 
 export function issueKey(dynastyId: string, year: number, week: number): string {
   return `${dynastyId}::${year}::${week}`;
@@ -49,6 +51,22 @@ export function newIssue(
 
 export async function loadIssue(key: string): Promise<Issue | null> {
   return (await store.get<Issue>(ISSUE_PREFIX + key)) ?? null;
+}
+
+/**
+ * Every stored issue for a dynasty, newest week first — the backing list for the Archive.
+ * Pregame editions (key suffix "::pre") are folded out: the archive shows the week as it
+ * finished, not the preview that preceded it.
+ */
+export async function listIssues(dynastyId: string): Promise<Issue[]> {
+  const idx = (await store.get<string[]>(INDEX_KEY)) ?? [];
+  const out: Issue[] = [];
+  for (const key of idx) {
+    if (!key.startsWith(`${dynastyId}::`) || key.endsWith("::pre")) continue;
+    const issue = await store.get<Issue>(ISSUE_PREFIX + key);
+    if (issue) out.push(issue);
+  }
+  return out.sort((a, b) => b.year - a.year || b.week - a.week);
 }
 
 async function touchIndex(key: string): Promise<void> {

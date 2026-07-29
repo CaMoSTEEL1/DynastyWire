@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { useSettings } from "./settings-context";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { openaiListModels, clearAllSettings } from "@/lib/dynasty/client";
+import { refreshCustomVoices, type ElevenVoice } from "@/lib/dynasty/tts";
 import { ISSUE_TABS, eagerTabs } from "@/lib/dynasty/issue";
 import { clearAllIssues } from "@/lib/dynasty/issue-cache";
 import { clearAllSagas } from "@/lib/dynasty/saga-store";
@@ -189,7 +190,27 @@ export default function SettingsPanel() {
   const [models, setModels] = useState<string[] | null>(null);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
+  const [voices, setVoices] = useState<ElevenVoice[] | null>(null);
+  const [fetchingVoices, setFetchingVoices] = useState(false);
+  const [voicesError, setVoicesError] = useState<string | null>(null);
   const [savedMsg, setSavedMsg] = useState("");
+
+  // Confirms which of the user's own voices the shows will cast from — and refreshes the
+  // session cache, so voices added on elevenlabs.io land without restarting the app.
+  async function fetchVoices() {
+    const apiKey = eleven.trim();
+    if (!apiKey || fetchingVoices) return;
+    setFetchingVoices(true);
+    setVoicesError(null);
+    try {
+      setVoices(await refreshCustomVoices(apiKey));
+    } catch (e) {
+      setVoices(null);
+      setVoicesError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFetchingVoices(false);
+    }
+  }
 
   async function fetchModels() {
     if (!oaiUrl.trim() || !oaiKey.trim() || fetchingModels) return;
@@ -253,6 +274,27 @@ export default function SettingsPanel() {
           onChange={(v) => void updateSettings({ consequenceSync: v })}
           label="Consequence Sync — meters affect your actual save"
         />
+        <Toggle
+          checked={settings.nilWriteToSave !== false}
+          onChange={(v) => void updateSettings({ nilWriteToSave: v })}
+          label="Write NIL to your save (on by default)"
+        />
+        <p className="text-[11px] leading-relaxed text-ink3">
+          Lets brand deals and NIL allotments add program points / NIL money to your actual
+          save. Turn it OFF for a zero-to-hero or no-NIL run — the Boardroom and Situation Room
+          still play out and still move your hot seat, they just never touch your players&apos;
+          money or your program points. Nothing about your save is changed while it&apos;s off.
+        </p>
+        <Toggle
+          checked={settings.presserTakeover !== false}
+          onChange={(v) => void updateSettings({ presserTakeover: v })}
+          label="Podium takeover — the press conference interrupts you"
+        />
+        <p className="text-[11px] leading-relaxed text-ink3">
+          When a new game week lands, the press conference takes over the screen instead of
+          waiting in a tab — one reporter at a time, up close. Skippable with Esc, and it only
+          fires once per week. Turn it off to keep the podium where it was.
+        </p>
         <Toggle
           checked={settings.podcastAudio === true}
           onChange={(v) => void updateSettings({ podcastAudio: v })}
@@ -489,6 +531,38 @@ export default function SettingsPanel() {
         <Field label="ElevenLabs key (optional, for voice)">
           <input type="password" className={inputCls} value={eleven} onChange={(e) => setEleven(e.target.value)} placeholder="optional" />
         </Field>
+        <Toggle
+          checked={settings.customVoices !== false}
+          onChange={(v) => void updateSettings({ customVoices: v })}
+          label="Cast shows with my own ElevenLabs voices"
+        />
+        <p className="text-[11px] leading-relaxed text-ink3">
+          Uses the voices on your ElevenLabs account — cloned, designed, or saved from the
+          voice library — instead of the stock premade ones. Name a voice after a persona
+          (&ldquo;Marcus Cole&rdquo;) and that persona always speaks with it; everyone else gets
+          a gender-matched voice from your library, re-rolled weekly. Accounts with no custom
+          voices fall back to the premades automatically.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void fetchVoices()}
+            disabled={fetchingVoices || !eleven.trim()}
+            className="rounded border border-dw-border px-3 py-1.5 font-sans text-[11px] uppercase tracking-wider text-ink hover:bg-paper2 disabled:opacity-40"
+            title="Re-read your ElevenLabs voice library"
+          >
+            {fetchingVoices ? "Checking…" : "Check my voices"}
+          </button>
+          {voicesError ? (
+            <span className="text-[11px] text-dw-red">{voicesError}</span>
+          ) : voices ? (
+            <span className="text-[11px] text-ink3">
+              {voices.length === 0
+                ? "No custom voices on this account — shows will use the premades."
+                : `${voices.length} custom ${voices.length === 1 ? "voice" : "voices"}: ${voices.map((v) => v.name).join(", ")}`}
+            </span>
+          ) : null}
+        </div>
       </Section>
 
       {/* Escape hatch: upgrading across versions could leave a half-written store behind,

@@ -11,6 +11,7 @@ import {
   applyDeltas,
   seedMetersFromCoach,
   type CoachBackstory,
+  type DeferredSituation,
   type Fallout,
   type LedgerEntry,
   type MediaAnswer,
@@ -34,6 +35,10 @@ export interface UseSaga {
     option: StoryOption,
     fallout: Fallout
   ) => Promise<void>;
+  /** Sit on a situation. It stays unresolved and returns next week one level hotter. */
+  defer: (entry: DeferredSituation) => Promise<void>;
+  /** Drop deferred items once the desk has brought them back. */
+  clearDeferred: (storylineIds: string[]) => Promise<void>;
   /** Answer one media question — apply that answer's deltas once. */
   answerMedia: (storylineId: string, qIndex: number, answer: MediaAnswer) => Promise<void>;
   /** Append messages to a resolved situation's live player thread. */
@@ -140,6 +145,30 @@ export function useSaga(): UseSaga {
     [mutate]
   );
 
+  // Ignoring a situation is itself a decision: nothing moves now, the item is banked, and
+  // next week's desk is told to bring it back one severity level hotter.
+  const defer = useCallback<UseSaga["defer"]>(
+    async (entry) => {
+      await mutate((prev) => {
+        const existing = prev.deferred ?? [];
+        if (existing.some((d) => d.storylineId === entry.storylineId)) return prev;
+        return { ...prev, deferred: [entry, ...existing].slice(0, 12) };
+      });
+    },
+    [mutate]
+  );
+
+  const clearDeferred = useCallback<UseSaga["clearDeferred"]>(
+    async (ids) => {
+      if (ids.length === 0) return;
+      await mutate((prev) => {
+        const kept = (prev.deferred ?? []).filter((d) => !ids.includes(d.storylineId));
+        return kept.length === (prev.deferred ?? []).length ? prev : { ...prev, deferred: kept };
+      });
+    },
+    [mutate]
+  );
+
   const answerMedia = useCallback<UseSaga["answerMedia"]>(
     async (id, qIndex, answer) => {
       await mutate((prev) => {
@@ -234,5 +263,5 @@ export function useSaga(): UseSaga {
     [mutate]
   );
 
-  return { ready, state, resolve, answerMedia, appendThread, appendRecruitThread, appendFigureThread, adjustMeters, saveRecruitDossier, saveBackstory };
+  return { ready, state, resolve, defer, clearDeferred, answerMedia, appendThread, appendRecruitThread, appendFigureThread, adjustMeters, saveRecruitDossier, saveBackstory };
 }

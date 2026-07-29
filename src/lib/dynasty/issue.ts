@@ -74,7 +74,10 @@ const INTERNAL_KEYS = new Set<string>(["__force", "backstory"]);
 // cache key — large data blobs whose presence shouldn't fork a per-week cache entry:
 // the league-wide portal board and highlight screenshots. The content still caches by its
 // real identity (kind + showType/phase).
-const KEY_IGNORED_KEYS = new Set<string>(["portalData", "images", "commits", "oppRoster"]);
+const KEY_IGNORED_KEYS = new Set<string>([
+  "portalData", "images", "commits", "oppRoster",
+  "leagueMovers", "teamLosses", "userDepartures", "topClasses", "notableCommits",
+]);
 
 /** Strip internal steering keys, returning undefined when nothing meaningful remains. */
 export function cleanExtra(

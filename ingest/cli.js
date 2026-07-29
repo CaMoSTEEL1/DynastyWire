@@ -4,7 +4,7 @@
 //   node cli.js delta <beforeSave> <after> -> prints WeekDelta JSON
 // Add --pretty for a human-readable summary instead of raw JSON.
 
-const { openSave, pickTable, readRecords, buildSnapshot, buildRecruits, buildRoster, buildPortal } = require('./snapshot');
+const { openSave, pickTable, readRecords, buildSnapshot, buildRecruits, buildRoster, buildPortal, buildCommitments } = require('./snapshot');
 const { buildDelta } = require('./diff');
 const { buildMediaContext, generateRecap, generateCycle } = require('./generate');
 
@@ -30,6 +30,12 @@ async function main() {
   if (cmd === 'portal') {
     const portal = await buildPortal(files[0]);
     return console.log(JSON.stringify(portal));
+  }
+
+  // League-wide commitment tracker: who committed WHERE (real destinations from the save).
+  if (cmd === 'commitments') {
+    const commitments = await buildCommitments(files[0]);
+    return console.log(JSON.stringify(commitments));
   }
 
   if (cmd === 'roster') {
@@ -177,6 +183,65 @@ async function main() {
       }
     }
 
+    // AVAILABILITY — the real "this player cannot play" lever, used for suspensions.
+    // VERIFIED on a live CFB27 save: the game does NOT bench by rating (genuinely injured
+    // players keep 79/82 OVR); it benches by InjuryStatus, and the depth chart re-evaluates
+    // off it (see the DepthChartEval_PlayerInjury* reaction tables). Dropping OverallRating
+    // therefore never sat anybody — that was the "suspension won't drop the player" report.
+    //   { name, out:true, weeks:N, week, year }  → hold him out for N weeks
+    //   { name, out:false, restore:{...} }       → put his exact prior state back
+    // The prior injury state is returned so a genuinely hurt player is restored faithfully
+    // instead of being blanket-cleared to healthy.
+    applied.availability = [];
+    if (Array.isArray(payload.availability) && payload.availability.length) {
+      const playerT = await readRecords(pickTable(f, 'Player'));
+      const wanted = new Map(payload.availability.map((a) => [String(a.name).toLowerCase(), a]));
+      for (const p of playerT.records) {
+        if (p.isEmpty) continue;
+        try {
+          if (p['TeamIndex'] !== teamIndex) continue;
+          const nm = `${p['FirstName'] || ''} ${p['LastName'] || ''}`.trim().toLowerCase();
+          if (!wanted.has(nm)) continue;
+          const req = wanted.get(nm);
+          const before = {
+            status: p['InjuryStatus'],
+            type: p['InjuryType'],
+            severity: p['InjurySeverity'],
+            total: p['TotalInjuryDuration'],
+            min: p['MinInjuryDuration'],
+            max: p['MaxInjuryDuration'],
+            stage: p['LatestInjuryStage'],
+            week: p['LatestInjuryWeek'],
+            year: p['LatestInjuryYear'],
+          };
+          if (req.out) {
+            const wks = Math.max(1, Math.min(20, Math.round(req.weeks || 1)));
+            p['InjuryStatus'] = 'Injured';
+            // Min === Max === total so he can't return early (a suspension is a fixed term).
+            p['TotalInjuryDuration'] = wks;
+            p['MinInjuryDuration'] = wks;
+            p['MaxInjuryDuration'] = wks;
+            p['InjurySeverity'] = wks <= 4 ? 'CoupleGames' : 'SeveralGames';
+            // A neutral, non-structural ailment — this is a roster hold-out, not a real tear.
+            p['InjuryType'] = 'BackStrain';
+            p['LatestInjuryStage'] = 'NFLSeason';
+            if (req.week != null) p['LatestInjuryWeek'] = req.week;
+            if (req.year != null) p['LatestInjuryYear'] = req.year;
+            applied.availability.push({ name: nm, out: true, weeks: wks, before });
+          } else {
+            const r = req.restore || {};
+            p['InjuryStatus'] = r.status != null ? r.status : 'Uninjured';
+            p['InjuryType'] = r.type != null ? r.type : 'Invalid_';
+            p['InjurySeverity'] = r.severity != null ? r.severity : 'Invalid_';
+            p['TotalInjuryDuration'] = r.total != null ? r.total : 0;
+            p['MinInjuryDuration'] = r.min != null ? r.min : 0;
+            p['MaxInjuryDuration'] = r.max != null ? r.max : 0;
+            applied.availability.push({ name: nm, out: false, before });
+          }
+        } catch (e) { /* skip unreadable rows */ }
+      }
+    }
+
     await f.save(savePath);
 
     // 4. Verify by re-opening
@@ -230,6 +295,30 @@ async function main() {
         } catch (e) { /* ignore */ }
       }
       if (seen !== applied.overall.length) verified = false;
+    }
+    if (applied.availability.length) {
+      const pT2 = await readRecords(pickTable(f2, 'Player'));
+      const check = new Map(applied.availability.map((c) => [c.name, c]));
+      let seen = 0;
+      for (const p of pT2.records) {
+        if (p.isEmpty) continue;
+        try {
+          if (p['TeamIndex'] !== teamIndex) continue;
+          const nm = `${p['FirstName'] || ''} ${p['LastName'] || ''}`.trim().toLowerCase();
+          if (!check.has(nm)) continue;
+          seen++;
+          const c = check.get(nm);
+          const status = p['InjuryStatus'];
+          // Held out => must read back Injured with the exact term; restored => not Injured
+          // (unless he was genuinely hurt before, which we put back verbatim).
+          if (c.out) {
+            if (status !== 'Injured' || p['TotalInjuryDuration'] !== c.weeks) verified = false;
+          } else if (status === 'Injured' && c.before && c.before.status !== 'Injured') {
+            verified = false;
+          }
+        } catch (e) { /* ignore */ }
+      }
+      if (seen !== applied.availability.length) verified = false;
     }
     return console.log(JSON.stringify({ ok: true, verified, applied, backup: backupPath }));
   }

@@ -7,14 +7,26 @@
 // which is what makes a perspective bug visible instead of accidentally symmetric.
 
 import { describe, expect, it } from "vitest";
-import type { RosterPlayer, RosterStats, RosterStatsSide } from "./client";
+import type { RosterPlayer, RosterStats, RosterStatsSide, SnapshotGame, TeamInfo } from "./client";
 import {
+  EDGE_LABEL,
+  SEVERITY_LABEL,
   bestMismatches,
+  classAbbrev,
+  commonOpponents,
+  depthDropOff,
+  experienceProfile,
+  formLine,
   injuries,
   phaseMatchups,
+  playerLine,
   projectedStarters,
+  quarterProfile,
+  recentForm,
   scoutingMath,
+  seriesHistory,
   specialTeams,
+  starterLine,
   tendencies,
   topThreats,
   unitEdges,
@@ -45,6 +57,7 @@ const THEIRS: RosterPlayer[] = [
   P("Opp HB1", "HB", 84, { stats: stats("offense", { rushYds: 700, rushAtt: 140, rushTDs: 8 }) }),
   P("Opp HB2", "HB", 74),
   P("Opp WR1", "WR", 90, {
+    jersey: 11,
     stats: stats("offense", { recYds: 900, recCatches: 60, recTDs: 9, kickRetYds: 260, kickRetTDs: 1 }),
   }),
   P("Opp WR2", "WR", 80),
@@ -58,7 +71,7 @@ const THEIRS: RosterPlayer[] = [
   }),
   P("Opp LOLB", "LOLB", 85, { stats: stats("defense", { tackles: 50, sacks: 8, tfl: 12, forcedFumbles: 1 }) }),
   P("Opp ROLB", "ROLB", 83),
-  P("Opp CB1", "CB", 74), P("Opp CB2", "CB", 70), P("Opp CB3", "CB", 66),
+  P("Opp CB1", "CB", 74, { jersey: 2 }), P("Opp CB2", "CB", 70, { jersey: 21 }), P("Opp CB3", "CB", 66, { jersey: 33 }),
   P("Opp FS", "FS", 75),
   P("Opp SS", "SS", 73, { injury: "Questionable" }),
   P("Opp K", "K", 72, { stats: stats("kicking", { fgMade: 12, fgAtt: 15, fgLong: 51, fgMade50Plus: 1, fgAtt50Plus: 2 }) }),
@@ -105,24 +118,22 @@ describe("projectedStarters — who is actually on the field", () => {
   });
 });
 
-describe("unitEdges — hand-checkable rating averages", () => {
+describe("unitEdges — graded, never numbered", () => {
   const edges = unitEdges(MINE, THEIRS);
   const edge = (unit: string) => edges.find((e) => e.unit === unit)!;
 
-  it("reads our corner advantage", () => {
-    // ours 80+78+74 = 232/3 = 77.3 → 77; theirs 74+70+66 = 210/3 = 70
-    expect(edge("CB").mine).toBe(77);
-    expect(edge("CB").theirs).toBe(70);
-    expect(edge("CB").diff).toBe(7);
-    expect(edge("CB").verdict).toBe("big-edge");
+  it("reads our corner advantage as a grade gap", () => {
+    // ours 80+78+74 = 232/3 = 77.3 → 77 → B-; theirs 74+70+66 = 210/3 = 70 → C
+    expect(edge("CB").myGrade).toBe("B-");
+    expect(edge("CB").theirGrade).toBe("C");
+    expect(edge("CB").verdict).toBe("clear-edge");
   });
 
   it("reads their line advantage", () => {
-    // theirs 85+80+79+78+84 = 406/5 = 81.2 → 81; ours 74+70+72+69+73 = 358/5 = 71.6 → 72
-    expect(edge("OL").theirs).toBe(81);
-    expect(edge("OL").mine).toBe(72);
-    expect(edge("OL").diff).toBe(-9);
-    expect(edge("OL").verdict).toBe("their-big-edge");
+    // theirs 85+80+79+78+84 = 406/5 = 81.2 → 81 → B+; ours 358/5 = 71.6 → 72 → C+
+    expect(edge("OL").theirGrade).toBe("B+");
+    expect(edge("OL").myGrade).toBe("C+");
+    expect(edge("OL").verdict).toBe("decisive-disadvantage");
   });
 
   it("covers every unit and never invents one", () => {
@@ -163,10 +174,11 @@ describe("phaseMatchups — the number is ALWAYS from the user's side", () => {
     expect(theirPass.call).toMatch(/beat you deep/);
   });
 
-  it("reports mine/theirs as our unit vs their unit on every row", () => {
+  it("grades our unit against theirs on every row", () => {
     const theirRun = row("Their run game");
-    expect(theirRun.mine).toBeLessThan(theirRun.theirs!); // our front is the weaker one
-    expect(theirRun.diff).toBe(theirRun.mine! - theirRun.theirs!);
+    // our front: DL 70 + LB 73 → 72 (C+); their ground game: OL 81 + RB 79 → 80 (B)
+    expect(theirRun.myGrade).toBe("C+");
+    expect(theirRun.theirGrade).toBe("B");
   });
 
   it("flips the advice when the rosters are swapped", () => {
@@ -301,6 +313,235 @@ describe("specialTeams — the facts behind fourth-down math", () => {
     expect(st0.kicker).toMatchObject({ name: "K only", fgAtt: 0, fgLong: null });
     expect(st0.punter).toBeNull();
     expect(st0.returnThreats).toEqual([]);
+  });
+});
+
+// ── Schedule-derived scouting ───────────────────────────────────────────────────
+// Rows: 1 = us, 2 = the opponent, 3/4 = shared opponents, 5 = a team only they played.
+const TEAMS: Record<string, TeamInfo> = {
+  "1": { row: 1, teamIndex: 1, name: "Us", nickname: null, city: null, wins: 3, losses: 1, confWins: null, confLosses: null, rankMedia: null, rankCoaches: null, rankCFP: null, prestige: null, ratingOVR: null },
+  "2": { row: 2, teamIndex: 2, name: "Them", nickname: null, city: null, wins: 3, losses: 1, confWins: null, confLosses: null, rankMedia: 12, rankCoaches: null, rankCFP: null, prestige: null, ratingOVR: null },
+  "3": { row: 3, teamIndex: 3, name: "Shared A", nickname: null, city: null, wins: 2, losses: 2, confWins: null, confLosses: null, rankMedia: null, rankCoaches: null, rankCFP: null, prestige: null, ratingOVR: null },
+  "4": { row: 4, teamIndex: 4, name: "Shared B", nickname: null, city: null, wins: 1, losses: 3, confWins: null, confLosses: null, rankMedia: null, rankCoaches: null, rankCFP: null, prestige: null, ratingOVR: null },
+  "5": { row: 5, teamIndex: 5, name: "Only Theirs", nickname: null, city: null, wins: 0, losses: 4, confWins: null, confLosses: null, rankMedia: null, rankCoaches: null, rankCFP: null, prestige: null, ratingOVR: null },
+};
+
+const game = (
+  week: number,
+  homeRow: number,
+  awayRow: number,
+  homeScore: number,
+  awayScore: number,
+  quarters?: { home: number[]; away: number[] }
+): SnapshotGame => ({
+  week,
+  year: 2026,
+  homeRow,
+  awayRow,
+  homeScore,
+  awayScore,
+  played: true,
+  simmed: false,
+  homeQuarters: quarters?.home ?? null,
+  awayQuarters: quarters?.away ?? null,
+});
+
+const SCHEDULE: SnapshotGame[] = [
+  // Us
+  game(1, 1, 3, 24, 21), // beat Shared A by 3
+  game(2, 4, 1, 10, 31), // beat Shared B by 21, on the road
+  // Them — front-loaded scoring, they fade
+  game(1, 2, 3, 45, 10, { home: [21, 17, 7, 0], away: [3, 0, 0, 7] }), // beat Shared A by 35
+  game(2, 2, 5, 38, 14, { home: [14, 14, 3, 7], away: [0, 7, 0, 7] }),
+  game(3, 4, 2, 28, 24, { home: [7, 7, 7, 7], away: [10, 7, 0, 7] }), // LOST to Shared B
+  game(4, 2, 5, 31, 17, { home: [17, 7, 7, 0], away: [0, 3, 7, 7] }),
+  // A prior meeting between us
+  game(5, 1, 2, 17, 20, { home: [7, 3, 7, 0], away: [0, 10, 3, 7] }), // we lost to them
+  // An unplayed future game must be ignored everywhere
+  { week: 9, year: 2026, homeRow: 1, awayRow: 2, homeScore: null, awayScore: null, played: false, simmed: null },
+];
+
+describe("recentForm", () => {
+  const form = recentForm(SCHEDULE, TEAMS, 2);
+
+  it("lists their played games most recent first", () => {
+    expect(form.games.map((g) => g.week)).toEqual([5, 4, 3, 2]);
+  });
+
+  it("states each result from THEIR side", () => {
+    const wk3 = form.games.find((g) => g.week === 3)!;
+    expect(wk3.result).toBe("L"); // they lost 24-28 at Shared B
+    expect(wk3.pointsFor).toBe(24);
+    expect(wk3.home).toBe(false);
+    expect(formLine(wk3)).toBe("L 24-28 at Shared B");
+  });
+
+  it("computes the streak and scoring averages over the whole season", () => {
+    expect(form.streak).toBe("W2"); // weeks 5 and 4 were both wins
+    expect(form.pointsForPerGame).toBe(31.6); // (20+31+24+38+45)/5 = 158/5
+    expect(form.pointsAgainstPerGame).toBe(17.2); // (17+17+28+14+10)/5 = 86/5
+    expect(form.averageMargin).toBe(14.4); // (+3 +14 −4 +24 +35)/5 = 72/5
+  });
+
+  it("ignores unplayed games and unknown rows", () => {
+    expect(form.games.every((g) => g.pointsFor + g.pointsAgainst > 0)).toBe(true);
+    expect(recentForm(SCHEDULE, TEAMS, null).games).toEqual([]);
+  });
+
+  it("marks a ranked opponent in the line", () => {
+    const ours = recentForm(SCHEDULE, TEAMS, 1).games.find((g) => g.opponent === "Them")!;
+    expect(formLine(ours)).toBe("L 17-20 vs #12 Them");
+  });
+});
+
+describe("commonOpponents — the comparison a real staff runs first", () => {
+  const common = commonOpponents(SCHEDULE, TEAMS, 1, 2);
+
+  it("finds only teams BOTH of us played", () => {
+    expect(common.map((c) => c.opponent).sort()).toEqual(["Shared A", "Shared B"]);
+  });
+
+  it("excludes games between the two of us", () => {
+    expect(common.map((c) => c.opponent)).not.toContain("Them");
+    expect(common.map((c) => c.opponent)).not.toContain("Us");
+  });
+
+  it("computes the swing from our margin minus theirs", () => {
+    const a = common.find((c) => c.opponent === "Shared A")!;
+    expect(a.yours.margin).toBe(3); // we won by 3
+    expect(a.theirs.margin).toBe(35); // they won by 35
+    expect(a.swing).toBe(-32); // badly in their favour
+  });
+
+  it("sorts by the biggest divergence", () => {
+    expect(common[0].opponent).toBe("Shared A"); // |−32| beats |+25|
+  });
+
+  it("returns nothing without both rows", () => {
+    expect(commonOpponents(SCHEDULE, TEAMS, null, 2)).toEqual([]);
+  });
+});
+
+describe("seriesHistory", () => {
+  it("returns prior meetings from our point of view", () => {
+    const series = seriesHistory(SCHEDULE, TEAMS, 1, 2);
+    expect(series).toHaveLength(1);
+    expect(formLine(series[0])).toBe("L 17-20 vs #12 Them");
+  });
+});
+
+describe("quarterProfile — when they actually beat you", () => {
+  const q = quarterProfile(SCHEDULE, 2);
+
+  it("averages points by quarter over games that carry quarter data", () => {
+    expect(q.games).toBe(5); // all five of their played games carry quarters
+    // Q1 scored: 21 + 14 + 10 (away wk3) + 17 + 0 (away wk5) = 62 / 5
+    expect(q.scoredPerQuarter[0]).toBe(12.4);
+    expect(q.scoredPerQuarter[3]).toBe(4.2); // 0 + 7 + 7 + 0 + 7 = 21 / 5
+    // Allowed Q1: 3 + 0 + 7 + 0 + 7 = 17 / 5
+    expect(q.allowedPerQuarter[0]).toBe(3.4);
+  });
+
+  it("calls out a fast-starting team that fades", () => {
+    expect(q.read).toMatch(/Fast starters who fade/);
+  });
+
+  it("says nothing when the save has no quarter data", () => {
+    const noQuarters = quarterProfile([game(1, 1, 2, 20, 10)], 1);
+    expect(noQuarters.games).toBe(0);
+    expect(noQuarters.read).toBeNull();
+  });
+});
+
+describe("experienceProfile", () => {
+  it("flags a young starting group", () => {
+    const young = [P("A", "QB", 80, { year: "FR" }), P("B", "HB", 80, { year: "SO" })];
+    expect(experienceProfile(young).read).toMatch(/Young group/);
+  });
+
+  it("flags a veteran group", () => {
+    const old = [P("A", "QB", 80, { year: "SR" }), P("B", "HB", 80, { year: "SR" })];
+    expect(experienceProfile(old).read).toMatch(/Veteran group/);
+  });
+
+  it("counts only projected starters", () => {
+    expect(experienceProfile(THEIRS).starters).toBe(projectedStarters(THEIRS).length);
+  });
+
+  // The parser passes unrecognised SchoolYear values through raw, so the full words have to
+  // resolve too — otherwise a redshirt freshman reads as an upperclassman.
+  it("understands the save's spelled-out class values", () => {
+    const spelled = [
+      P("A", "QB", 80, { year: "RedshirtFreshman" }),
+      P("B", "HB", 80, { year: "Sophomore" }),
+      P("C", "WR", 80, { year: "Senior" }),
+    ];
+    const prof = experienceProfile(spelled);
+    expect(prof.underclassmen).toBe(2);
+    expect(prof.seniors).toBe(1);
+    expect(classAbbrev("RedshirtFreshman")).toBe("RFr.");
+    expect(classAbbrev("Sophomore")).toBe("So.");
+    expect(classAbbrev("Jr")).toBe("Jr.");
+  });
+});
+
+describe("depthDropOff — who they cannot afford to lose", () => {
+  it("names a star with a steep fall-off behind him", () => {
+    const roster = [P("Star", "QB", 92), P("Backup", "QB", 60), P("Even", "HB", 80), P("Also", "HB", 79)];
+    const drops = depthDropOff(roster);
+    expect(drops.map((d) => d.starter.name)).toEqual(["Star"]);
+    expect(drops[0].backup.name).toBe("Backup");
+  });
+
+  it("ignores spots with a capable backup and ignores specialists", () => {
+    const roster = [P("K1", "K", 95), P("K2", "K", 50), P("Deep", "QB", 88), P("Deep2", "QB", 85)];
+    expect(depthDropOff(roster)).toEqual([]);
+  });
+
+  // The parser caps a roster at its top 70, so a missing backup is missing DATA, not a
+  // missing player — claiming "nothing behind him" off that would invent a weakness.
+  it("stays silent when the roster carries no backup at all", () => {
+    expect(depthDropOff([P("Lonely Star", "QB", 95)])).toEqual([]);
+  });
+});
+
+// The whole point of this change: a coach never sees a 0-99 rating. If a rendered string can
+// carry one, this catches it.
+describe("no ratings ever reach a rendered string", () => {
+  const m = scoutingMath(MINE, THEIRS, { games: SCHEDULE, teams: TEAMS, myRow: 1, theirRow: 2 });
+
+  const rendered = [
+    ...projectedStarters(THEIRS).map((s) => starterLine(s, true)),
+    ...m.mismatches.flatMap((x) => [starterLine(x.mine), starterLine(x.theirs, true), SEVERITY_LABEL[x.severity]]),
+    ...m.weakLinks.map((s) => starterLine(s)),
+    ...m.threats.map((s) => starterLine(s, true)),
+    ...m.injuries.map((i) => playerLine(i.player)),
+    ...m.dropOffs.map((d) => playerLine(d.starter)),
+    ...m.edges.flatMap((e) => [e.myGrade, e.theirGrade, e.verdict ? EDGE_LABEL[e.verdict] : null]),
+    ...m.matchups.flatMap((x) => [x.call, x.myGrade, x.theirGrade]),
+    m.experience.read,
+    m.schedule?.quarters.read ?? null,
+    ...(m.schedule?.form.games ?? []).map(formLine),
+  ].filter((s): s is string => typeof s === "string");
+
+  it("never prints the letters OVR", () => {
+    expect(rendered.filter((s) => /\bOVR\b/i.test(s))).toEqual([]);
+  });
+
+  it("never prints a bare two-digit rating for any player on either roster", () => {
+    const ratings = [...MINE, ...THEIRS].map((p) => p.overall).filter((v): v is number => v != null);
+    const offenders = rendered.filter((line) => {
+      // Jersey numbers are written #12 and scores are written 24-28; a rating would appear as
+      // a standalone number with neither marker.
+      const bare = line.match(/(?<![#\d-])\b\d{2}\b(?!-)/g) ?? [];
+      return bare.some((n) => ratings.includes(Number(n)));
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it("does describe players by jersey, name and class instead", () => {
+    const wr1 = projectedStarters(THEIRS).find((s) => s.slot === "WR1")!;
+    expect(starterLine(wr1, true)).toBe("WR1 #11 Opp WR1 (Jr.) — elite");
   });
 });
 

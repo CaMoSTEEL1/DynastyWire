@@ -183,6 +183,13 @@ fn dynasty_portal(app: tauri::AppHandle, save_path: String) -> Result<String, St
     run_sidecar(&app, &["portal".to_string(), save_path], None)
 }
 
+/// League-wide commitment tracker: who committed WHERE. Real destinations resolved from the
+/// save (Recruit.TopSchoolsList -> ProspectTargetSchool -> highest TeamInfluence).
+#[tauri::command]
+fn dynasty_commitments(app: tauri::AppHandle, save_path: String) -> Result<String, String> {
+    run_sidecar(&app, &["commitments".to_string(), save_path], None)
+}
+
 /// The user team's roster (players), so player-specific content uses real names, not invented
 /// ones. `team` pins the user's team the same way snapshot/delta do.
 #[tauri::command]
@@ -622,6 +629,107 @@ async fn tts_elevenlabs(
     Ok(STANDARD.encode(&bytes))
 }
 
+/// One voice on the user's ElevenLabs account, trimmed to what voice assignment needs.
+#[derive(serde::Serialize)]
+struct ElevenVoice {
+    voice_id: String,
+    name: String,
+    category: String,
+    /// "male" / "female" / "" — only set when the voice carries a gender label.
+    gender: String,
+    description: String,
+}
+
+fn parse_eleven_voices(parsed: &serde_json::Value) -> Vec<ElevenVoice> {
+    parsed
+        .get("voices")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    let voice_id = v.get("voice_id").and_then(|x| x.as_str())?.to_string();
+                    let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    if name.is_empty() {
+                        return None;
+                    }
+                    Some(ElevenVoice {
+                        voice_id,
+                        name,
+                        category: v
+                            .get("category")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        gender: v
+                            .get("labels")
+                            .and_then(|l| l.get("gender"))
+                            .and_then(|g| g.as_str())
+                            .unwrap_or("")
+                            .to_lowercase(),
+                        description: v
+                            .get("description")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+async fn eleven_get_voices(
+    client: &reqwest::Client,
+    url: &str,
+    api_key: &str,
+) -> Result<Vec<ElevenVoice>, String> {
+    let res = client
+        .get(url)
+        .header("xi-api-key", api_key)
+        .send()
+        .await
+        .map_err(|e| format!("elevenlabs voices request failed: {e}"))?;
+    let status = res.status();
+    let text = res
+        .text()
+        .await
+        .map_err(|e| format!("reading voices response: {e}"))?;
+    if !status.is_success() {
+        let snippet: String = text.trim().chars().take(200).collect();
+        return Err(format!("elevenlabs API {status}: {snippet}"));
+    }
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("bad JSON from elevenlabs voices: {e}"))?;
+    Ok(parse_eleven_voices(&parsed))
+}
+
+/// The user's OWN ElevenLabs voices — cloned, designed, or saved from the voice library.
+/// Podcast audio assigns from these instead of the premade stock voices, so a user who has
+/// built real broadcast voices hears those. An empty list means "nothing custom on this
+/// account" and the frontend falls back to the premade pool.
+///
+/// `voice_type=non-default` asks v2 to drop the stock voices server-side; if that endpoint
+/// isn't available for a key, fall back to v1 and filter the premades out here.
+#[tauri::command]
+async fn elevenlabs_list_voices(api_key: String) -> Result<Vec<ElevenVoice>, String> {
+    let client = reqwest::Client::new();
+    match eleven_get_voices(
+        &client,
+        "https://api.elevenlabs.io/v2/voices?voice_type=non-default&page_size=100",
+        &api_key,
+    )
+    .await
+    {
+        Ok(v) if !v.is_empty() => return Ok(v),
+        // Empty from v2 could be a real "no custom voices" — confirm against v1 before
+        // reporting none, since that answer silently downgrades the whole show to premades.
+        Ok(_) => {}
+        Err(e) => eprintln!("elevenlabs v2 voices failed, falling back to v1: {e}"),
+    }
+    let all = eleven_get_voices(&client, "https://api.elevenlabs.io/v1/voices", &api_key).await?;
+    Ok(all.into_iter().filter(|v| v.category != "premade").collect())
+}
+
 /// List the model ids available on an OpenAI-compatible endpoint (GET {base}/models), so
 /// users can pick from a live list instead of hand-typing a model id (case-sensitive on
 /// most providers). Returns ids sorted alphabetically.
@@ -790,6 +898,7 @@ pub fn run() {
             dynasty_generate,
             dynasty_recruits,
             dynasty_portal,
+            dynasty_commitments,
             dynasty_roster,
             dynasty_impact,
             claude_complete,
@@ -797,6 +906,7 @@ pub fn run() {
             openai_list_models,
             anthropic_list_models,
             tts_elevenlabs,
+            elevenlabs_list_voices,
             list_saves,
             archive_save,
             start_watch
