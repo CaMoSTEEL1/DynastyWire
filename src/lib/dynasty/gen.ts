@@ -13,9 +13,14 @@ import {
   openaiComplete,
   type DynastySnapshot,
   type LlmConfig,
+  type Recruit,
   type RosterPlayer,
   type WeekDelta,
 } from "./client";
+import { recordBaseline, rowFromReport } from "./baseline";
+import { buildGroundTruth, validateGeneration } from "./validator";
+import { lockedBlock, recapBrief, recapFacts } from "./recap";
+import { nationalBrief, nationalFacts } from "./national";
 import type { CoachBackstory } from "./saga";
 import {
   EDGE_LABEL,
@@ -115,7 +120,7 @@ export const SYSTEM_PROMPT = [
 // House style for long-form articles (front page recap, national lead, featured wire
 // stories). This is the anti-"AI article" contract: the goal is prose a reader would
 // believe was filed by a human on deadline.
-const HOUSE_STYLE = [
+export const HOUSE_STYLE = [
   "=== HOUSE STYLE (non-negotiable — this is what separates real copy from AI filler) ===",
   "LEDE: Never open with the score, the date, or 'Team X defeated Team Y.' Open inside a",
   "moment — a play, a sound, a sideline detail, a person — and let the score arrive when",
@@ -164,6 +169,12 @@ export interface MediaContext {
   delta: WeekDelta | null;
   /** Real roster of the user's team (names/positions), when the parser has provided it. */
   roster: RosterPlayer[];
+  /** The opponent in focus: this week's result, or the next game up. */
+  opponent: string | null;
+  /** That opponent's real roster, when the parser has provided it. */
+  oppRoster: RosterPlayer[];
+  /** Players who cannot play right now. */
+  suspensions: ActiveSuspension[];
   /** Persistent coach identity + recurring cast, when the user has written one. */
   backstory: CoachBackstory | null;
   /** What this week actually is — "game" only when a real result exists; "pregame" when
@@ -581,6 +592,50 @@ export function parseJSON<T = Record<string, unknown>>(raw: string): T | null {
 // Render the real delta + season state into the shared userContext text block. Ported
 // faithfully from ingest/generate.js buildMediaContext, tolerant of a null delta (the very
 // first ingest has no baseline to diff against yet).
+/**
+ * Persistent coach + program identity. Written once on the Coach tab, then fed to every
+ * generator so recaps, social, pressers and situations all know who this coach is and
+ * reuse the same recurring cast instead of inventing new ones.
+ *
+ * Extracted so the surfaces that build their own context (the deterministic recap) and the
+ * shared blob stay the same text — a coach who is a disciplinarian on one tab and a
+ * players-coach on the next is its own kind of hallucination.
+ */
+export function identityBlock(backstory: CoachBackstory | null): string[] {
+  if (!backstory) return [];
+  const parts: string[] = [];
+  parts.push("=== COACH IDENTITY (persistent — keep every story consistent with this) ===");
+  parts.push(`Archetype: ${backstory.archetype}`);
+  if (backstory.bio) parts.push(`Bio: ${backstory.bio}`);
+  parts.push("Recurring cast (reuse these exact names; do NOT invent replacements):");
+  if (backstory.adName) parts.push(`  Athletic Director: ${backstory.adName}`);
+  if (backstory.boosterName) parts.push(`  Lead booster: ${backstory.boosterName}`);
+  if (backstory.reporterName) parts.push(`  Lead beat writer: ${backstory.reporterName} (byline/reporter of record for this program)`);
+  if (backstory.rivalCoachName) parts.push(`  Rival head coach: ${backstory.rivalCoachName}`);
+  parts.push("");
+
+  // The PROGRAM's own identity — an FCS team that just moved up, or a brand-new
+  // TeamBuilder school, must not be covered like a generic established FBS program.
+  const sit = backstory.programSituation;
+  if (sit && sit !== "established") {
+    parts.push("=== PROGRAM IDENTITY (this is what this school IS — never contradict it) ===");
+    parts.push(SITUATION_BRIEF[sit] ?? "");
+    if (backstory.programNote) parts.push(`The coach's own account of the program: ${backstory.programNote}`);
+    if (backstory.programBio) parts.push(backstory.programBio);
+    parts.push(
+      "Frame coverage around this reality: the stakes, the doubters, the resources, and what",
+      "counts as success here are all set by it. NEVER invent a decorated history, a national",
+      "title, or traditions this program does not have."
+    );
+    parts.push("");
+  } else if (backstory.programBio) {
+    parts.push("=== PROGRAM IDENTITY ===");
+    parts.push(backstory.programBio);
+    parts.push("");
+  }
+  return parts;
+}
+
 export function buildMediaContext(
   delta: WeekDelta | null,
   after: DynastySnapshot,
@@ -608,6 +663,17 @@ export function buildMediaContext(
 
   const parts: string[] = [];
   parts.push("=== DYNASTY CONTEXT ===");
+  // The season was never stated anywhere in the context, so every generator fell back to
+  // whatever year its training suggested — social posts were dating losses to "2024" in a
+  // save eight seasons past it.
+  if (after.year != null) {
+    parts.push(
+      `Season: ${after.year}. THIS is the current year in this universe — every reference to ` +
+        `"this season", "last year", or any date is relative to ${after.year}. NEVER date anything ` +
+        "to a real-world season, and never assume the present is any year but this one." +
+        (after.dynastyYear != null ? ` (Year ${after.dynastyYear} of the dynasty.)` : "")
+    );
+  }
   parts.push(
     knownSchool
       ? `Program: ${knownSchool} — this IS the user's program. Every story is about ${knownSchool} ` +
@@ -934,37 +1000,7 @@ export function buildMediaContext(
   // so recaps, social, pressers, and situations all know who this coach is and reuse the
   // same recurring cast (AD, booster, beat writer, rival) instead of inventing new ones.
   const backstory = opts.backstory ?? null;
-  if (backstory) {
-    parts.push("=== COACH IDENTITY (persistent — keep every story consistent with this) ===");
-    parts.push(`Archetype: ${backstory.archetype}`);
-    if (backstory.bio) parts.push(`Bio: ${backstory.bio}`);
-    parts.push("Recurring cast (reuse these exact names; do NOT invent replacements):");
-    if (backstory.adName) parts.push(`  Athletic Director: ${backstory.adName}`);
-    if (backstory.boosterName) parts.push(`  Lead booster: ${backstory.boosterName}`);
-    if (backstory.reporterName) parts.push(`  Lead beat writer: ${backstory.reporterName} (byline/reporter of record for this program)`);
-    if (backstory.rivalCoachName) parts.push(`  Rival head coach: ${backstory.rivalCoachName}`);
-    parts.push("");
-
-    // The PROGRAM's own identity — an FCS team that just moved up, or a brand-new
-    // TeamBuilder school, must not be covered like a generic established FBS program.
-    const sit = backstory.programSituation;
-    if (sit && sit !== "established") {
-      parts.push("=== PROGRAM IDENTITY (this is what this school IS — never contradict it) ===");
-      parts.push(SITUATION_BRIEF[sit] ?? "");
-      if (backstory.programNote) parts.push(`The coach's own account of the program: ${backstory.programNote}`);
-      if (backstory.programBio) parts.push(backstory.programBio);
-      parts.push(
-        "Frame coverage around this reality: the stakes, the doubters, the resources, and what",
-        "counts as success here are all set by it. NEVER invent a decorated history, a national",
-        "title, or traditions this program does not have."
-      );
-      parts.push("");
-    } else if (backstory.programBio) {
-      parts.push("=== PROGRAM IDENTITY ===");
-      parts.push(backstory.programBio);
-      parts.push("");
-    }
-  }
+  parts.push(...identityBlock(backstory));
 
   return {
     systemPrompt: SYSTEM_PROMPT,
@@ -975,10 +1011,22 @@ export function buildMediaContext(
     snapshot: after,
     delta,
     roster,
+    opponent: opponentName,
+    oppRoster,
+    suspensions,
     backstory,
     weekState,
     phase,
   };
+}
+
+/** The head coach the SAVE says runs a program, or null. Never guess one — an invented
+ * coach for a real school is the leak the system prompt spends five lines on. */
+export function headCoachOf(snapshot: DynastySnapshot, teamName: string | null): string | null {
+  if (!teamName) return null;
+  const t = Object.values(snapshot.teams ?? {}).find((x) => x?.name === teamName);
+  if (!t || t.teamIndex == null) return null;
+  return snapshot.headCoaches?.[String(t.teamIndex)] ?? null;
 }
 
 // ── Prompt specs (one per kind) ────────────────────────────────────────────────
@@ -997,7 +1045,37 @@ function rosterLine(ctx: MediaContext): string {
     : "The roster is not available; do not invent specific rostered player names.";
 }
 
-function buildSpec(kind: string, ctx: MediaContext, extra: Extra): PromptSpec {
+/** The deterministic recap core, assembled from the structured context. v2: code works out
+ * how the game turned and who could have decided it; the model writes the story around it. */
+function recapFactsFor(ctx: MediaContext, extra: Extra) {
+  const highlights = Array.isArray(extra.highlights)
+    ? (extra.highlights as { text: string; player?: string | null }[])
+    : [];
+  return recapFacts({
+    result: ctx.delta?.userResult ?? null,
+    userTeam: ctx.school,
+    userTeamInfo: ctx.snapshot.userTeam ?? null,
+    userRow: ctx.snapshot.userTeamRow,
+    games: ctx.snapshot.games ?? [],
+    roster: ctx.roster,
+    oppRoster: ctx.oppRoster,
+    oppCoach: headCoachOf(ctx.snapshot, ctx.opponent),
+    week: ctx.week,
+    year: ctx.snapshot.year ?? null,
+    highlights,
+    unavailable: ctx.suspensions.map((s) => ({
+      playerName: s.playerName,
+      reason:
+        s.source === "academics"
+          ? `ruled academically ineligible (${s.reason})`
+          : `suspended, team discipline (${s.reason})`,
+    })),
+  });
+}
+
+/** Exported so a ported surface can be tested without a network call — the v2 port is a
+ * claim about what the model is HANDED, and that claim should be under test. */
+export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): PromptSpec {
   switch (kind) {
     case "recap-lead": {
       const hl = Array.isArray(extra.highlights) ? (extra.highlights as { text: string; player?: string | null }[]) : [];
@@ -1019,13 +1097,21 @@ function buildSpec(kind: string, ctx: MediaContext, extra: Extra): PromptSpec {
         "season-over":
           "THERE IS NO GAME THIS WEEK — the season is at its end. Write the season-wrap piece: the arc of the year, what the record means, the players who defined it, and what's next (portal, recruiting, the offseason). Never invent a game or result.",
       };
+      // v2 DETERMINISTIC CORE. On a game week the model no longer receives the shared blob
+      // — code has already worked out how the game turned, who could have decided it, and
+      // what the result is worth, so the piece is written around a short locked table
+      // instead of a 40-player dump the writer had to reason over. On the weeks with no
+      // game the shared context still carries the material (camp battles, the next
+      // opponent), so those keep it and gain only the locked stakes.
+      const facts = recapFactsFor(ctx, extra);
+      const isGame = ctx.weekState === "game";
       return {
         maxTokens: 2800,
         prompt: [
-          ctx.weekState === "game"
+          isGame
             ? "Write the week's game story for a program's front page — the piece a subscriber"
             : noGameFraming[ctx.weekState],
-          ctx.weekState === "game" ? "actually reads to the end. 450-600 words. Return JSON with this exact schema:" : "450-600 words. Return JSON with this exact schema:",
+          isGame ? "actually reads to the end. 450-600 words. Return JSON with this exact schema:" : "450-600 words. Return JSON with this exact schema:",
           '{"headline": "string", "byline": "string", "body": "string", "pullQuote": "string"}',
           "",
           ctx.backstory?.reporterName
@@ -1036,28 +1122,33 @@ function buildSpec(kind: string, ctx: MediaContext, extra: Extra): PromptSpec {
           "",
           "FOR THIS PIECE SPECIFICALLY:",
           "- The headline reads like a newspaper A1 head, not SEO: specific, punchy, no colon-itis.",
-          "- 5-7 paragraphs separated by \\n\\n. Cover: how the game actually turned (use the quarter",
-          "  scores if provided — where did it swing?), the units/decisions that decided it (real",
-          "  roster names when the roster is provided), and what this does to the season's stakes —",
-          `  the pressure or belief building around Coach ${ctx.coachName}. But let the STORY dictate`,
-          "  the order, not this list.",
+          isGame
+            ? "- 5-7 paragraphs separated by \\n\\n. HOW IT TURNED is computed for you below — build the\n  story on it rather than working it out again, and never argue with it. Then: who decided\n  it, and what the result does to the season's stakes."
+            : "- 5-7 paragraphs separated by \\n\\n. Let the STORY dictate the order, not a checklist.",
+          `- The pressure or belief building around Coach ${ctx.coachName} is the throughline.`,
           "- 1-2 attributed quotes inside the body, per house style.",
           ctx.backstory
             ? "- Your history with this coach colors the framing: a disciplinarian's ugly win reads different than a players-coach's. Reuse the recurring cast; never invent a rival beat writer."
             : "",
           "- The pullQuote is the single most alive quote (coach or player), text only, no quote marks.",
-          "- Never invent scores, stats, rankings, or records — the context is the box score truth.",
-          "  Everything between the numbers (drives, plays, moments) is yours to see and report.",
-          "- If the context says it is a neutral site or playoff/bowl game, DO NOT claim the game was played at either team's home stadium.",
+          isGame
+            ? "- THE DIVISION OF LABOUR: the numbers, the names and who they play for are settled below\n  and are not yours to adjust. Everything between the numbers — the drives, the play calls,\n  the sideline, the crowd, the weather, what a moment FELT like — is yours to see and report."
+            : "- Never invent scores, stats, rankings, or records — the context is the source of truth.",
+          "- If it is a neutral site or playoff/bowl game, DO NOT claim it was played at either team's home stadium.",
           "- If the week is Postseason, do not refer to the regular season or imply there are more regular season games left.",
           ctx.phase.key === "postseason"
             ? `- THIS IS THE ${ctx.phase.roundName?.toUpperCase()}. Frame the game as exactly that — ${ctx.phase.roundName === "National Championship" ? "one game for the national title, win-or-go-home, legacy on the line" : "a win-or-go-home playoff game; a win ADVANCES them, a loss ENDS the season"}. NEVER write about résumés, the selection committee, the bubble, or 'making the playoff' — they are already IN it and playing.`
             : "",
-          "- Do not invent transfer portal news or roster departures unless explicitly mentioned in the context.",
-          hlBlock,
+          "- Do not invent transfer portal news or roster departures unless explicitly mentioned.",
+          isGame ? "" : hlBlock,
           "",
-          "Context:",
-          ctx.userContext,
+          // On a game week the brief IS the context. Everywhere else it rides in front of
+          // the shared blob so the record and the streak are locked even in a bye column.
+          isGame ? recapBrief(facts) : lockedBlock(facts),
+          "",
+          ...(isGame
+            ? [...identityBlock(ctx.backstory), `The week: Week ${ctx.week ?? "—"} · ${ctx.phase.label}.`]
+            : ["Context:", ctx.userContext]),
         ].join("\n"),
       };
     }
@@ -1188,7 +1279,7 @@ function buildSpec(kind: string, ctx: MediaContext, extra: Extra): PromptSpec {
       return buildPodiumAnswerSpec(ctx, extra);
 
     case "national-wire":
-      return buildNationalWireSpec(ctx);
+      return buildNationalWireSpec(ctx, extra);
 
     case "national-desk":
       return buildNationalDeskSpec(ctx);
@@ -2493,7 +2584,18 @@ function buildPodiumAnswerSpec(ctx: MediaContext, extra: Extra): PromptSpec {
   return { prompt, maxTokens: 600 };
 }
 
-function buildNationalWireSpec(ctx: MediaContext): PromptSpec {
+function buildNationalWireSpec(ctx: MediaContext, extra: Extra = {}): PromptSpec {
+  // v2 DETERMINISTIC CORE. This surface measured worst on the first real fact-check run —
+  // 10 invented people in one piece — because its own rules told it to invent any name it
+  // wasn't given, while the system prompt calls that a hard error. Code now supplies the
+  // real people for the programs in the news, so there is nothing left to invent.
+  const rosters = (extra.rosters ?? {}) as Record<string, RosterPlayer[]>;
+  const facts = nationalFacts({
+    snapshot: ctx.snapshot,
+    delta: ctx.delta,
+    userTeam: ctx.school,
+    rosters,
+  });
   // Real school names from the save so around-the-league items never invent programs.
   const teams = Object.values(ctx.snapshot.teams ?? {});
   const ranked = teams
@@ -2532,15 +2634,22 @@ function buildNationalWireSpec(ctx: MediaContext): PromptSpec {
     "- DO NOT INVENT GAME RESULTS. If an item references a game score/upset, it MUST be a [FINAL] game",
     "  from the slate below. Games marked [NOT PLAYED YET] have no result — never state a score for them.",
     "- Where the context shows real ranked results or poll movement, tie items to those actual outcomes.",
-    "- Player/recruit/coach names: use names from the provided context where given; otherwise INVENT",
-    "  realistic fictional ones. Never pull a real-world CFB figure, storyline, or conference alignment",
-    "  from your own knowledge — this universe's history is only what the save shows.",
+    "- PLAYERS AND COACHES ARE REAL PEOPLE IN THIS SAVE. Name only the ones listed below, and",
+    "  only for the program they're listed under. For any other program, write the role —",
+    "  \"their quarterback\", \"the head coach at Tulane\" — and never a name. Do NOT invent a",
+    "  player or coach; that is the one invention this desk is not allowed.",
+    "- Never pull a real-world CFB figure, storyline, or conference alignment from your own",
+    "  knowledge — this universe's history is only what the save shows.",
+    "- Recruits are the exception: high-school prospects are not in the save, so invented",
+    "  recruit names are fine. Never attach an invented recruit to a fake national ranking.",
     "- Voice: wire-service tight. These feed a breaking-news ticker.",
+    "",
+    nationalBrief(facts),
     "",
     "=== AP TOP 25 (real, from the save) ===",
     ...ranked,
     "",
-    "=== OTHER PROGRAMS (real, from the save) ===",
+    "=== OTHER PROGRAMS (real, from the save — schools you may write ABOUT, by role only) ===",
     others.join(", "),
     "",
     "Context (real results this week):",
@@ -3069,7 +3178,11 @@ export async function generateInApp<T = unknown>(
   opts: GenerateOpts = {}
 ): Promise<T> {
   const ctx = buildMediaContext(delta, snapshot, opts);
-  if (kind === "carousel") return (await generateCarousel(ctx, llm)) as T;
+  if (kind === "carousel") {
+    const carousel = (await generateCarousel(ctx, llm)) as T;
+    observeFacts(kind, carousel, ctx, opts, opts.extra ?? {}, modelLabel(llm));
+    return carousel;
+  }
   const extra = opts.extra ?? {};
   const spec = buildSpec(kind, ctx, extra);
   const system = spec.system ?? ctx.systemPrompt;
@@ -3106,5 +3219,60 @@ export async function generateInApp<T = unknown>(
     const retryRaw = await llmComplete(llm, system, retryPrompt, spec.maxTokens, images, cachePrefix);
     parsed = parseJSON(retryRaw);
   }
-  return normalize(kind, parsed, ctx, extra) as T;
+  const result = normalize(kind, parsed, ctx, extra) as T;
+  observeFacts(kind, result, ctx, opts, extra, modelLabel(llm));
+  return result;
+}
+
+/** The exact model that wrote this piece — the baseline is meaningless without it, since
+ * the ship gate is stated on the CHEAP model. Exported so Settings can show the user which
+ * transport their next generation will be recorded under, before they play a week on it. */
+export function modelLabel(llm: LlmConfig): string {
+  if (llm.provider === "openai") return llm.model || "gpt-4o-mini";
+  return llm.budgetMode !== false ? BUDGET_MODEL : MODEL;
+}
+
+/**
+ * Fact-check what we just generated and record it. OBSERVE-ONLY (v2 step 1): it never
+ * rewrites the payload, never blocks the return, and never throws — the whole call is
+ * fire-and-forget behind a catch. Repair lands once the baseline says what the real
+ * violation rate is.
+ */
+function observeFacts(
+  kind: string,
+  payload: unknown,
+  ctx: MediaContext,
+  opts: GenerateOpts,
+  extra: Extra,
+  model: string
+): void {
+  try {
+    const truth = buildGroundTruth({
+      snapshot: ctx.snapshot,
+      delta: ctx.delta,
+      roster: ctx.roster,
+      oppRoster: opts.oppRoster,
+      recruits: Array.isArray(extra.recruits) ? (extra.recruits as Recruit[]) : undefined,
+      cast: ctx.backstory
+        ? [ctx.backstory.adName, ctx.backstory.boosterName, ctx.backstory.reporterName, ctx.backstory.rivalCoachName]
+        : [],
+    });
+    const report = validateGeneration(kind, payload, truth);
+    if (report.violations.length) {
+      console.warn(
+        `[dynastywire] ${kind}: ${report.violations.length} fact violation(s) — ` +
+          report.violations.map((v) => `${v.kind}:${v.claim}`).join(" · ")
+      );
+    }
+    void recordBaseline(
+      rowFromReport(report, {
+        model,
+        week: ctx.week,
+        year: ctx.snapshot.year ?? null,
+        at: Date.now(),
+      })
+    );
+  } catch (err) {
+    console.warn("[dynastywire] fact-check skipped:", err);
+  }
 }

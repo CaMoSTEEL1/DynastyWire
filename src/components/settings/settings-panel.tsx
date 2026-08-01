@@ -5,15 +5,18 @@
 
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, ChevronUp, School, FolderOpen, KeyRound, RefreshCw, Newspaper, Plus, Trash2, AlertTriangle } from "lucide-react";
+import { getVersion } from "@tauri-apps/api/app";
+import { ChevronDown, ChevronUp, School, FolderOpen, KeyRound, RefreshCw, Newspaper, Plus, Trash2, AlertTriangle, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSettings } from "./settings-context";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
-import { openaiListModels, clearAllSettings } from "@/lib/dynasty/client";
+import { openaiListModels, clearAllSettings, resolveLlm, type DynastySettings } from "@/lib/dynasty/client";
+import { modelLabel } from "@/lib/dynasty/gen";
 import { refreshCustomVoices, type ElevenVoice } from "@/lib/dynasty/tts";
 import { ISSUE_TABS, eagerTabs } from "@/lib/dynasty/issue";
 import { clearAllIssues } from "@/lib/dynasty/issue-cache";
 import { clearAllSagas } from "@/lib/dynasty/saga-store";
+import { clearBaseline, formatBaseline, loadBaseline, summarizeBaseline, type BaselineSummary } from "@/lib/dynasty/baseline";
 
 /** Destructive action with an inline two-step confirm (no browser dialogs in the webview),
  * which reloads afterward so every screen re-reads the now-empty stores. */
@@ -80,6 +83,103 @@ function ResetButton({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/** The v2 hallucination baseline, read-only. Observe-only fact-checking runs on every
+ * generation; this is the one place the accumulated number can actually be looked at,
+ * which is what makes "hallucinations are down" a measurement instead of a vibe. */
+function BaselineReport({ settings }: { settings: DynastySettings }) {
+  const [summary, setSummary] = useState<BaselineSummary | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const load = async () => setSummary(summarizeBaseline(await loadBaseline()));
+  // Which transport the NEXT generation records under. Shown because the baseline is keyed
+  // by model: play a week on a different provider and the numbers silently describe it.
+  const llm = resolveLlm(settings);
+
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] leading-relaxed text-ink3">
+        Every generated piece is checked against the save for contradictions — players on the
+        wrong team, scores, records, poll numbers. Nothing is rewritten; this only counts.
+      </p>
+      <p className="font-sans text-[11px] text-ink3">
+        Recording as{" "}
+        {llm ? (
+          <span className="text-ink2">
+            {llm.provider} · {modelLabel(llm)}
+          </span>
+        ) : (
+          <span className="text-dw-red">no provider configured — nothing will generate</span>
+        )}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={load}
+          className="rounded border border-dw-border px-3 py-1.5 font-sans text-[11px] uppercase tracking-wider text-ink2 hover:bg-paper3"
+        >
+          {summary ? "Refresh" : "Show baseline"}
+        </button>
+        {summary && summary.totals.pieces > 0 && (
+          <>
+            <button
+              type="button"
+              onClick={async () => {
+                // Stamp the build: a tester's report is only useful if I know which
+                // version's checker produced it.
+                const v = await getVersion().catch(() => undefined);
+                await navigator.clipboard.writeText(formatBaseline(summary, v));
+                setCopied(true);
+              }}
+              className="rounded border border-dw-border px-3 py-1.5 font-sans text-[11px] uppercase tracking-wider text-ink2 hover:bg-paper3"
+            >
+              {copied ? "Copied" : "Copy report"}
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                await clearBaseline();
+                await load();
+              }}
+              className="font-sans text-[11px] uppercase tracking-wider text-ink3 hover:text-ink"
+            >
+              Clear
+            </button>
+          </>
+        )}
+      </div>
+      {summary &&
+        (summary.totals.pieces === 0 ? (
+          <p className="text-[11px] text-ink3">Nothing recorded yet — generate a week first.</p>
+        ) : (
+          <div className="rounded border border-dw-border bg-paper2 p-3">
+            <p className="font-sans text-xs font-semibold uppercase tracking-wider text-ink">
+              {summary.totals.perPiece} violations per piece
+              <span className="ml-2 font-normal normal-case tracking-normal text-ink3">
+                across {summary.totals.pieces} pieces
+              </span>
+            </p>
+            <ul className="mt-2 space-y-1">
+              {summary.cells.slice(0, 12).map((c) => (
+                <li key={`${c.kind}::${c.model}`} className="flex items-baseline justify-between gap-3 text-[11px]">
+                  <span className="text-ink2">
+                    {c.kind}
+                    <span className="ml-2 text-ink3">{c.model}</span>
+                  </span>
+                  <span className={cn("font-sans tabular-nums", c.perPiece >= 0.5 ? "text-dw-red" : "text-ink3")}>
+                    {c.perPiece} <span className="text-ink3">({c.violations}/{c.pieces})</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-[10px] leading-relaxed text-ink3">
+              v2 ships when the frozen surfaces hold under 0.5 per piece on the budget model.
+            </p>
+          </div>
+        ))}
     </div>
   );
 }
@@ -563,6 +663,10 @@ export default function SettingsPanel() {
             </span>
           ) : null}
         </div>
+      </Section>
+
+      <Section icon={ShieldCheck} title="Fact-check baseline">
+        <BaselineReport settings={settings} />
       </Section>
 
       {/* Escape hatch: upgrading across versions could leave a half-written store behind,

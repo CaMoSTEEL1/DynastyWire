@@ -17,6 +17,7 @@ import BreakingTicker from "@/components/breaking-ticker";
 import SettingsDrawer from "@/components/settings/settings-drawer";
 import IssueLoadingOverlay from "./issue-loading";
 import PresserOverlay from "@/components/press-conference/presser-overlay";
+import UpdateGate from "@/components/dynasty/update-gate";
 import { TutorialProvider } from "@/components/tutorial/tutorial-context";
 import TutorialWizard from "@/components/tutorial/tutorial-wizard";
 
@@ -123,6 +124,8 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         <IssueLoadingOverlay />
         {/* The podium takes over the screen when a game week lands — see presser-overlay. */}
         <PresserOverlay />
+        {/* Self-update prompt. Corner toast, always declinable — never interrupts a week. */}
+        <UpdateGate />
         <TutorialWizard />
       </TutorialProvider>
     </SettingsProvider>

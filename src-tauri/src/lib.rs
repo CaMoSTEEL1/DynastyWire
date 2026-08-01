@@ -468,6 +468,151 @@ async fn claude_complete(
     Err(last_err)
 }
 
+// ── Self-update, without an installer ───────────────────────────────────────────
+//
+// Dynasty Wire ships as ONE portable .exe, so Tauri's updater is no use here: on Windows it
+// only knows how to apply an NSIS or MSI artifact, and applying one would install a second
+// copy beside the portable file rather than replacing it.
+//
+// This does the swap directly. Windows refuses to delete or overwrite a running .exe but
+// DOES allow renaming one, so: rename ourselves aside, drop the new build at our own path,
+// relaunch, and sweep the leftover on next start.
+//
+// The download is verified against a minisign public key compiled into this binary before
+// anything touches disk. That is the whole security model for an unsigned app distributed
+// over Discord — without it, anyone who can MITM a GitHub download owns every tester's
+// machine. An unverified update is never written, never run, and never retried.
+// MUST be byte-identical to the decoded contents of the .pub file beside the signing key.
+// Transcribed by hand once and the comment line lost a colon; the base64 line was right, so
+// it may or may not have verified depending on how strictly the parser reads the header.
+// Don't retype this — regenerate it with:
+//   python -c "import base64;print(base64.b64decode(open(r'<path>.key.pub').read().strip()).decode())"
+const UPDATER_PUBKEY: &str = "untrusted comment: minisign public key: B9A0344076985401\nRWQBVJh2QDSguRuoYgUTYZbr6kO78lALeDj9UOwo9ChxN6rxz5Oqvxz4\n";
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct UpdateInfo {
+    version: String,
+    notes: String,
+    url: String,
+    /// Base64 of the minisign .sig file for the artifact at `url`.
+    signature: String,
+}
+
+/// Dotted-numeric compare. Returns true when `candidate` is strictly newer than `current`.
+fn is_newer(candidate: &str, current: &str) -> bool {
+    let parse = |v: &str| -> Vec<u64> {
+        v.trim_start_matches('v')
+            .split(['.', '-', '+'])
+            .map(|p| p.parse::<u64>().unwrap_or(0))
+            .collect()
+    };
+    let (a, b) = (parse(candidate), parse(current));
+    for i in 0..a.len().max(b.len()) {
+        let (x, y) = (a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0));
+        if x != y {
+            return x > y;
+        }
+    }
+    false
+}
+
+/// Read the manifest and report a newer build, if there is one. Any failure is `Ok(None)` —
+/// being offline, or a release that hasn't been published yet, is not an error the user
+/// should ever see.
+#[tauri::command]
+async fn update_check(endpoint: String, current: String) -> Result<Option<UpdateInfo>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let res = match client.get(&endpoint).send().await {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Ok(None),
+    };
+    let body: serde_json::Value = match res.json().await {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let version = body.get("version").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    if version.is_empty() || !is_newer(&version, &current) {
+        return Ok(None);
+    }
+    let plat = body
+        .get("platforms")
+        .and_then(|p| p.get("windows-x86_64"))
+        .ok_or("manifest has no windows-x86_64 entry")?;
+    Ok(Some(UpdateInfo {
+        version,
+        notes: body.get("notes").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        url: plat.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        signature: plat.get("signature").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+    }))
+}
+
+/// Download, verify, swap, relaunch. Returns only on failure — on success the process is
+/// already on its way out.
+#[tauri::command]
+async fn update_apply(app: tauri::AppHandle, info: UpdateInfo) -> Result<(), String> {
+    use base64::Engine;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let bytes = client
+        .get(&info.url)
+        .send()
+        .await
+        .map_err(|e| format!("download failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("download failed: {e}"))?
+        .bytes()
+        .await
+        .map_err(|e| format!("download failed: {e}"))?;
+
+    // Verify BEFORE anything is written where it could be executed.
+    let sig_text = base64::engine::general_purpose::STANDARD
+        .decode(info.signature.trim())
+        .map_err(|_| "update signature is malformed".to_string())?;
+    let sig_text = String::from_utf8(sig_text).map_err(|_| "update signature is malformed".to_string())?;
+    let signature = minisign_verify::Signature::decode(&sig_text)
+        .map_err(|_| "update signature is malformed".to_string())?;
+    let pubkey = minisign_verify::PublicKey::decode(UPDATER_PUBKEY)
+        .map_err(|e| format!("bad updater public key: {e}"))?;
+    pubkey
+        .verify(&bytes, &signature, false)
+        .map_err(|_| "update failed verification and was discarded".to_string())?;
+
+    let exe = std::env::current_exe().map_err(|e| format!("locating this app: {e}"))?;
+    let staged = exe.with_extension("new");
+    std::fs::write(&staged, &bytes).map_err(|e| format!("writing the update: {e}"))?;
+
+    // Windows won't overwrite a running .exe, but it will rename one out of the way.
+    let retired = exe.with_extension("old");
+    let _ = std::fs::remove_file(&retired);
+    std::fs::rename(&exe, &retired).map_err(|e| format!("replacing this app: {e}"))?;
+    if let Err(e) = std::fs::rename(&staged, &exe) {
+        // Put it back rather than leaving the user with no app at all.
+        let _ = std::fs::rename(&retired, &exe);
+        return Err(format!("replacing this app: {e}"));
+    }
+
+    Command::new(&exe)
+        .spawn()
+        .map_err(|e| format!("restarting: {e}"))?;
+    app.exit(0);
+    Ok(())
+}
+
+/// Delete the previous build left beside us by the last update. Runs at startup, when the
+/// old file is no longer locked.
+fn sweep_retired_build() {
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::fs::remove_file(exe.with_extension("old"));
+        let _ = std::fs::remove_file(exe.with_extension("new"));
+    }
+}
+
 /// Call any OpenAI-compatible chat-completions endpoint (OpenAI, OpenRouter, Groq, Together,
 /// LM Studio/Ollama local servers, …). The user supplies the provider's v1 base URL + key +
 /// model in settings; this is the transport twin of `claude_complete` for those providers.
@@ -541,6 +686,21 @@ async fn openai_complete(
         .await
         .map_err(|e| format!("reading provider response: {e}"))?;
     if !status.is_success() {
+        // A vision rejection is the one provider error a user can't read: the body is the
+        // whole base64 payload's parse failure, megabytes in. Say what actually happened.
+        let sent_images = images.as_ref().map_or(false, |i| !i.is_empty());
+        let rejected_images = text.contains("image_url")
+            || text.contains("image")
+                && (text.contains("unknown variant") || text.contains("not supported"));
+        if sent_images && rejected_images {
+            return Err(format!(
+                "This provider rejected the screenshots — the endpoint or model at {url} has no \
+                 vision support, so highlight extraction can't work there. Switch Settings → API \
+                 keys to Anthropic (Claude reads images), or point the base URL at a \
+                 vision-capable model. (provider said: {})",
+                text.chars().take(180).collect::<String>()
+            ));
+        }
         return Err(format!("provider API {status}: {text}"));
     }
 
@@ -890,7 +1050,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
+            update_check,
+            update_apply,
             validate_save,
             dynasty_snapshot,
             dynasty_delta,
@@ -911,6 +1074,78 @@ pub fn run() {
             archive_save,
             start_watch
         ])
+        .setup(|_app| {
+            // The previous build is still on disk beside us until now — it was locked while
+            // it was the running process.
+            sweep_retired_build();
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running Dynasty Wire");
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+
+    #[test]
+    fn newer_version_detection() {
+        assert!(is_newer("0.1.12", "0.1.11"));
+        assert!(is_newer("0.2.0", "0.1.99"));
+        assert!(!is_newer("0.1.11", "0.1.11"));
+        assert!(!is_newer("0.1.10", "0.1.11")); // 10 < 11, not string-compared
+        assert!(is_newer("0.1.11", "0.1.9"));  // 11 > 9, ditto
+    }
+
+    /// The release artifact must verify against the key compiled into THIS binary. A
+    /// mismatch means every client silently refuses the update, so prove it before
+    /// publishing rather than discovering it from a tester.
+    #[test]
+    fn release_artifact_verifies_against_embedded_key() {
+        use base64::Engine;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../dist/release");
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            eprintln!("no dist/release yet — skipping");
+            return;
+        };
+        let mut checked = 0;
+        for e in entries.flatten() {
+            let exe = e.path().join("DynastyWire.exe");
+            let sig = e.path().join("DynastyWire.exe.sig");
+            if !exe.exists() || !sig.exists() {
+                continue;
+            }
+            let bytes = std::fs::read(&exe).unwrap();
+            // The .sig file is itself base64 of the minisign text — decode before parsing,
+            // exactly as `update_apply` does with the manifest's signature field.
+            let sig_b64 = std::fs::read_to_string(&sig).unwrap();
+            let sig_text = String::from_utf8(
+                base64::engine::general_purpose::STANDARD
+                    .decode(sig_b64.trim())
+                    .expect(".sig is base64"),
+            )
+            .unwrap();
+            let signature = minisign_verify::Signature::decode(&sig_text).expect("sig parses");
+            let pubkey = minisign_verify::PublicKey::decode(UPDATER_PUBKEY).expect("pubkey parses");
+            pubkey
+                .verify(&bytes, &signature, false)
+                .unwrap_or_else(|e| panic!("{} FAILED verification: {e}", exe.display()));
+
+            // The manifest must carry that signature verbatim — the .sig file's own text.
+            let manifest: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(e.path().join("latest.json")).unwrap())
+                    .unwrap();
+            let in_manifest = manifest["platforms"]["windows-x86_64"]["signature"]
+                .as_str()
+                .unwrap();
+            assert_eq!(
+                in_manifest.trim(),
+                sig_b64.trim(),
+                "latest.json signature does not match the .sig file"
+            );
+            checked += 1;
+        }
+        assert!(checked > 0, "no release artifacts found to verify");
+        eprintln!("verified {checked} release artifact(s)");
+    }
 }

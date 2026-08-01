@@ -1,7 +1,84 @@
 # Dynasty Wire v2 — The Deterministic Core
 
-Status: DECIDED (design locked), NOT STARTED (no code yet).
+Status: DECIDED (design locked). IN PROGRESS — first move done.
 Decisions below came out of a full design interview. Each one is a commitment, not a maybe.
+
+**Build log**
+
+- *Step 1 — validator (done).* Ships observe-only in `src/lib/dynasty/validator.ts` with 34
+  tests, wired into `generateInApp` so every generation is fact-checked and recorded,
+  readable at Settings → Fact-check baseline. Nothing is repaired yet, by design.
+- *Step 2 — baseline (measured 2026-07-29).* 24 real `recap-lead` generations from the
+  archived Kansas State saves (6 game weeks × ported/pre-port prompt × Haiku 4.5/Sonnet 5),
+  fact-checked against the same saves.
+
+  | prompt | model | violations / piece |
+  |---|---|---|
+  | ported | haiku-4-5 | 0.00 |
+  | ported | sonnet-5 | 0.20 |
+  | pre-port | haiku-4-5 | 0.17 |
+  | pre-port | sonnet-5 | 0.00 |
+
+  **Measured rate: 2 real violations in 23 scored pieces (~0.09), already well under the
+  0.5 gate — and the A/B is inconclusive at this sample size** (one violation on each
+  side). Both survivors are the same failure: an invented staff/player name ("offensive
+  coordinator Reese Talbot", "Kicker Carey Reisner").
+
+  **Do not read this as "the surface is fixed."** The checker only covers what it can prove
+  from the save: invented names, explicit team attribution, scores, records, ranks. The
+  community's other complaint — *mixed stats* — has no check at all, so a piece that
+  swaps two players' season lines scores clean today. Treat 0.09 as a floor on a narrow
+  class, not a hallucination rate.
+
+  The first pass of this run reported 1.17–1.67/piece. Almost all of it was the validator:
+  Title Case headlines read as people, `K-State` matching a single-letter position cue,
+  "Hurley ran for 120 against NC State" read as a misattribution, shared nicknames
+  (Kansas State and Northwestern are both Wildcats) resolved last-write-wins, records read
+  as scores, and hypotheticals ("the 14-0 record will change to 14-1") read as claims.
+  Every one is fixed with a regression test written from the real copy that broke it —
+  and **not one was caught by the fixtures written before seeing real output.**
+- *Step 3 — porting (2 of 7 done).* `national-wire` is on the deterministic core
+  (`src/lib/dynasty/national.ts`), ported second because the first tester report ranked it
+  worst by an order of magnitude: **10 invented people in a single piece** against 0.5 for
+  the ported recap and 0 for `national-desk`.
+
+  **The cause was a contradiction between our own prompts, not the model.**
+  `buildNationalWireSpec` told it to *"INVENT realistic fictional ones"* for any name it
+  wasn't given; `SYSTEM_PROMPT` calls an unlisted other-team name a hard error. The surface
+  could not satisfy both. Code now picks the programs in the news (ranked upsets first, then
+  the top of the poll), supplies their real head coaches — free, already in the snapshot —
+  and their real rosters, so there is nothing left to invent. Recruits stay invented on
+  purpose: high-school prospects aren't in the save.
+
+  Rosters for other programs are fetched **on demand at generation time**, capped at 6
+  teams, because each one re-parses a ~10MB save. Anything that fails to load is reported as
+  rosterless and covered by role only — `teamsToLoad()` is shared by the fetch and the
+  prompt so the two can never disagree about which programs matter.
+
+- *Step 3 (cont.) — `recap-lead`.* On the deterministic core:
+  `src/lib/dynasty/recap.ts` computes how the game turned (quarter-by-quarter swing, shape,
+  the quarter that moved it), what the result is worth (record, streak, bowl math from the
+  schedule) and who could have decided it, and the prompt is built on that locked table.
+  The 40-player dump and the wall of roster-separation warnings are gone from a game week;
+  the shared context still carries the no-game weeks, which gain only the locked stakes.
+  31 core tests plus 10 asserting the rendered prompt.
+
+**Where this leaves the plan.** The port is done and measured, and the measurement does not
+support porting the other six yet — not because they look fine, but because the instrument
+is too narrow to rank them. Two things have to happen before step 3 continues:
+
+1. **Widen the checker to the failure the community actually reported.** "Mixed stats" is
+   the complaint `recap-lead` earned, and nothing in the validator tests it. A stat line
+   attributed in prose can be checked against that player's season totals — that check does
+   not exist. Until it does, a clean score means little.
+2. **Get a bigger sample.** 23 pieces and 2 violations cannot separate two prompts. The
+   observe-only wiring already records every generation the user makes, so this accrues for
+   free during normal play — read it at Settings → Fact-check baseline rather than paying
+   for another synthetic run.
+
+Decision #8's gate (< 0.5 per piece on the cheap model) is *already met* on this surface by
+the current numbers, which is a signal the gate is calibrated against the wrong thing rather
+than a signal that v2 is done. Recalibrate it once the stat check lands.
 
 ---
 

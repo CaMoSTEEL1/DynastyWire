@@ -553,6 +553,29 @@ export interface LlmConfig {
   budgetMode?: boolean;
 }
 
+/**
+ * The ONE place settings become a transport. Both the dynasty context (which generates) and
+ * Settings (which reports what was generated) read this, so the app can never disagree with
+ * itself about which provider is live — a mismatch silently mislabels the fact-check
+ * baseline, since every recorded piece is keyed by the model that wrote it.
+ */
+export function resolveLlm(settings: DynastySettings): LlmConfig | null {
+  // Budget mode defaults ON (null = on): cheaper model + lean auto-write out of the box.
+  const budgetMode = settings.budgetMode !== false;
+  if (settings.provider === "openai") {
+    if (!settings.openaiKey || !settings.openaiBaseUrl) return null;
+    return {
+      provider: "openai",
+      apiKey: settings.openaiKey,
+      baseUrl: settings.openaiBaseUrl,
+      model: settings.openaiModel ?? undefined,
+      noMaxTokens: settings.openaiNoMaxTokens === true,
+      budgetMode,
+    };
+  }
+  return settings.anthropicKey ? { provider: "anthropic", apiKey: settings.anthropicKey, budgetMode } : null;
+}
+
 export interface SaveEntry {
   name: string;
   path: string;

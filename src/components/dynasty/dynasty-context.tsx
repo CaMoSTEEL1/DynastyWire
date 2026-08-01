@@ -30,6 +30,7 @@ import {
   saveSettings,
   setLastIngested,
   getLastIngested,
+  resolveLlm,
   type DynastyProfile,
   type DynastySettings,
   type DynastySnapshot,
@@ -38,6 +39,7 @@ import {
   type WeekDelta,
 } from "@/lib/dynasty/client";
 import { generateInApp } from "@/lib/dynasty/gen";
+import { teamsToLoad } from "@/lib/dynasty/national";
 import { loadSaga } from "@/lib/dynasty/saga-store";
 import { enforceSuspensions, loadSuspensions, isActive, weeksLeft } from "@/lib/dynasty/suspensions";
 import { buildSeasonRecord, upsertSeason } from "@/lib/dynasty/archive";
@@ -226,24 +228,14 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
 
   // Resolve the LLM transport from settings: Anthropic by default, or any OpenAI-compatible
   // endpoint (base URL + key + model) when the user picked that provider.
-  const llm = useMemo<LlmConfig | null>(() => {
-    // Budget mode defaults ON (null = on): cheaper model + lean auto-write out of the box.
-    const budgetMode = settings.budgetMode !== false;
-    if (settings.provider === "openai") {
-      if (settings.openaiKey && settings.openaiBaseUrl) {
-        return {
-          provider: "openai",
-          apiKey: settings.openaiKey,
-          baseUrl: settings.openaiBaseUrl,
-          model: settings.openaiModel ?? undefined,
-          noMaxTokens: settings.openaiNoMaxTokens === true,
-          budgetMode,
-        };
-      }
-      return null;
-    }
-    return settings.anthropicKey ? { provider: "anthropic", apiKey: settings.anthropicKey, budgetMode } : null;
-  }, [settings.provider, settings.anthropicKey, settings.openaiKey, settings.openaiBaseUrl, settings.openaiModel, settings.openaiNoMaxTokens, settings.budgetMode]);
+  // Deps are the transport fields only, NOT `settings` — a new llm identity on every
+  // unrelated toggle (podcast audio, presser takeover) would churn everything downstream
+  // that keys off it.
+  const llm = useMemo<LlmConfig | null>(
+    () => resolveLlm(settings),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [settings.provider, settings.anthropicKey, settings.openaiKey, settings.openaiBaseUrl, settings.openaiModel, settings.openaiNoMaxTokens, settings.budgetMode]
+  );
   const hasApiKey = llm != null;
 
   // Onboarding needs a picked save file + a working provider. Team auto-detects from the save.
@@ -609,11 +601,30 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
               }))
           )
           .catch(() => []);
+        // The national desk names players on OTHER programs, so it needs their rosters —
+        // and each one is a full re-parse of a ~10MB save, far too slow to load eagerly for
+        // every team. Fetch only the handful the desk will actually cover, only when it
+        // generates, and let it fall back to role-only for anything that fails.
+        const extraWithRosters = { ...cleanExtra(extra) };
+        if (kind === "national-wire" && currentSavePath) {
+          const wanted = teamsToLoad({ snapshot, delta, userTeam: settings.userTeam ?? null });
+          const loaded: Record<string, RosterPlayer[]> = {};
+          await Promise.all(
+            wanted.map(async (teamIndex) => {
+              try {
+                loaded[String(teamIndex)] = await getRoster(currentSavePath, undefined, teamIndex);
+              } catch {
+                /* covered by role only — nationalFacts reports it as rosterless */
+              }
+            })
+          );
+          extraWithRosters.rosters = loaded;
+        }
         // In-app generation: no sidecar spawn. Built from the already-parsed snapshot/delta.
         const data = await generateInApp<T>(kind, llm, snapshot, delta, {
           team: settings.userTeam ?? undefined,
           coach: settings.coachName ?? undefined,
-          extra: cleanExtra(extra),
+          extra: extraWithRosters,
           roster,
           oppRoster,
           backstory,

@@ -26,6 +26,7 @@
     "@supabase/supabase-js": "^2.99.1",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-store": "^2.4.3",
     "@untitledui/icons": "^0.0.21",
     "aos": "^2.3.4",

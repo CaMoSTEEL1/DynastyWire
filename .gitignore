@@ -61,3 +61,6 @@ ingest/dist/
 ingest/pkgbuild.log
 ingest/*.result
 ingest/snap.result
+
+# Signed release artifacts + rollback targets (installers are large; keep locally)
+dist/release/
