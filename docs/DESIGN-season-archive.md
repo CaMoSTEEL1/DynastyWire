@@ -212,5 +212,29 @@ Each phase ships independently and is separately committable.
     still-rostered players (backfill for mid-dynasty installs). The Archive already captures
     every season played *through the app* going forward; the backfill is a bonus and will
     bundle with the next native rebuild so we don't rebuild the exe twice.
-- **Phase B — Year-over-year memory:** not started.
+- **Phase B — Year-over-year memory: SHIPPED (frontend-only, no exe/sidecar change):**
+  - `src/lib/dynasty/history.ts` — the PRIOR SEASONS block: season-by-season ledger, program
+    arc, opponent series history with rivalry inference, returning-player growth lines,
+    carried storylines. Pure over archived records; 18 tests in `history.test.ts`.
+  - `gen.ts` — `GenerateOpts.priorSeasons` → `MediaContext.history`, folded into the shared
+    context (so it rides the cached prefix and reaches every unported surface for free).
+  - Prompt tuning: recap ("reach back" bullet), press-conference (one comparison question
+    grounded in the archive), social (2-3 long-memory posts), national desk (the user's
+    program is the ONE whose past we hold — never compare the other 130).
+  - `dynasty-context.tsx` — `loadArchive(dynastyId)` rides into every `generate()` call.
+  - **The port tax, paid explicitly:** a ported surface no longer receives the shared blob,
+    so `recap-lead` on a game week is handed `ctx.history` a second time. This is the same
+    hole that once dated a recap to a real-world season; `gen-recap.test.ts` now asserts the
+    history reaches the ported prompt, and that year one contains no history section at all.
+  - **The season being played is filtered out** in `priorSeasons()`. The archive checkpoints
+    the current year continuously, so without that filter this week's own result would be
+    fed back as "history".
+  - Guardrails: the block states the past as fixed fact, says explicitly that anything not
+    listed is UNKNOWN, and a revenge frame is only offered when the archive shows the
+    program LOST the last meeting (and is explicitly forbidden when it won).
+  - Verified: 241 tests, tsc clean, lint clean on changed files, production build green.
+    Needs an exe rebuild to appear in the portable app.
+  - **Not done:** the validator does not yet hold archived seasons as ground truth, so a
+    prior-season stat claim is *skipped*, not verified (see the stat check's
+    `PRIOR_FRAME_CUE`). Feeding the archive into `buildGroundTruth` would close that.
 - **Phase C — National drama:** not started.

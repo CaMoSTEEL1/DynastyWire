@@ -32,12 +32,36 @@ export interface KnownTeam {
 
 export type PersonRole = "player" | "coach" | "recruit";
 
+/** The stat categories a writer states in prose and the save can settle. */
+export type StatCategory =
+  | "passYds"
+  | "passTDs"
+  | "rushYds"
+  | "rushAtt"
+  | "rushTDs"
+  | "recYds"
+  | "recTDs"
+  | "recCatches"
+  | "tackles"
+  | "sacks"
+  | "ints"
+  | "fgMade";
+
+/** A player's SEASON-TO-DATE totals. Never a box score — the save has no per-game lines,
+ * which is the distinction the whole stat check is built around. */
+export type StatLine = Partial<Record<StatCategory, number>>;
+
 export interface KnownPerson {
   name: string;
   /** Resolved program. null for recruits, who haven't signed anywhere yet. */
   team: string | null;
   role: PersonRole;
   position: string | null;
+  /** Season-to-date production, when the save carries a stat line for him. */
+  stats: StatLine | null;
+  /** Games those totals accumulated over. One game in, a season total and a game line are
+   * the same number, and the season-total-as-game-line check has to stay quiet. */
+  gamesPlayed: number | null;
 }
 
 export interface GroundTruth {
@@ -60,6 +84,9 @@ export interface GroundTruth {
   /** True when we hold no roster at all — name checks must stay silent rather than flag
    * every name in the piece. */
   rosterKnown: boolean;
+  /** True when at least one person carries a season stat line. Without one the stat check
+   * has nothing to compare against and must report itself skipped, not clean. */
+  statsKnown: boolean;
   /** The coach's recurring cast (AD, booster, beat writer, rival coach). Invented by the
    * user on purpose, so these names are never a violation anywhere. */
   castNames: string[];
@@ -95,6 +122,42 @@ function surnameOf(name: string): string {
   const tail = parts[parts.length - 1];
   if (parts.length > 2 && /^(jr|sr|ii|iii|iv|v)$/.test(tail)) return parts[parts.length - 2];
   return tail ?? "";
+}
+
+/**
+ * A player's season totals, flattened out of whichever shape the parser produced. The
+ * sidecar writes the active side BOTH nested (`stats.offense`) and flattened onto the
+ * wrapper, and a two-way player carries both blocks — reading only one of them is how a
+ * real stat line reads as "unknown" and silently disables the check for that player.
+ */
+function statLineOf(p: RosterPlayer): StatLine | null {
+  const s = p.stats;
+  if (!s) return null;
+  const pick = (key: "offense" | "defense" | "kicking") => {
+    const nested = s[key];
+    if (nested) return nested;
+    return s.side === key ? (s as unknown as NonNullable<typeof nested>) : null;
+  };
+  const o = pick("offense");
+  const d = pick("defense");
+  const k = pick("kicking");
+  const line: StatLine = {};
+  const set = (cat: StatCategory, v: number | null | undefined) => {
+    if (typeof v === "number" && Number.isFinite(v)) line[cat] = v;
+  };
+  set("passYds", o?.passYds);
+  set("passTDs", o?.passTDs);
+  set("rushYds", o?.rushYds);
+  set("rushAtt", o?.rushAtt);
+  set("rushTDs", o?.rushTDs);
+  set("recYds", o?.recYds);
+  set("recTDs", o?.recTDs);
+  set("recCatches", o?.recCatches);
+  set("tackles", d?.tackles);
+  set("sacks", d?.sacks);
+  set("ints", d?.ints);
+  set("fgMade", k?.fgMade);
+  return Object.keys(line).length ? line : null;
 }
 
 function push<K, V>(map: Map<K, V[]>, key: K, value: V): void {
@@ -161,20 +224,28 @@ export function buildGroundTruth(input: GroundTruthInput): GroundTruth {
     if (!p.name || p.name.trim().length < 3) return;
     people.push(p);
   };
-  for (const p of input.roster ?? []) {
-    addPerson({ name: p.name, team: userTeam, role: "player", position: p.position ?? null });
-  }
-  for (const p of input.oppRoster ?? []) {
-    addPerson({ name: p.name, team: opponent, role: "player", position: p.position ?? null });
-  }
+  const asPlayer = (p: RosterPlayer, team: string | null): KnownPerson => ({
+    name: p.name,
+    team,
+    role: "player",
+    position: p.position ?? null,
+    stats: statLineOf(p),
+    gamesPlayed: p.stats?.gamesPlayed ?? null,
+  });
+  for (const p of input.roster ?? []) addPerson(asPlayer(p, userTeam));
+  for (const p of input.oppRoster ?? []) addPerson(asPlayer(p, opponent));
   for (const r of input.recruits ?? []) {
-    addPerson({ name: r.name, team: null, role: "recruit", position: r.position ?? null });
+    addPerson({ name: r.name, team: null, role: "recruit", position: r.position ?? null, stats: null, gamesPlayed: null });
   }
   for (const t of teams) {
-    if (t.headCoach) addPerson({ name: t.headCoach, team: t.name, role: "coach", position: "HC" });
+    if (t.headCoach) {
+      addPerson({ name: t.headCoach, team: t.name, role: "coach", position: "HC", stats: null, gamesPlayed: null });
+    }
   }
   const coachName = snapshot.coachName?.trim() || null;
-  if (coachName && userTeam) addPerson({ name: coachName, team: userTeam, role: "coach", position: "HC" });
+  if (coachName && userTeam) {
+    addPerson({ name: coachName, team: userTeam, role: "coach", position: "HC", stats: null, gamesPlayed: null });
+  }
 
   const peopleByName = new Map<string, KnownPerson[]>();
   const peopleBySurname = new Map<string, KnownPerson[]>();
@@ -212,6 +283,7 @@ export function buildGroundTruth(input: GroundTruthInput): GroundTruth {
     legalScores,
     userScoreLine,
     rosterKnown: (input.roster?.length ?? 0) > 0,
+    statsKnown: people.some((p) => p.stats != null),
     castNames: (input.cast ?? []).filter((c): c is string => !!c && c.trim().length > 2),
   };
 }
@@ -224,7 +296,15 @@ export type ViolationKind =
   | "wrong-score"
   | "wrong-record"
   | "wrong-rank"
-  | "phantom-rank";
+  | "phantom-rank"
+  /** A season-framed stat line that contradicts the player's real season total. */
+  | "wrong-stat"
+  /** The number belongs to a DIFFERENT player — "mixed stats", the complaint this whole
+   * check exists for, and the one shape that is provable without a box score. */
+  | "mixed-stat"
+  /** A CUMULATIVE season total written as what a player did in one game — "900+ yards in a
+   * single game with 100+ carries", reported from a real save. */
+  | "season-stat-as-game";
 
 /** What a repair pass (v2 step 3) should do with this violation. Recorded now, acted on
  * later — step 1 is observe-only, so nothing reads these yet. */
@@ -265,6 +345,7 @@ export interface KindChecks {
   scores: boolean;
   records: boolean;
   ranks: boolean;
+  stats: boolean;
 }
 
 export interface KindConfig {
@@ -277,8 +358,12 @@ export interface KindConfig {
   checks: KindChecks;
 }
 
-const ALL: KindChecks = { names: true, attribution: true, scores: true, records: true, ranks: true };
-const NONE: KindChecks = { names: false, attribution: false, scores: false, records: false, ranks: false };
+const ALL: KindChecks = {
+  names: true, attribution: true, scores: true, records: true, ranks: true, stats: true,
+};
+const NONE: KindChecks = {
+  names: false, attribution: false, scores: false, records: false, ranks: false, stats: false,
+};
 
 const BASE_PERSONA_FIELDS = [
   "byline",
@@ -422,6 +507,112 @@ const HYPOTHETICAL_CUE =
 
 const RECORD_CUE =
   /\b(record|now|improve[sd]?|improving to|fall(?:s|ing)? to|drop(?:s|ped)? to|move[sd]? to|sit(?:s)? at|stands? at|climbs? to|goes to|are|is)\b/i;
+
+// ── Stat claims ─────────────────────────────────────────────────────────────────
+// "Mixed stats" is the complaint recap-lead actually earned, and until this landed nothing
+// tested it: a piece that swapped two players' season lines scored clean.
+//
+// THE CONSTRAINT THAT SHAPES EVERYTHING BELOW: the save carries SEASON TOTALS and the final
+// score. It has no box score. So "he ran for 120 tonight" is not checkable — it is invented
+// per-game texture the house style licenses — and flagging it would repeat the false-positive
+// disaster of the first baseline run. Only two shapes are provable:
+//   1. a SEASON-framed line that contradicts that player's real season total, and
+//   2. a number that is exactly some OTHER player's season total in the same category —
+//      the fingerprint of a swap, whatever tense it is written in.
+
+/** Numbers as a writer states them: "2,600", "487", and small counts spelled out. */
+const NUM = "(\\d{1,3}(?:,\\d{3})+|\\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten)";
+const WORD_NUM: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+};
+
+function parseNum(raw: string): number | null {
+  const w = WORD_NUM[raw.toLowerCase()];
+  if (w != null) return w;
+  const n = Number(raw.replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+const STAT_PATTERNS: { re: RegExp; cat: StatCategory }[] = [
+  { re: new RegExp(`\\b(?:threw|thrown|throws|throwing|passed|passes|passing)\\s+for\\s+${NUM}\\s*(?:yards?|yds?)\\b`, "gi"), cat: "passYds" },
+  { re: new RegExp(`\\b${NUM}\\s+(?:passing|pass)\\s+(?:yards?|yds?)\\b`, "gi"), cat: "passYds" },
+  { re: new RegExp(`\\b${NUM}\\s+yards?\\s+through the air\\b`, "gi"), cat: "passYds" },
+  { re: new RegExp(`\\b(?:threw|thrown|throws|throwing|passed|passes|passing)\\s+for\\s+${NUM}\\s*(?:TDs?|touchdowns?|scores?)\\b`, "gi"), cat: "passTDs" },
+  { re: new RegExp(`\\b${NUM}\\s+(?:passing|pass|touchdown)\\s+(?:TDs?|touchdowns?|passes)\\b`, "gi"), cat: "passTDs" },
+
+  { re: new RegExp(`\\b(?:ran|run|runs|running|rushed|rushes|rushing|carried)\\s+for\\s+${NUM}\\s*(?:yards?|yds?)\\b`, "gi"), cat: "rushYds" },
+  { re: new RegExp(`\\b${NUM}\\s+(?:rushing|rush|ground)\\s+(?:yards?|yds?)\\b`, "gi"), cat: "rushYds" },
+  { re: new RegExp(`\\b${NUM}\\s+(?:carries|carry|attempts|totes)\\b`, "gi"), cat: "rushAtt" },
+  { re: new RegExp(`\\bcarr(?:ied|ying|ies)\\s+(?:it|the (?:ball|rock))\\s+${NUM}\\s+times\\b`, "gi"), cat: "rushAtt" },
+  { re: new RegExp(`\\b${NUM}\\s+yards?\\s+on the ground\\b`, "gi"), cat: "rushYds" },
+  { re: new RegExp(`\\b(?:ran|runs|rushed|rushes)\\s+for\\s+${NUM}\\s*(?:TDs?|touchdowns?|scores?)\\b`, "gi"), cat: "rushTDs" },
+  { re: new RegExp(`\\b${NUM}\\s+(?:rushing|rush)\\s+(?:TDs?|touchdowns?)\\b`, "gi"), cat: "rushTDs" },
+
+  { re: new RegExp(`\\b${NUM}\\s+(?:receiving|rec\\.?)\\s+(?:yards?|yds?)\\b`, "gi"), cat: "recYds" },
+  { re: new RegExp(`\\b${NUM}\\s+(?:catches|receptions|grabs)\\b`, "gi"), cat: "recCatches" },
+  { re: new RegExp(`\\bcaught\\s+${NUM}\\s+(?:passes|balls)\\b`, "gi"), cat: "recCatches" },
+  { re: new RegExp(`\\b${NUM}\\s+receiving\\s+(?:TDs?|touchdowns?)\\b`, "gi"), cat: "recTDs" },
+  { re: new RegExp(`\\bcaught\\s+${NUM}\\s+(?:TDs?|touchdown passes?)\\b`, "gi"), cat: "recTDs" },
+
+  { re: new RegExp(`\\b${NUM}\\s+(?:total\\s+)?tackles\\b`, "gi"), cat: "tackles" },
+  { re: new RegExp(`\\b${NUM}\\s+sacks?\\b`, "gi"), cat: "sacks" },
+  { re: new RegExp(`\\b${NUM}\\s+(?:interceptions?|INTs?)\\b`, "gi"), cat: "ints" },
+  { re: new RegExp(`\\b${NUM}\\s+field goals?\\b`, "gi"), cat: "fgMade" },
+];
+
+const STAT_LABEL: Record<StatCategory, string> = {
+  passYds: "passing yards",
+  passTDs: "passing TDs",
+  rushYds: "rushing yards",
+  rushAtt: "carries",
+  rushTDs: "rushing TDs",
+  recYds: "receiving yards",
+  recTDs: "receiving TDs",
+  recCatches: "catches",
+  tackles: "tackles",
+  sacks: "sacks",
+  ints: "interceptions",
+  fgMade: "field goals made",
+};
+
+const YARD_CATS = new Set<StatCategory>(["passYds", "rushYds", "recYds"]);
+
+/** Approximation. "nearly 2,600 yards" asserts a neighbourhood, not a number. */
+const APPROX_CUE = /\b(nearly|almost|about|around|roughly|some|over|under|more than|less than|north of|shy of|upwards? of|approximately|~)\s*$/i;
+
+/** The claim is explicitly about the SEASON, which is the only thing the save can settle. */
+const SEASON_FRAME_CUE =
+  /\b(this season|on the season|this year|on the year|for the season|season total|season-long|through \w+ games?|so far this|to date|leads the team|paces the team)\b/i;
+
+/** The claim is about a PAST season or a career — legitimate now that year-over-year memory
+ * feeds archived seasons in, and never checkable against a current-season total. */
+const PRIOR_FRAME_CUE =
+  /\b(last season|last year|a year ago|two years ago|career|previous season|prior season|in 20\d\d|as a (?:true )?(?:freshman|sophomore|junior)|his first (?:year|season)|back then)\b/i;
+
+/** The claim is about ONE GAME. The save has no box score, so a per-game number can only be
+ * caught by the swap fingerprint — never by comparing it to a season total. */
+const GAME_FRAME_CUE =
+  /\b(tonight|today|saturday|on the night|on the day|in the win|in the loss|this week|in this game|in the game|first half|second half|(?:first|second|third|fourth) quarter|by halftime|after the break)\b/i;
+
+/** Big enough that an exact collision with another player's total is a swap, not a
+ * coincidence. Small counting stats collide constantly and must not be flagged. */
+const DISTINCT_MIN: Record<StatCategory, number> = {
+  passYds: 50, rushYds: 50, recYds: 50,
+  rushAtt: 25, recCatches: 8, tackles: 8,
+  passTDs: 5, rushTDs: 5, recTDs: 5, sacks: 5, ints: 4, fgMade: 5,
+};
+
+function distinctive(cat: StatCategory, value: number): boolean {
+  return value >= DISTINCT_MIN[cat];
+}
+
+/** Writers round, and rounding is not a contradiction: "2,600 yards" for 2,588 is correct
+ * prose. Counting stats have nothing to round, so those must match exactly. */
+function closeEnough(cat: StatCategory, claimed: number, actual: number): boolean {
+  if (claimed === actual) return true;
+  if (!YARD_CATS.has(cat)) return false;
+  return Math.abs(claimed - actual) <= Math.max(2, Math.round(actual * 0.02));
+}
 
 // Titles and position labels that ride in front of a name. Stripped before the name is
 // keyed, or "Starting MLB Marcus Talton" and "Marcus Talton" count as two different people.
@@ -676,6 +867,154 @@ function checkNames(
   }
 }
 
+/**
+ * Every known person a sentence names, by full name OR bare surname — prose attributes
+ * production surname-only ("Leber threw for 2,600") far more often than in full, so a
+ * full-name-only scan would leave the stat check blind on the sentences that matter most.
+ *
+ * A surname shared by two rostered players returns BOTH, which makes the sentence ambiguous
+ * and therefore skipped. That is deliberate: guessing whose line it is would manufacture the
+ * exact misattribution this file exists to catch.
+ */
+function peopleInSentence(sentence: string, truth: GroundTruth, allow: Set<string>): KnownPerson[] {
+  const found = new Map<string, KnownPerson>();
+  const add = (p: KnownPerson) => found.set(`${norm(p.name)}::${p.team ?? ""}`, p);
+
+  NAME_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = NAME_RE.exec(sentence))) {
+    const split = splitPossessive(stripPossessive(m[0]));
+    if (!looksLikeName(split.name)) continue;
+    const key = norm(split.name.split(/\s+/).filter((t) => !HONORIFIC.test(t)).join(" "));
+    if (!key || allow.has(key) || truth.teamByAlias.has(key)) continue;
+    for (const p of truth.peopleByName.get(key) ?? []) add(p);
+  }
+
+  const TOKEN_RE = /\b[A-Z][a-zA-Z'’\-]{2,}\b/g;
+  let t: RegExpExecArray | null;
+  while ((t = TOKEN_RE.exec(sentence))) {
+    const key = norm(t[0]);
+    if (!key || allow.has(key) || truth.teamByAlias.has(key) || NAME_STOPWORDS.has(key)) continue;
+    for (const p of truth.peopleBySurname.get(key) ?? []) add(p);
+  }
+  return [...found.values()];
+}
+
+interface StatClaim {
+  cat: StatCategory;
+  value: number;
+  /** Offset of the whole matched phrase within the sentence. */
+  index: number;
+  text: string;
+}
+
+/** Every (category, number) a sentence binds together. */
+export function statClaims(sentence: string): StatClaim[] {
+  const out: StatClaim[] = [];
+  for (const { re, cat } of STAT_PATTERNS) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(sentence))) {
+      const value = parseNum(m[1]);
+      if (value == null || value <= 0) continue;
+      // "nearly 2,600 yards" is a neighbourhood, not a claim about a number.
+      if (APPROX_CUE.test(sentence.slice(Math.max(0, m.index - 24), m.index + m[0].indexOf(m[1])))) continue;
+      out.push({ cat, value, index: m.index, text: m[0].trim() });
+    }
+  }
+  return out;
+}
+
+function checkStats(
+  field: FieldText,
+  truth: GroundTruth,
+  allow: Set<string>,
+  out: Violation[]
+): void {
+  if (!truth.statsKnown) return;
+  for (const sentence of sentencesOf(field.text)) {
+    const s = sentence.text;
+    if (HYPOTHETICAL_CUE.test(s)) continue;
+    // A past-season or career line is a different number by definition, and since
+    // year-over-year memory started feeding archived seasons into the context, one of these
+    // is now a CORRECT thing for the model to write.
+    if (PRIOR_FRAME_CUE.test(s)) continue;
+
+    const claims = statClaims(s);
+    if (!claims.length) continue;
+    const subjects = peopleInSentence(s, truth, allow);
+    // Exactly one person, or there is no way to know whose line is being stated.
+    if (subjects.length !== 1) continue;
+    const person = subjects[0];
+    if (!person.stats) continue;
+
+    const seasonFramed = SEASON_FRAME_CUE.test(s);
+    const gameFramed = GAME_FRAME_CUE.test(s);
+
+    for (const claim of claims) {
+      const actual = person.stats[claim.cat];
+      if (actual == null) continue;
+
+      if (closeEnough(claim.cat, claim.value, actual)) {
+        // The number is RIGHT — as a season total. Written into a sentence about one game,
+        // that is the single most-reported error in the app: "900+ yards in a single game
+        // with 100+ carries." Needs three games of separation, because through week one a
+        // season total and a game line are legitimately the same number.
+        if (
+          gameFramed &&
+          !seasonFramed &&
+          distinctive(claim.cat, claim.value) &&
+          (person.gamesPlayed ?? 0) >= 3
+        ) {
+          out.push({
+            kind: "season-stat-as-game",
+            severity: "hard",
+            field: field.path,
+            claim: `${person.name}: ${claim.text}`,
+            offset: sentence.offset + claim.index,
+            truth:
+              `${claim.value} is ${person.name}'s SEASON total (${person.gamesPlayed} games), not a game line — ` +
+              `his average game is ${Math.round((actual / (person.gamesPlayed || 1)) * 10) / 10} ${STAT_LABEL[claim.cat]}`,
+            repair: "correct-number",
+          });
+        }
+        continue;
+      }
+
+      // Whose number IS this? An exact hit on another player's season total in the same
+      // category is the swap fingerprint, and it holds regardless of tense.
+      const owner = distinctive(claim.cat, claim.value)
+        ? truth.people.find((p) => p !== person && p.stats?.[claim.cat] === claim.value) ?? null
+        : null;
+
+      if (owner) {
+        out.push({
+          kind: "mixed-stat",
+          severity: "hard",
+          field: field.path,
+          claim: `${person.name}: ${claim.text}`,
+          offset: sentence.offset + claim.index,
+          truth: `${claim.value} ${STAT_LABEL[claim.cat]} is ${owner.name}'s season total — ${person.name} has ${actual}`,
+          repair: "correct-number",
+        });
+        continue;
+      }
+      // Otherwise only a SEASON-framed claim is checkable. The save has no box score, so a
+      // per-game line is invented texture, not a contradiction.
+      if (!seasonFramed || gameFramed) continue;
+      out.push({
+        kind: "wrong-stat",
+        severity: "hard",
+        field: field.path,
+        claim: `${person.name}: ${claim.text}`,
+        offset: sentence.offset + claim.index,
+        truth: `${person.name} has ${actual} ${STAT_LABEL[claim.cat]} this season`,
+        repair: "correct-number",
+      });
+    }
+  }
+}
+
 const PAIR_RE = /\b(\d{1,3})\s*[-–—]\s*(\d{1,3})\b/g;
 
 function checkNumbers(
@@ -814,6 +1153,7 @@ export function validateGeneration(
 
   if (checks.names && !truth.rosterKnown) skipped.push("names (no roster in the save)");
   if (checks.scores && !truth.legalScores.size) skipped.push("scores (no result this week)");
+  if (checks.stats && !truth.statsKnown) skipped.push("stats (no season stat lines in the save)");
 
   const { fields, personas } = collectText(payload, config);
   // Personas declared anywhere in this payload are allowlisted everywhere in it — the
@@ -835,6 +1175,7 @@ export function validateGeneration(
     checkNames(field, truth, allow, checks, violations);
     if (checks.scores || checks.records) checkNumbers(field, truth, checks, violations);
     if (checks.ranks) checkRanks(field, truth, violations);
+    if (checks.stats) checkStats(field, truth, allow, violations);
   }
 
   // One wrong fact is one violation, however many times the piece repeats it. A recap that

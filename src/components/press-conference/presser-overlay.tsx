@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { useSaga } from "@/components/dynasty/use-saga";
-import { issueKey, readTab, writeTab } from "@/lib/dynasty/issue-cache";
+import { readTab, writeTab } from "@/lib/dynasty/issue-cache";
 import { nextOpponent, weekStateOf } from "@/lib/dynasty/week-state";
 import { cn } from "@/lib/utils";
 
@@ -76,7 +76,8 @@ function Delta({ label, v, invert = false }: { label: string; v: number; invert?
 }
 
 export default function PresserOverlay() {
-  const { snapshot, delta, settings, generate, dynastyId, year, week, hasApiKey } = useDynasty();
+  const { snapshot, delta, settings, generate, dynastyId, year, week, hasApiKey, currentIssueKey } =
+    useDynasty();
   const saga = useSaga();
 
   const [open, setOpen] = useState(false);
@@ -84,12 +85,27 @@ export default function PresserOverlay() {
   const [questions, setQuestions] = useState<PCQuestion[]>([]);
   const [record, setRecord] = useState<PresserRecord>({ answers: {} });
   const [generating, setGenerating] = useState(false);
+  // Seconds spent waiting on the provider. A silent spinner is why this screen read as
+  // "hung" — the request now has a deadline, but the user still needs to see it moving.
+  const [waited, setWaited] = useState(0);
+  useEffect(() => {
+    if (!generating) {
+      setWaited(0);
+      return;
+    }
+    const t = setInterval(() => setWaited((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [generating]);
   const [answering, setAnswering] = useState(false);
   const [draft, setDraft] = useState("");
   const [ownWords, setOwnWords] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const weekKey = issueKey(dynastyId, year, week);
+  // The SAME key `generate()` writes the questions under — which carries "::pre" before
+  // kickoff. Keyed by week alone (as this was), a pregame availability and the post-game
+  // presser share one record: give three answers on Tuesday, play the game, reopen, and
+  // Tuesday's answers are sitting under Saturday's questions with the room already "seen".
+  const weekKey = currentIssueKey;
   const state = weekStateOf(snapshot, delta);
   const isPost = state === "game";
   const isPre = state === "pregame";
@@ -103,7 +119,7 @@ export default function PresserOverlay() {
   // week's podium has already had its moment.
   useEffect(() => {
     let cancelled = false;
-    if (checked || !eligible || !hasApiKey) return;
+    if (checked || !eligible || !hasApiKey || !weekKey) return;
     if (settings.presserTakeover === false) return;
     (async () => {
       const [seen, answers, cachedQs] = await Promise.all([
@@ -135,6 +151,7 @@ export default function PresserOverlay() {
   }, [weekKey]);
 
   const markSeen = useCallback(async () => {
+    if (!weekKey) return;
     await writeTab(
       weekKey,
       SEEN_TAB,
@@ -167,6 +184,7 @@ export default function PresserOverlay() {
   const persistRecord = useCallback(
     async (next: PresserRecord) => {
       setRecord(next);
+      if (!weekKey) return;
       await writeTab(
         weekKey,
         ANSWERS_TAB,
@@ -283,10 +301,17 @@ export default function PresserOverlay() {
               </h2>
               {scoreline && <p className="mt-1.5 font-serif text-sm text-ink2">{scoreline}</p>}
             </div>
+            {/* The only way out of a full-screen takeover, previously ink3-on-paper2 with a
+                border a shade off its own background. It has to look like a way out. */}
             <button
               type="button"
               onClick={close}
-              className="shrink-0 rounded border border-dw-border px-3 py-1.5 font-sans text-[10px] uppercase tracking-wider text-ink3 hover:text-ink"
+              className={cn(
+                "shrink-0 rounded border border-paper4 bg-paper3 px-3 py-1.5",
+                "font-sans text-[10px] uppercase tracking-wider text-ink2 transition-colors",
+                "hover:border-ink3 hover:bg-paper4 hover:text-ink",
+                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dw-accent2"
+              )}
             >
               Skip · Esc
             </button>
@@ -322,10 +347,12 @@ export default function PresserOverlay() {
                 disabled={generating}
                 className="mt-6 rounded border border-dw-crimson bg-dw-crimson px-6 py-3 font-sans text-sm uppercase tracking-wider text-paper hover:opacity-90 disabled:opacity-50"
               >
-                {generating ? "They're filing in…" : "Step to the podium"}
+                {generating ? `They're filing in… ${waited}s` : "Step to the podium"}
               </button>
               <p className="mt-3 font-sans text-[10px] uppercase tracking-wider text-ink3">
-                Or skip — you can always take the podium from the Press Conference tab.
+                {generating && waited >= 30
+                  ? "Still waiting on the provider. It gives up on its own if nothing comes back."
+                  : "Or skip — you can always take the podium from the Press Conference tab."}
               </p>
             </div>
           )}
@@ -370,6 +397,12 @@ export default function PresserOverlay() {
               </p>
 
               <div className="mt-6 space-y-2">
+                {/* THESE ARE THE ONLY CONTROLS ON A FULL-SCREEN TAKEOVER, and they used to
+                    be invisible: border #3a3835 on fill #252320 is 1.34:1, and that fill on
+                    the card behind it is 1.11:1 — so an option read as text lying on a flat
+                    panel, with nothing to say it could be clicked. The left rule is the fix
+                    and it's the house's own vocabulary (column rules, rule diamonds): a
+                    burnt-orange edge at 5.4:1, going crimson under the cursor. */}
                 {!ownWords &&
                   (current.answers ?? []).map((a, i) => (
                     <button
@@ -377,7 +410,13 @@ export default function PresserOverlay() {
                       type="button"
                       disabled={answering}
                       onClick={() => void answerScripted(a)}
-                      className="w-full rounded border border-dw-border bg-paper2 px-4 py-3 text-left transition-colors hover:border-dw-crimson/60 disabled:opacity-40"
+                      className={cn(
+                        "group w-full rounded border border-paper4 border-l-[3px] border-l-dw-accent2 bg-paper3",
+                        "px-4 py-3 text-left transition-colors",
+                        "hover:border-l-dw-crimson hover:bg-paper4 hover:border-dw-crimson/50",
+                        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dw-accent2",
+                        "disabled:opacity-40"
+                      )}
                     >
                       <span className="font-sans text-[11px] uppercase tracking-wider text-dw-accent2">{a.label}</span>
                       <p className="mt-1 font-serif text-[15px] leading-snug text-ink">&ldquo;{a.text}&rdquo;</p>
@@ -407,7 +446,7 @@ export default function PresserOverlay() {
                       <button
                         type="button"
                         onClick={() => setOwnWords(false)}
-                        className="rounded border border-dw-border px-4 py-2 font-sans text-[11px] uppercase tracking-wider text-ink3 hover:text-ink"
+                        className="rounded border border-paper4 bg-paper3 px-4 py-2 font-sans text-[11px] uppercase tracking-wider text-ink2 transition-colors hover:border-ink3 hover:text-ink"
                       >
                         Back
                       </button>
@@ -418,7 +457,13 @@ export default function PresserOverlay() {
                     type="button"
                     disabled={answering}
                     onClick={() => setOwnWords(true)}
-                    className="w-full rounded border border-dashed border-dw-border px-4 py-2.5 text-left font-sans text-[11px] uppercase tracking-wider text-ink3 hover:border-dw-accent2/60 hover:text-ink disabled:opacity-40"
+                    className={cn(
+                      "w-full rounded border border-dashed border-ink3/70 bg-paper2 px-4 py-2.5 text-left",
+                      "font-sans text-[11px] uppercase tracking-wider text-ink2 transition-colors",
+                      "hover:border-dw-accent2 hover:text-ink",
+                      "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dw-accent2",
+                      "disabled:opacity-40"
+                    )}
                   >
                     In your own words…
                   </button>

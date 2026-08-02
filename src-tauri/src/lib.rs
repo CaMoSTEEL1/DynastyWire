@@ -10,6 +10,28 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::{Emitter, Manager};
 
+/// Every outbound HTTP call gets a deadline. Without one, a provider that accepts the
+/// connection and then stalls hangs the caller forever — that is what wedged the press
+/// conference: `fillTheRoom` awaited a generation that never returned or errored, and the
+/// only way out of the room was to skip it.
+///
+/// `total` bounds the whole request. Generation is genuinely slow (a thinking model writing
+/// 2,800 tokens), so it gets minutes; metadata calls get seconds. The connect timeout is
+/// short either way, so an unreachable host fails fast instead of burning the full budget.
+fn http_client(total_secs: u64) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(total_secs))
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("building http client: {e}"))
+}
+
+/// Long enough for a slow model to finish a full weekly section, short enough that a stalled
+/// provider surfaces as an error the user can act on.
+const HTTP_GENERATE_SECS: u64 = 240;
+/// Model lists, voice lists — small responses that should never take this long.
+const HTTP_META_SECS: u64 = 30;
+
 /// On Windows, keep spawned console processes (the Node parser) from flashing a window
 /// and stealing focus from the app / whatever the user is doing. No-op elsewhere.
 fn quiet_spawn(cmd: &mut Command) {
@@ -377,7 +399,7 @@ async fn claude_complete(
         vec![model_str]
     };
 
-    let client = reqwest::Client::new();
+    let client = http_client(HTTP_GENERATE_SECS)?;
     let mut last_err = String::new();
 
     // `cache_prefix` is the shared week context, identical across every section of an
@@ -670,7 +692,7 @@ async fn openai_complete(
         body["max_tokens"] = mt.into();
     }
 
-    let client = reqwest::Client::new();
+    let client = http_client(HTTP_GENERATE_SECS)?;
     let res = client
         .post(&url)
         .header("Authorization", format!("Bearer {api_key}"))
@@ -769,7 +791,7 @@ async fn tts_elevenlabs(
     if let Some(next) = next_text.filter(|s| !s.trim().is_empty()) {
         body["next_text"] = serde_json::Value::String(next);
     }
-    let client = reqwest::Client::new();
+    let client = http_client(HTTP_GENERATE_SECS)?;
     let res = client
         .post(&url)
         .header("xi-api-key", &api_key)
@@ -872,7 +894,7 @@ async fn eleven_get_voices(
 /// isn't available for a key, fall back to v1 and filter the premades out here.
 #[tauri::command]
 async fn elevenlabs_list_voices(api_key: String) -> Result<Vec<ElevenVoice>, String> {
-    let client = reqwest::Client::new();
+    let client = http_client(HTTP_META_SECS)?;
     match eleven_get_voices(
         &client,
         "https://api.elevenlabs.io/v2/voices?voice_type=non-default&page_size=100",
@@ -905,7 +927,7 @@ async fn openai_list_models(base_url: String, api_key: String) -> Result<Vec<Str
     let base = base.trim_end_matches("/chat/completions");
     let url = format!("{base}/models");
 
-    let client = reqwest::Client::new();
+    let client = http_client(HTTP_META_SECS)?;
     let res = client
         .get(&url)
         .header("Authorization", format!("Bearer {api_key}"))
@@ -949,7 +971,7 @@ async fn openai_list_models(base_url: String, api_key: String) -> Result<Vec<Str
 
 #[tauri::command]
 async fn anthropic_list_models(api_key: String) -> Result<Vec<String>, String> {
-    let client = reqwest::Client::new();
+    let client = http_client(HTTP_META_SECS)?;
     let res = client
         .get("https://api.anthropic.com/v1/models")
         .header("x-api-key", api_key)

@@ -11,7 +11,7 @@ import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { useIssueTab } from "@/components/dynasty/use-issue-tab";
 import { useSaga } from "@/components/dynasty/use-saga";
 import { SectionHeader } from "@/components/ui/section-header";
-import { issueKey, readTab, writeTab } from "@/lib/dynasty/issue-cache";
+import { readTab, writeTab } from "@/lib/dynasty/issue-cache";
 import { cn } from "@/lib/utils";
 
 interface PCAnswer {
@@ -89,7 +89,7 @@ function DeltaRow({ rec }: { rec: AnswerRec }) {
 }
 
 export default function PressConferencePage() {
-  const { needsOnboarding, generate, dynastyId, year, week } = useDynasty();
+  const { needsOnboarding, generate, dynastyId, year, week, currentIssueKey } = useDynasty();
   const saga = useSaga();
 
   const [questions, setQuestions] = useState<PCQuestion[]>([]);
@@ -101,7 +101,10 @@ export default function PressConferencePage() {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const weekKey = issueKey(dynastyId, year, week);
+  // Phase-scoped, matching the key the questions themselves are cached under: a pregame
+  // availability and the post-game presser are two events in one week, and sharing a record
+  // between them is what put pregame answers under post-game questions on reload.
+  const weekKey = currentIssueKey;
 
   // Restore this week's presser from the persisted issue cache on mount.
   const cached = useIssueTab<PCResult>("press-conference");
@@ -112,12 +115,16 @@ export default function PressConferencePage() {
     }
   }, [cached, questions.length, tried]);
 
-  // Restore answers + grade (per week).
+  // Restore answers + grade for THIS press conference (pregame and post-game are separate).
   useEffect(() => {
     let cancelled = false;
+    if (!weekKey) return;
     (async () => {
       const rec = await readTab<PresserRecord>(weekKey, ANSWERS_TAB);
       if (!cancelled && rec?.data) setRecord(rec.data);
+      // A key change means a different press conference: drop answers that belonged to the
+      // other one rather than leaving them attached to these questions.
+      else if (!cancelled) setRecord({ answers: {} });
     })();
     return () => {
       cancelled = true;
@@ -127,6 +134,7 @@ export default function PressConferencePage() {
   const persistRecord = useCallback(
     async (next: PresserRecord) => {
       setRecord(next);
+      if (!weekKey) return;
       await writeTab(
         weekKey,
         ANSWERS_TAB,
@@ -338,9 +346,18 @@ export default function PressConferencePage() {
                           type="button"
                           disabled={answering}
                           onClick={() => void answerScripted(currentIndex, a)}
-                          className="w-full rounded border border-dw-border bg-paper px-4 py-3 text-left transition-colors hover:border-dw-accent/60 hover:bg-paper3 disabled:opacity-40"
+                          // Same treatment as the podium takeover — the two rooms must not
+                          // diverge, and this had the identical problem: a 1.34:1 border on
+                          // a 1.11:1 fill reads as a paragraph, not an option.
+                          className={cn(
+                            "w-full rounded border border-paper4 border-l-[3px] border-l-dw-accent2 bg-paper3",
+                            "px-4 py-3 text-left transition-colors",
+                            "hover:border-dw-accent/50 hover:border-l-dw-accent hover:bg-paper4",
+                            "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dw-accent2",
+                            "disabled:opacity-40"
+                          )}
                         >
-                          <span className="font-sans text-[10px] uppercase tracking-wider text-ink3">{a.label}</span>
+                          <span className="font-sans text-[10px] uppercase tracking-wider text-dw-accent2">{a.label}</span>
                           <p className="mt-0.5 font-serif text-sm text-ink leading-snug">&ldquo;{a.text}&rdquo;</p>
                         </button>
                       ))}

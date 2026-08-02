@@ -234,6 +234,20 @@ function resolveUserTeam(teams, opts) {
   return null; // no explicit match; caller falls back to coach detection then heuristic
 }
 
+/**
+ * The coach's real job security. `CurrentJobSecurityStatus` first; the season-start field is
+ * only a fallback, because it is stale by definition and often the sentinel "Invalid".
+ * Returns null rather than a sentinel — "we don't know" must not read as a status.
+ */
+function pickJobSecurity(r) {
+  const bad = /^(invalid|none|unknown|)$/i;
+  const current = str(r, 'CurrentJobSecurityStatus');
+  if (current && !bad.test(current.trim())) return current;
+  const atStart = str(r, 'SeasonStartJobSecurityStatus');
+  if (atStart && !bad.test(atStart.trim())) return atStart;
+  return null;
+}
+
 // Detect all human coaches via the real CFB27 schema: Coach.IsUserControlled === true.
 // Returns an array of { teamIndex, coachName, ... } objects.
 function detectUserCoaches(coachTable) {
@@ -258,18 +272,98 @@ function detectUserCoaches(coachTable) {
         // against a real save. Coordinator careers get coordinator-shaped press coverage.
         position: str(r, 'Position'),
         archetype: str(r, 'DominantArchetype'),
-        jobSecurity: str(r, 'SeasonStartJobSecurityStatus'),
-        fireReported: safeBool(r, 'COACH_FIREREPORTED'),
+        // JOB SECURITY — read the LIVE field, not the season-start one.
+        //
+        // `SeasonStartJobSecurityStatus` is a snapshot taken before the season and reads the
+        // sentinel "Invalid" for a chunk of the league (7 of 145 head coaches in a real save,
+        // including the user's). `CurrentJobSecurityStatus` is the live value and was "Safe"
+        // for the same coach — a 14-0 season with 100% security being reported as unknown is
+        // what sent hot-seat talk into a perfect year.
+        jobSecurity: pickJobSecurity(r),
+        jobSecurityPct: num(r, 'CurrentJobSecurityPercentage'),
+        // COACH_FIREREPORTED is NOT a fire signal: it reads `true` for all 145 head coaches
+        // in a live save, user included. It carries no information, so it is not parsed.
+        // (The field is kept optional on the type so older cached snapshots still deserialize.)
         performanceLevel: num(r, 'COACH_PERFORMANCELEVEL'),
         age: num(r, 'Age'),
         awardPoints: num(r, 'AwardPoints'),
         careerWinSeasons: num(r, 'CareerWinSeasons'),
         careerPlayoffs: num(r, 'CareerPlayoffsMade'),
         careerLongWinStreak: num(r, 'CareerLongWinStreak'),
+        // Tenure + standing. SeasonsWithTeam is 0 in a first season, which is meaningful and
+        // must not be confused with "unknown" — the résumé block distinguishes them.
+        yearsCoaching: num(r, 'YearsCoaching'),
+        seasonsWithTeam: num(r, 'SeasonsWithTeam'),
+        prestige: str(r, 'CoachPrestige'),
+        prestigeScore: num(r, 'CoachPrestigeScore'),
+        almaMater: str(r, 'AlmaMater'),
+        // HomeTown is a table reference, not a string — it reads back as a raw 32-bit
+        // binary blob. HomeState is a real enum and is the usable half.
+        homeState: str(r, 'HomeState'),
+        contractYearsRemaining: num(r, 'ContractYearsRemaining'),
+        contractExpectation: str(r, 'CurrentContractExpectation'),
+        // The record the media actually cares about — resolved below from CareerStats.
+        _careerStatsRec: r,
+        career: null,
       });
     }
   }
   return coaches;
+}
+
+/**
+ * The coach's RÉSUMÉ, from `Coach.CareerStats` -> the `CareerCoachStats` row.
+ *
+ * This is the answer to "does the beat know whether he's won one title or five" — and it is
+ * real data, verified against a live save: the row carries NCWins/NCLosses (national
+ * titles), ConfChampWins, BowlWins, PlayoffWins, the career W-L, and — separately —
+ * WinsAtCurrentSchool/LossesAtCurrentSchool, which is his record with THIS program rather
+ * than everywhere he has been. Those two must never be collapsed: a coach hired away from
+ * another school has a career record that says nothing about his tenure here.
+ *
+ * Same reference pattern as Player.SeasonStats: `fields[name].referenceData` gives
+ * {tableId, rowNumber}, which beats parsing the 32-bit binary string by hand.
+ */
+async function resolveCoachCareer(f, coachRec) {
+  if (!f || !coachRec) return null;
+  let ref = null;
+  try {
+    const fld = coachRec.fields['CareerStats'];
+    ref = fld && fld.referenceData && fld.referenceData.tableId ? fld.referenceData : null;
+  } catch (e) {
+    return null;
+  }
+  if (!ref) return null;
+  const t = f.tables.find((x) => x.header && x.header.tableId === ref.tableId);
+  if (!t) return null;
+  await readRecords(t);
+  const rec = t.records && t.records[ref.rowNumber];
+  if (!rec) return null;
+  const g = (name) => num(rec, name);
+  return {
+    wins: g('Wins'),
+    losses: g('Losses'),
+    winsAtSchool: g('WinsAtCurrentSchool'),
+    lossesAtSchool: g('LossesAtCurrentSchool'),
+    // National titles. RecentYearNCWon is -2 when he has never won one.
+    natTitles: g('NCWins'),
+    natTitleLosses: g('NCLosses'),
+    recentTitleYear: g('RecentYearNCWon'),
+    confTitles: g('ConfChampWins'),
+    confTitleLosses: g('ConfChampLosses'),
+    bowlWins: g('BowlWins'),
+    bowlLosses: g('BowlLosses'),
+    playoffWins: g('PlayoffWins'),
+    playoffLosses: g('PlayoffLosses'),
+    top25Wins: g('Top25Wins'),
+    top25Losses: g('Top25Losses'),
+    rivalWins: g('RivalWins'),
+    rivalLosses: g('RivalLosses'),
+    timesFired: g('TimesFired'),
+    top5Classes: g('Top5RecruitClasses'),
+    draftPicks: g('DraftPicks'),
+    firstRoundPicks: g('FirstRoundDraftPicks'),
+  };
 }
 
 // Every program's REAL head coach from the save: teamIndex -> "First Last". Feeds the
@@ -299,7 +393,10 @@ async function buildSnapshot(pathOrFile, opts = {}) {
     r: opts.userTeamRow ?? null,
     c: opts.coachName || null,
   });
-  const cf = isPath ? cacheFile(pathOrFile, `snap|v6|${optKey}`) : null;
+  // v7: coach résumé (career record, national/conference titles, record at THIS school).
+  // v8: live job security (CurrentJobSecurityStatus/Percentage) instead of the stale
+  //     season-start field; COACH_FIREREPORTED dropped as meaningless.
+  const cf = isPath ? cacheFile(pathOrFile, `snap|v8|${optKey}`) : null;
   if (cf) {
     const cached = readCache(cf);
     if (cached) return cached;
@@ -330,6 +427,13 @@ async function buildSnapshot(pathOrFile, opts = {}) {
   if (!userCoach && userCoaches.length > 0) {
     userCoach = userCoaches[0];
   }
+
+  // The résumé, once we know WHICH coach is the user's. Resolved here rather than in
+  // detectUserCoaches so we follow exactly one reference instead of one per human coach.
+  if (userCoach) {
+    userCoach.career = await resolveCoachCareer(f, userCoach._careerStatsRec);
+  }
+  for (const c of userCoaches) delete c._careerStatsRec; // never serialize a parser record
 
   // If we still don't have a team, but we have a user coach, use the coach's team
   if (userTeamRow == null && userCoach && userCoach.teamIndex != null) {

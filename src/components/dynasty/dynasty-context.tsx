@@ -42,7 +42,7 @@ import { generateInApp } from "@/lib/dynasty/gen";
 import { teamsToLoad } from "@/lib/dynasty/national";
 import { loadSaga } from "@/lib/dynasty/saga-store";
 import { enforceSuspensions, loadSuspensions, isActive, weeksLeft } from "@/lib/dynasty/suspensions";
-import { buildSeasonRecord, upsertSeason } from "@/lib/dynasty/archive";
+import { buildSeasonRecord, loadArchive, upsertSeason } from "@/lib/dynasty/archive";
 import { disburseWeekly } from "@/lib/dynasty/deals";
 import {
   ISSUE_TABS,
@@ -53,10 +53,12 @@ import {
 } from "@/lib/dynasty/issue";
 import {
   loadIssue,
+  loadIssueLive,
   readTab,
   writeTab,
   type Issue,
 } from "@/lib/dynasty/issue-cache";
+import { isUpdateHeld, useUpdateHold } from "@/lib/dynasty/update-hold";
 
 export type IssueStatus =
   | "idle" // nothing written this week yet (on-demand mode, or pre-generation)
@@ -82,6 +84,16 @@ interface DynastyContextValue {
   dynastyId: string;
   year: number;
   week: number;
+  /**
+   * The cache key `generate()` reads and writes. It carries a "::pre" suffix before kickoff,
+   * because a pregame availability and a post-game press conference are two different events
+   * inside one week — and anything that persists per-event (answers, "already seen") has to
+   * be keyed the same way or the pregame record turns up attached to the post-game questions.
+   * Null until a dynasty is loaded. Week-scoped side channels (brand deals, scouting, the
+   * Situation Room's impact) deliberately use `issueKey()` instead: those belong to the week,
+   * not to one press conference.
+   */
+  currentIssueKey: string | null;
   // ---- Multi-dynasty ----
   dynasties: DynastyProfile[];
   activeDynastyId: string | null;
@@ -204,6 +216,10 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
   const [beforePath, setBeforePath] = useState<string | null>(null);
   const [issue, setIssue] = useState<Issue | null>(null);
   const [issueStatus, setIssueStatus] = useState<IssueStatus>("idle");
+  // True while an update prompt is waiting on the user. The eager pass stands down: an
+  // unanswered prompt is a restart waiting to happen, and anything written in the meantime
+  // is billed and then discarded. User-initiated generation is unaffected.
+  const updateHeld = useUpdateHold();
 
   // Load persisted settings once on mount.
   useEffect(() => {
@@ -601,6 +617,11 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
               }))
           )
           .catch(() => []);
+        // Year-over-year memory. The Season Archive is the only durable record of past
+        // seasons — the save drops a player's prior-year rows the moment he leaves — so it
+        // rides into every generator the same way suspensions do, as locked fact. The
+        // current season is filtered out downstream, in history.ts.
+        const priorSeasons = await loadArchive(dynastyId).catch(() => []);
         // The national desk names players on OTHER programs, so it needs their rosters —
         // and each one is a full re-parse of a ~10MB save, far too slow to load eagerly for
         // every team. Fetch only the handful the desk will actually cover, only when it
@@ -629,6 +650,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
           oppRoster,
           backstory,
           suspensions,
+          priorSeasons,
         });
         // Don't cache a generator's own error payload — let the next visit retry.
         const isErr = !!(
@@ -687,6 +709,17 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       // the single biggest lever on the per-week API spend that was blowing through budgets.
       const eager = eagerTabs(settings);
       for (const tab of eager) {
+        // Checked before every section, not just at the start: the update prompt lands a
+        // few seconds after launch, by which time this loop is usually already running.
+        // Stopping at a section boundary — before seeding, never mid-request — means the
+        // work done so far is kept and nothing is billed for a section that a restart
+        // would throw away. The pass resumes when the prompt is answered.
+        if (isUpdateHeld()) {
+          const paused = await loadIssue(currentIssueKey);
+          setIssue(paused ? { ...paused } : null);
+          setIssueStatus(computeStatus(paused, eager));
+          return;
+        }
         const existing = await readTab(currentIssueKey, tab.kind);
         if (!force && existing?.status === "ready") continue;
         const seeded = await writeTab(
@@ -759,11 +792,18 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
     }
     let cancelled = false;
     (async () => {
-      const cached = await loadIssue(currentIssueKey);
+      // loadIssueLive, not loadIssue: anything still marked "generating" was orphaned by a
+      // process that no longer exists (the update relaunch, a crash, or the hard navigation
+      // every tab switch performs). Left alone it reads as permanently writing AND makes
+      // auto-write skip it as already busy.
+      const cached = await loadIssueLive(currentIssueKey);
       if (cancelled) return;
       setIssue(cached);
       setIssueStatus(computeStatus(cached, eagerTabs(settings)));
       const auto = settings.autoGenerate !== false; // default-on
+      // Don't open the tap while an update prompt is waiting — see update-hold.ts. This
+      // effect re-runs when the hold clears, which is what resumes the pass.
+      if (updateHeld) return;
       // "Complete" is measured against the sections that actually auto-write (the user's
       // checkboxes, or the default set) — otherwise auto-write would re-fire forever
       // chasing lazy tabs.
@@ -775,7 +815,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [currentIssueKey, settings, hasApiKey]);
+  }, [currentIssueKey, settings, hasApiKey, updateHeld]);
 
   const value = useMemo<DynastyContextValue>(
     () => ({
@@ -792,6 +832,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       dynastyId,
       year,
       week,
+      currentIssueKey,
       dynasties: settings.dynasties ?? [],
       activeDynastyId: activeProfile?.id ?? settings.activeDynastyId ?? null,
       addDynasty,
@@ -819,6 +860,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       dynastyId,
       year,
       week,
+      currentIssueKey,
       activeProfile,
       addDynasty,
       switchDynasty,

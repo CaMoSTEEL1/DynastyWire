@@ -63,18 +63,94 @@ Decisions below came out of a full design interview. Each one is a commitment, n
   the shared context still carries the no-game weeks, which gain only the locked stakes.
   31 core tests plus 10 asserting the rendered prompt.
 
+- *Step 2 (cont.) — the stat check (done).* The gap named below is closed: `validator.ts`
+  now carries every player's SEASON-TO-DATE totals as ground truth and checks stat lines
+  stated in prose against them. Two kinds:
+
+  - **`mixed-stat`** — the number is exactly some OTHER player's season total in the same
+    category. That is the swap fingerprint, it is the complaint the community actually
+    filed, and it holds in any tense.
+  - **`wrong-stat`** — an explicitly SEASON-framed line ("2,600 yards this season") that
+    contradicts that player's real total.
+
+  **What it deliberately does NOT check, and why the whole design bends around it:** the
+  save has season totals and a final score. *It has no box score.* So "he ran for 120
+  tonight" is invented per-game texture the house style asks for — not a contradiction — and
+  flagging it would recreate the false-positive disaster of the first baseline run. A
+  per-game line is therefore only catchable by the swap fingerprint, never by comparison.
+  The check also stays silent on hedges ("nearly 1,400"), on rounding (2,600 for 2,588),
+  on sentences naming two players (whose line is it?), and on **prior-season and career
+  claims** — which year-over-year memory has now made a *correct* thing for the model to
+  write. 11 regression tests, including one asserting the phrases actually parse: a pattern
+  that silently matches nothing would make every "stays silent" case pass for the wrong
+  reason, which is exactly how the pre-baseline fixtures caught none of the real bugs.
+
+- *Step 3 (cont.) — the stakes port (2026-08-01, from a tester report).* One tester's first
+  season produced three complaints that are all the same bug, and it is the thesis of this
+  document restated: **the context stated the WEEK and left the STAKES to the model.**
+
+  > "the wire will not stop referring to my bowl game (New Orleans Bowl) as a first round
+  > playoff matchup. Wouldn't stop bringing up that the team was 'fighting for bowl
+  > eligibility' while we were already Bowl Eligible, and seemed to think my, at the time,
+  > 7-3 Sun Belt team was 'fighting for a playoff spot' while unranked the entire season, and
+  > would always try and say we're pushing for a New Years Six Bowl appearance."
+
+  `computePhase` mapped `BowlSeason1` straight onto "Playoff First Round". But that week type
+  means *the postseason has started*, not *the playoff bracket has started* — and ~120 of 134
+  teams spend it in an ordinary bowl. **The default was wrong for almost every team in the
+  game.** Everything downstream inherited it: `rankings` literally asserted "$SCHOOL is IN
+  the College Football Playoff", social got "it's the playoff", and the presser note told
+  every November team the CFP picture was live.
+
+  `src/lib/dynasty/postseason.ts` now computes it. Bowl eligibility is arithmetic on the
+  record and the *regular-season* schedule (a scheduled bowl game must never read as another
+  chance to become bowl eligible). Playoff membership is the CFP poll against a field size
+  derived from the save's own postseason length. `weekShape()` is shared by the phase and the
+  outlook so the two can never disagree about whether it is even the postseason — the same
+  discipline `teamsToLoad()` uses. `PhaseInfo.playoffGame` replaced every
+  `phase.key === "postseason"` that meant "in the bracket". 14 tests, fixtured as an unranked
+  Group of Five team, because that is the majority case the old default got wrong.
+
+- *Step 3 (cont.) — season totals as game lines.* The same report:
+
+  > "in previews and game recaps, the wire is almost always stating season stats as if they
+  > were the game stats, ex. saying my running back had 900+ yards in a single game with
+  > 100+ carries"
+
+  The prompt had already spent six lines forbidding exactly this, in capitals, and it kept
+  happening — which is the clearest possible evidence for the thesis. The reason is
+  structural: **a recap is about ONE game, the save has no box score, and the only number on
+  the page is a cumulative total.** The writer isn't ignoring the rule; he has nothing else
+  to reach for.
+
+  So the fix is not another rule. Code now computes the **per-game average** and hands it
+  over labelled as one ("HIS AVERAGE GAME (total ÷ 8, use THIS to describe a single game)"),
+  and every total is prefixed at the point of the number rather than in a header forty
+  players earlier. The validator gained `season-stat-as-game`, which fires when a game-framed
+  sentence quotes a player's exact season total (with three games of separation, since in
+  week one they are legitimately the same number) — so the fix is measurable instead of
+  hoped for.
+
 **Where this leaves the plan.** The port is done and measured, and the measurement does not
 support porting the other six yet — not because they look fine, but because the instrument
-is too narrow to rank them. Two things have to happen before step 3 continues:
+was too narrow to rank them. The instrument is now wider; what is still missing is sample.
 
-1. **Widen the checker to the failure the community actually reported.** "Mixed stats" is
-   the complaint `recap-lead` earned, and nothing in the validator tests it. A stat line
-   attributed in prose can be checked against that player's season totals — that check does
-   not exist. Until it does, a clean score means little.
+1. ~~**Widen the checker to the failure the community actually reported.**~~ Done — see
+   step 2 (cont.) above, plus `season-stat-as-game`. The remaining honest caveat: the stat
+   check can only fire where the save carries a stat line (top-40 players), and a *prior*-
+   season stat claim is skipped rather than verified, because `buildGroundTruth` does not yet
+   hold archived seasons.
+
+   **There is no checker for the stakes.** Bowl-vs-playoff, "fighting for eligibility" and
+   New Year's Six talk are all now stated correctly in the context, but nothing detects the
+   model contradicting them — that would need phrase-level checks against
+   `outlook.standing`, and it is the obvious next widening.
 2. **Get a bigger sample.** 23 pieces and 2 violations cannot separate two prompts. The
    observe-only wiring already records every generation the user makes, so this accrues for
    free during normal play — read it at Settings → Fact-check baseline rather than paying
-   for another synthetic run.
+   for another synthetic run. **The baseline predating the stat check is not comparable to
+   the one after it** — the instrument changed, so re-measure from a clean slate before
+   reading any movement as improvement.
 
 Decision #8's gate (< 0.5 per piece on the cheap model) is *already met* on this surface by
 the current numbers, which is a signal the gate is calibrated against the wrong thing rather
@@ -150,6 +226,10 @@ because the model confabulated prior seasons; under locked facts it's just anoth
 and the Season Archive (shipped v0.1.8) already holds the data. Low marginal cost, and it
 gives v2 something users can see.
 
+**SHIPPED** — `src/lib/dynasty/history.ts` renders the PRIOR SEASONS block and it rides the
+shared (prompt-cached) context, so the marginal cost is ~$0. Details and guardrails in
+`DESIGN-season-archive.md` → Build status → Phase B.
+
 ### 7. Rollout = big-bang v2.0
 One loud release, matching what the community was already promised.
 
@@ -215,9 +295,10 @@ generated text → expected violations), since it's pure logic over known inputs
 
 ## First moves
 
-1. Build the validator (observe-only) + fixture tests. Run it against current generators.
-2. Publish the baseline privately: violations per piece, per surface, per model.
-3. Port the 7 in measured-worst-first order.
+1. ~~Build the validator (observe-only) + fixture tests. Run it against current generators.~~ **done**
+2. ~~Publish the baseline privately: violations per piece, per surface, per model.~~ **done**
+   (and widened with the stat check — re-measure from scratch)
+3. Port the 7 in measured-worst-first order. **2 of 7: `recap-lead`, `national-wire`.**
 4. Add per-kind model routing.
-5. Layer year-over-year memory on the locked-facts pattern.
+5. ~~Layer year-over-year memory on the locked-facts pattern.~~ **done**
 6. Ship when the gate is met.

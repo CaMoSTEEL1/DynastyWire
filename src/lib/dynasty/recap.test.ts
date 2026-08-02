@@ -267,8 +267,28 @@ describe("recapCast", () => {
   it("labels every number as a season total, never tonight's line", () => {
     const cast = recapCast({ roster: ROSTER, team: "Coastal Carolina", game });
     const qb = cast.find((c) => c.name === "Dorian Whitfield")!;
-    expect(qb.seasonLine).toBe("season to date: 2210 pass yds, 19 TD, 5 INT");
+    expect(qb.seasonLine).toBe("SEASON TOTALS (not one game): 2210 pass yds, 19 TD, 5 INT");
     expect(qb.role).toBe("So quarterback");
+  });
+
+  it("also hands over the per-game average, which is the number a game story needs", () => {
+    // The label alone has never been enough: a recap is about ONE game, the save has no box
+    // score, and a writer with only a cumulative total on the page uses it as tonight's line
+    // ("900+ yards in a single game with 100+ carries", from a real save). This is the true
+    // number he can build that sentence on.
+    const cast = recapCast({ roster: ROSTER, team: "Coastal Carolina", game });
+    const rb = cast.find((c) => c.name === "Kellen Marsh")!;
+    expect(rb.perGame).toBe("his AVERAGE game (÷8): 117.5 rush yds");
+  });
+
+  it("omits the average when one game cannot be told apart from the season", () => {
+    const wk1 = [
+      {
+        ...ROSTER[2],
+        stats: { side: "offense" as const, gamesPlayed: 1, gamesStarted: 1, offense: { gamesPlayed: 1, gamesStarted: 1, rushYds: 118, rushTDs: 2 } },
+      },
+    ];
+    expect(recapCast({ roster: wk1, team: "Coastal Carolina", game })[0].perGame).toBeNull();
   });
 
   it("leaves the kicker out of a two-score game", () => {

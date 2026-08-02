@@ -21,7 +21,11 @@ const CATEGORIES =
 
 async function generate(ctx, apiKey, extra) {
   const coach = ctx.snapshot && ctx.snapshot.coach ? ctx.snapshot.coach : null;
-  const security = coach && coach.jobSecurity ? coach.jobSecurity : 'unknown';
+  // "unknown" invited hot-seat drama into a perfect season. The save's live status is either
+  // known and stated, or explicitly off-limits — never a blank for the model to fill.
+  const security = coach && coach.jobSecurity
+    ? `${coach.jobSecurity}${typeof coach.jobSecurityPct === 'number' ? ` (${coach.jobSecurityPct}% job security)` : ''}`
+    : 'NOT STATED IN THE SAVE — do NOT invent hot-seat pressure, an ultimatum, or a job in danger';
   const backstory = extra && extra.backstory;
 
   const backstoryContext = backstory

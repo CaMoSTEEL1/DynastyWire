@@ -54,6 +54,31 @@ export async function loadIssue(key: string): Promise<Issue | null> {
 }
 
 /**
+ * Load a week's issue, clearing tabs that were left mid-write.
+ *
+ * A tab is seeded `generating` before its request goes out and resolved when it comes back.
+ * If the process dies in between — the updater swapping the exe and relaunching, a crash, or
+ * simply the hard page navigation the nav uses on every tab switch — that seed is never
+ * resolved and the tab reads "writing…" forever. A tester watched exactly this across an
+ * update: the issue sat queued, and only started moving again once something happened to
+ * re-trigger the pass.
+ *
+ * Any `generating` tab found at LOAD time is stale by construction: nothing can still be in
+ * flight, because whatever was generating it no longer exists. So drop it — the week reads
+ * honestly as not-yet-written, and auto-write picks it up instead of skipping a tab that
+ * looks busy.
+ */
+export async function loadIssueLive(key: string): Promise<Issue | null> {
+  const issue = await loadIssue(key);
+  if (!issue) return null;
+  const stale = Object.keys(issue.tabs).filter((k) => issue.tabs[k]?.status === "generating");
+  if (!stale.length) return issue;
+  for (const k of stale) delete issue.tabs[k];
+  await persist(issue);
+  return issue;
+}
+
+/**
  * Every stored issue for a dynasty, newest week first — the backing list for the Archive.
  * Pregame editions (key suffix "::pre") are folded out: the archive shows the week as it
  * finished, not the preview that preceded it.

@@ -8,11 +8,19 @@
 // voice out of the product.
 
 import { describe, expect, it } from "vitest";
-import type { DynastySnapshot, RosterPlayer, TeamInfo, WeekDelta } from "./client";
+import type {
+  DynastySnapshot,
+  RosterPlayer,
+  RosterStats,
+  RosterStatsSide,
+  TeamInfo,
+  WeekDelta,
+} from "./client";
 import {
   buildGroundTruth,
   collectText,
   configFor,
+  statClaims,
   validateGeneration,
   type GroundTruth,
 } from "./validator";
@@ -37,22 +45,46 @@ const team = (over: Partial<TeamInfo> & { row: number; name: string }): TeamInfo
   ...over,
 });
 
-const P = (name: string, position: string, overall = 80): RosterPlayer => ({
+// Season-to-date lines, in the parser's real shape: the active side is written BOTH nested
+// and flattened onto the wrapper.
+const stats = (side: RosterStats["side"], vals: Partial<RosterStatsSide>): RosterStats => {
+  const block: RosterStatsSide = { gamesPlayed: 8, gamesStarted: 8, ...vals };
+  return {
+    side,
+    gamesPlayed: 8,
+    gamesStarted: 8,
+    offense: side === "offense" ? block : null,
+    defense: side === "defense" ? block : null,
+    kicking: side === "kicking" ? block : null,
+    ...vals,
+  };
+};
+
+const P = (
+  name: string,
+  position: string,
+  overall = 80,
+  line: RosterStats | null = null
+): RosterPlayer => ({
   name,
   position,
   year: "JR",
   overall,
   jersey: null,
+  stats: line,
 });
 
 const OURS: RosterPlayer[] = [
-  P("Dorian Whitfield", "QB", 87),
-  P("Kellen Marsh", "HB", 84),
-  P("Trey Vandiver", "WR", 82),
-  P("Isaiah Pruitt", "LB", 85),
+  P("Dorian Whitfield", "QB", 87, stats("offense", { passYds: 2588, passTDs: 21, passInts: 6, rushYds: 210, rushTDs: 3 })),
+  P("Kellen Marsh", "HB", 84, stats("offense", { rushYds: 984, rushAtt: 214, rushTDs: 11, recCatches: 22, recYds: 180 })),
+  P("Trey Vandiver", "WR", 82, stats("offense", { recYds: 712, recTDs: 7, recCatches: 48 })),
+  P("Isaiah Pruitt", "LB", 85, stats("defense", { tackles: 71, sacks: 6, ints: 2 })),
 ];
 
-const THEIRS: RosterPlayer[] = [P("Jamal Reed", "LB", 88), P("Cortez Bly", "QB", 86)];
+const THEIRS: RosterPlayer[] = [
+  P("Jamal Reed", "LB", 88, stats("defense", { tackles: 63, sacks: 9 })),
+  P("Cortez Bly", "QB", 86, stats("offense", { passYds: 1900, passTDs: 14 })),
+];
 
 const SNAPSHOT: DynastySnapshot = {
   week: 8,
@@ -373,6 +405,118 @@ describe("never punishes invention", () => {
   });
 });
 
+// ── Stat consistency ────────────────────────────────────────────────────────────
+// "Mixed stats" is the complaint recap-lead actually earned, and until this check landed
+// nothing tested it. The hard part is not catching a wrong number — it is NOT catching the
+// invented per-game line, which is exactly what the house style asks the writer for. The
+// save has season totals and a final score; it has no box score.
+
+describe("stat consistency", () => {
+  const claims = (body: string) =>
+    validateGeneration("recap-lead", recap(body), truth).violations;
+
+  // Every "stays silent" case below is only meaningful if the phrase was actually PARSED.
+  // A pattern that quietly matches nothing makes all of them pass for the wrong reason —
+  // which is how the pre-baseline fixtures managed to catch none of the real bugs.
+  it("binds the number to the category the verb states", () => {
+    expect(statClaims("Whitfield has thrown for 2,600 yards this season")).toEqual([
+      expect.objectContaining({ cat: "passYds", value: 2600 }),
+    ]);
+    expect(statClaims("Marsh ran for 120 yards on the night")).toEqual([
+      expect.objectContaining({ cat: "rushYds", value: 120 }),
+    ]);
+    expect(statClaims("Pruitt had two sacks in the win")).toEqual([
+      expect.objectContaining({ cat: "sacks", value: 2 }),
+    ]);
+    expect(statClaims("Marsh is nearly 1,400 rushing yards into this season")).toEqual([]);
+  });
+
+  it("flags a number that is actually another player's season total", () => {
+    const v = claims("Whitfield threw for 1,900 yards, and the offense finally looked whole.");
+    expect(v).toHaveLength(1);
+    expect(v[0].kind).toBe("mixed-stat");
+    expect(v[0].truth).toContain("Cortez Bly");
+    expect(v[0].repair).toBe("correct-number");
+  });
+
+  it("flags a season-framed line that contradicts the player's season total", () => {
+    const v = claims("Marsh has 1,400 rushing yards this season, and the line deserves half of it.");
+    expect(v).toHaveLength(1);
+    expect(v[0].kind).toBe("wrong-stat");
+    expect(v[0].truth).toBe("Kellen Marsh has 984 rushing yards this season");
+  });
+
+  it("flags a spelled-out season count", () => {
+    expect(claims("On the season Whitfield has thrown for four touchdowns.").map((v) => v.kind))
+      .toEqual(["wrong-stat"]);
+  });
+
+  it("stays silent on an invented per-game line — the save has no box score", () => {
+    expect(claims("Marsh ran for 120 yards on the night and never came off the field.")).toEqual([]);
+    expect(claims("Pruitt had two sacks in the win.")).toEqual([]);
+  });
+
+  // The single most-reported error in the app, verbatim from a tester: "my running back had
+  // 900+ yards in a single game with 100+ carries."
+  it("flags a season total written as what a player did in one game", () => {
+    const v = claims("Marsh ran for 984 yards on the night, carrying it 214 times.");
+    expect(v.map((x) => x.kind)).toEqual(["season-stat-as-game", "season-stat-as-game"]);
+    expect(v[0].truth).toContain("SEASON total (8 games)");
+    expect(v[0].truth).toContain("average game is 123");
+  });
+
+  it("catches it through a rounded retelling too", () => {
+    expect(claims("Whitfield threw for 2,600 yards in the win.").map((x) => x.kind)).toEqual([
+      "season-stat-as-game",
+    ]);
+  });
+
+  it("does not fire on a season-framed statement of the same number", () => {
+    expect(claims("Marsh has 984 rushing yards this season.")).toEqual([]);
+  });
+
+  it("does not fire before a season total and a game line can differ", () => {
+    // Week one: his season total IS his game line, and flagging that would be nonsense.
+    const wk1 = buildGroundTruth({
+      snapshot: SNAPSHOT,
+      delta: DELTA,
+      roster: [P("Kellen Marsh", "HB", 84, { ...stats("offense", { rushYds: 118 }), gamesPlayed: 1 })],
+    });
+    expect(
+      validateGeneration("recap-lead", recap("Marsh ran for 118 yards on the night."), wk1).violations
+    ).toEqual([]);
+  });
+
+  it("stays silent when the writer rounds", () => {
+    expect(claims("Whitfield has thrown for 2,600 yards this season.")).toEqual([]);
+  });
+
+  it("stays silent on a hedged number", () => {
+    expect(claims("Marsh is nearly 1,400 rushing yards into this season.")).toEqual([]);
+  });
+
+  it("stays silent on a PRIOR season — the archive makes those legitimate now", () => {
+    expect(claims("Marsh ran for 1,450 yards last season before the injury.")).toEqual([]);
+    expect(claims("Whitfield threw for 900 yards as a freshman.")).toEqual([]);
+  });
+
+  it("stays silent when two players share the sentence and the line can't be assigned", () => {
+    expect(claims("Whitfield and Vandiver combined for 96 receiving yards this season.")).toEqual([]);
+  });
+
+  it("stays silent when the save carries no line for that category", () => {
+    // Pruitt is a defender; the save has no passing line for him to contradict.
+    expect(claims("Pruitt has 300 passing yards this season.")).toEqual([]);
+  });
+
+  it("reports the stat check as skipped rather than clean when no stat lines exist", () => {
+    const blind = buildGroundTruth({ snapshot: SNAPSHOT, delta: DELTA, roster: [P("Dorian Whitfield", "QB")] });
+    const report = validateGeneration("recap-lead", recap("Whitfield has 4,000 passing yards this season."), blind);
+    expect(report.violations).toHaveLength(0);
+    expect(report.skipped).toContain("stats (no season stat lines in the save)");
+  });
+});
+
 // ── Honest reporting ────────────────────────────────────────────────────────────
 
 describe("report", () => {
@@ -383,6 +527,7 @@ describe("report", () => {
     expect(report.skipped).toEqual([
       "names (no roster in the save)",
       "scores (no result this week)",
+      "stats (no season stat lines in the save)",
     ]);
   });
 

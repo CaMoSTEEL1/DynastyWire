@@ -305,6 +305,8 @@ export interface CastMember {
   role: string;
   /** Season-to-date production, explicitly framed as such. Null when he has no stat line. */
   seasonLine: string | null;
+  /** His per-game average, so a story about ONE game has a true number to reach for. */
+  perGame: string | null;
   /** Why code put him on the list — the angle that is legitimately available. */
   why: string;
   /** Plays verified from the user's own footage. These DID happen in this game. */
@@ -322,6 +324,30 @@ function side(p: RosterPlayer, key: "offense" | "defense" | "kicking") {
   const nested = s[key];
   if (nested) return nested;
   return s.side === key ? (s as unknown as NonNullable<typeof nested>) : null;
+}
+
+/**
+ * The per-game average. A recap is ABOUT one game, and the save has no box score — so with
+ * only a cumulative total on the page the writer uses it as tonight's line ("900 yards and
+ * 100 carries in a single game", from a real save). This is the honest number he can build
+ * that sentence on, and it says what it is.
+ */
+function perGameOf(p: RosterPlayer): string | null {
+  const gp = p.stats?.gamesPlayed ?? null;
+  if (gp == null || gp < 2) return null;
+  const o = side(p, "offense");
+  const d = side(p, "defense");
+  const avg = (v: number | null | undefined) => (typeof v === "number" && v ? Math.round((v / gp) * 10) / 10 : null);
+  const bits: string[] = [];
+  const pass = avg(o?.passYds);
+  const rush = avg(o?.rushYds);
+  const rec = avg(o?.recYds);
+  const tkl = avg(d?.tackles);
+  if (pass) bits.push(`${pass} pass yds`);
+  if (rush) bits.push(`${rush} rush yds`);
+  if (rec) bits.push(`${rec} rec yds`);
+  if (tkl) bits.push(`${tkl} tkl`);
+  return bits.length ? `his AVERAGE game (÷${gp}): ${bits.join(", ")}` : null;
 }
 
 function seasonLineOf(p: RosterPlayer): string | null {
@@ -345,7 +371,7 @@ function seasonLineOf(p: RosterPlayer): string | null {
     if (num(k.fgAtt)) bits.push(`${num(k.fgMade)}/${num(k.fgAtt)} FG${num(k.fgLong) ? `, long ${num(k.fgLong)}` : ""}`);
     if (num(k.punts)) bits.push(`${num(k.punts)} punts`);
   }
-  return bits.length ? `season to date: ${bits.join("; ")}` : null;
+  return bits.length ? `SEASON TOTALS (not one game): ${bits.join("; ")}` : null;
 }
 
 function roleOf(p: RosterPlayer): string {
@@ -472,6 +498,7 @@ export function recapCast(input: CastInput): CastMember[] {
       team,
       role: roleOf(p),
       seasonLine: seasonLineOf(p),
+      perGame: perGameOf(p),
       why,
       verified: highlights
         .filter((h) => h.player && h.player.toLowerCase() === p.name.toLowerCase())
@@ -511,6 +538,10 @@ export interface RecapInput extends Partial<CastInput> {
   week?: number | null;
   /** The save's season. Stated as a locked fact — see recapFacts. */
   year?: number | null;
+  /** The computed stakes (bowl math, playoff standing, bowl-vs-bracket). The ported recap
+   * does not receive the shared context, so without this it has to infer what the game is
+   * worth — which is how a bowl game got written as a playoff round. */
+  stakesLines?: string[];
   highlights?: { text: string; player?: string | null }[];
   unavailable?: { playerName: string; reason: string }[];
 }
@@ -589,15 +620,16 @@ export function recapFacts(input: RecapInput): RecapFacts {
             "NO game has been played this week, so nothing is added to it."
     );
     if (stakes.streak) locked.push(`They are on ${stakes.streak}.`);
-    if (stakes.winsToBowl != null) {
-      locked.push(`Bowl math: ${stakes.winsToBowl} more win${stakes.winsToBowl === 1 ? "" : "s"} for the six-win line.`);
-    } else if (stakes.bowlEligible) {
-      locked.push("Bowl math: already bowl eligible.");
-    }
   }
+  // What the result is WORTH. Computed upstream (postseason.ts) so the bowl/playoff answer
+  // is identical here and in the shared context; a recap that reached its own conclusion is
+  // how the same week read as a bowl on one tab and a playoff round on another.
+  for (const l of input.stakesLines ?? []) locked.push(l);
 
   const unknown = [
-    "This game's individual box score. Every stat line above is a SEASON TOTAL — never present one as tonight's line.",
+    "This game's individual box score. Every stat line above is a SEASON TOTAL — never present one as tonight's line. " +
+      "If you want to say what a player did in THIS game, use his average-game line as a reference point and write it " +
+      "as the kind of night he has (\"another hundred-yard afternoon\"), NOT as a counted stat you do not have.",
     "Any team or per-category yardage, and anything the defense 'gave up'. Only the final score and the quarter scores are known.",
     "Drive charts, play-by-play, penalties, time of possession, attendance and weather. Invent these freely as texture — they are colour, not record.",
   ];
@@ -627,6 +659,7 @@ export function castLine(m: CastMember): string {
   const bits = [`[${m.team}] ${m.name} — ${m.role}`];
   if (m.unavailable) bits.push(`OUT: ${m.unavailable}`);
   if (m.seasonLine) bits.push(m.seasonLine);
+  if (m.perGame) bits.push(m.perGame);
   if (m.verified.length) bits.push(`verified in THIS game: ${m.verified.join("; ")}`);
   bits.push(`why he's here: ${m.why}`);
   return `  ${bits.join(" · ")}`;

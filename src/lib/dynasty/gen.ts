@@ -21,6 +21,9 @@ import { recordBaseline, rowFromReport } from "./baseline";
 import { buildGroundTruth, validateGeneration } from "./validator";
 import { lockedBlock, recapBrief, recapFacts } from "./recap";
 import { nationalBrief, nationalFacts } from "./national";
+import { coachResumeBlock, jobSecurityLine, priorSeasonsBlock } from "./history";
+import { postseasonBlock, postseasonOutlook, weekShape, type PostseasonOutlook } from "./postseason";
+import type { SeasonRecord } from "./archive";
 import type { CoachBackstory } from "./saga";
 import {
   EDGE_LABEL,
@@ -177,6 +180,16 @@ export interface MediaContext {
   suspensions: ActiveSuspension[];
   /** Persistent coach identity + recurring cast, when the user has written one. */
   backstory: CoachBackstory | null;
+  /** Year-over-year memory: the rendered PRIOR SEASONS table, or null in year one. Held
+   * separately as well as folded into userContext, because the ported surfaces no longer
+   * receive the shared blob and would silently lose the program's history with it. */
+  history: string | null;
+  /** The coach's career résumé from the save — titles, career record, record at THIS
+   * school, tenure. Carried separately for the same reason as `history`. */
+  resume: string | null;
+  /** What this team is playing for: bowl math, playoff standing, and whether a postseason
+   * game is a bracket game or an ordinary bowl. Null when the save has no user team. */
+  outlook: PostseasonOutlook | null;
   /** What this week actually is — "game" only when a real result exists; "pregame" when
    * this week's matchup is on the schedule but kickoff hasn't happened. */
   weekState: "game" | "pregame" | "preseason" | "bye" | "season-over";
@@ -198,6 +211,11 @@ export interface GenerateOpts {
    * them, so the context restores the REAL rating and states the suspension as hard fact —
    * otherwise every generator would hallucinate a star suddenly rated 40. */
   suspensions?: ActiveSuspension[];
+  /** Every season this dynasty has archived (the Season Archive). Prior years become the
+   * PRIOR SEASONS block; the season being played is filtered out inside history.ts, since
+   * the archive checkpoints it continuously and feeding it back would let this week's own
+   * result be written as history. */
+  priorSeasons?: SeasonRecord[];
 }
 
 export interface ActiveSuspension {
@@ -264,24 +282,58 @@ function fmtKicking(k: StatsSide | null | undefined): string[] {
   return bits;
 }
 
+/**
+ * The number the writer has never been given, and the reason he takes the wrong one.
+ *
+ * Reported from a real save: "my running back had 900+ yards in a single game with 100+
+ * carries." That is the season total, printed as a game line. The prompt has told the model
+ * not to do this for six lines and it still does — because a recap NEEDS a per-game number
+ * and, with only a cumulative total in front of it, the total is the only number there is.
+ *
+ * A per-game average is computable, true, and usable in a sentence. It is labelled as an
+ * average so it cannot be passed off as tonight's line either.
+ */
+function fmtPerGame(s: NonNullable<RosterPlayer["stats"]>): string {
+  const gp = s.gamesPlayed;
+  if (gp == null || gp < 2) return "";
+  const o = s.offense ?? (s.side === "offense" ? s : null);
+  const d = s.defense ?? (s.side === "defense" ? s : null);
+  const avg = (v: number | null | undefined) => (typeof v === "number" ? Math.round((v / gp) * 10) / 10 : null);
+  const bits: string[] = [];
+  const pass = avg(o?.passYds);
+  const rush = avg(o?.rushYds);
+  const rec = avg(o?.recYds);
+  const tkl = avg(d?.tackles);
+  if (pass) bits.push(`${pass} pass yds`);
+  if (rush) bits.push(`${rush} rush yds`);
+  if (rec) bits.push(`${rec} rec yds`);
+  if (tkl) bits.push(`${tkl} tkl`);
+  if (!bits.length) return "";
+  return ` — HIS AVERAGE GAME (total ÷ ${gp}, use THIS to describe a single game): ${bits.join(", ")}`;
+}
+
 function fmtStats(p: RosterPlayer): string | null {
   const s = p.stats;
   if (!s) return null;
+  // Every line is prefixed with what it IS. A label at the top of the block is easy to lose
+  // forty players later; a label welded to the number is not.
+  const label = (line: string) =>
+    `SEASON TOTALS${s.gamesPlayed != null ? ` across ${s.gamesPlayed} games` : ""} (NOT one game): ${line}`;
   if (s.side === "kicking") {
     const bits = fmtKicking(s.kicking ?? s);
-    return bits.length ? bits.join("; ") + fmtAppearances(s) : null;
+    return bits.length ? label(bits.join("; ") + fmtAppearances(s)) : null;
   }
   // Two-way players (both sides this season) show BOTH lines — a community ask.
   if (s.twoWay && s.offense && s.defense) {
     const off = fmtOffense(s.offense).join("; ");
     const def = fmtDefense(s.defense).join("; ");
     if (off || def) {
-      return `TWO-WAY — OFF: ${off || "—"} | DEF: ${def || "—"}`;
+      return label(`TWO-WAY — OFF: ${off || "—"} | DEF: ${def || "—"}`) + fmtPerGame(s);
     }
   }
   const bits = s.side === "offense" ? fmtOffense(s.offense ?? s) : fmtDefense(s.defense ?? s);
   if (!bits.length) return null;
-  return bits.join("; ") + fmtAppearances(s);
+  return label(bits.join("; ") + fmtAppearances(s)) + fmtPerGame(s);
 }
 
 // Games played/started, stated only when the save actually gives us both and they're
@@ -317,10 +369,15 @@ const PERSONALITY_RULES = [
 export interface PhaseInfo {
   key: "regular" | "late-season" | "conf-champ" | "postseason" | "offseason";
   label: string;
-  /** Postseason round name when key === "postseason" (e.g. "National Championship"). */
+  /** Postseason round name when key === "postseason" — "National Championship", or
+   * "Bowl Game" for the ~120 teams playing a postseason game outside the bracket. */
   roundName: string | null;
   /** True once the CFP bracket is set — kills all résumé/committee/bubble talk. */
   bracketSet: boolean;
+  /** True ONLY when this team is playing inside the playoff bracket. A postseason week is a
+   * BOWL week for almost everybody, and assuming otherwise is what turned a Sun Belt team's
+   * bowl game into "a first round playoff matchup". */
+  playoffGame: boolean;
   pressNote: string;
 }
 
@@ -330,18 +387,20 @@ export interface PhaseInfo {
 // about as if it's still building a résumé for the committee.
 export function computePhase(
   calendar: DynastySnapshot["calendar"] | null | undefined,
-  weekPlayed: number | null | undefined
+  weekPlayed: number | null | undefined,
+  /** What this team is actually playing for. Without it a postseason week has to ASSUME the
+   * playoff, which is wrong for the ~120 teams in ordinary bowls. */
+  outlook: PostseasonOutlook | null = null
 ): PhaseInfo {
   const w = weekPlayed ?? 0;
-  const confChamp = calendar?.confChampWeek ?? 16;
-  const psWeeks = calendar?.postSeasonWeeks ?? 4;
+  const shape = weekShape(calendar, weekPlayed);
+  const confChamp = shape.confChampWeek;
+  const psWeeks = shape.roundsTotal;
   const weekType = calendar?.weekType ?? null; // "RegularSeason" | "BowlSeason1..4" | ...
 
   // OFFSEASON — the save's stage says we're between seasons (portal window, signing day,
   // coaching carousel, spring). Detect from CurrentStage / week-type so no game is invented.
-  const stage = calendar?.stage ?? null;
-  const inOffseason = (!!stage && /off\s*season|offseason/i.test(stage)) || (!!weekType && /off\s*season|offseason/i.test(weekType));
-  if (inOffseason) {
+  if (shape.inOffseason) {
     const os = calendar?.offseasonStage ?? null;
     const total = calendar?.offseasonNumStages ?? null;
     return {
@@ -349,6 +408,7 @@ export function computePhase(
       label: total != null && os != null ? `OFFSEASON — stage ${os + 1} of ${total}` : "OFFSEASON",
       roundName: null,
       bracketSet: false,
+      playoffGame: false,
       pressNote:
         "It is the OFFSEASON — there are NO games this week and NO results to report. Do NOT invent, " +
         "recap, or reference any game. Coverage is offseason business: the transfer portal, recruiting " +
@@ -357,11 +417,32 @@ export function computePhase(
     };
   }
 
-  // Postseason if the save's week-type says a bowl round, OR we're past conf-champ week.
-  const bowlMatch = weekType ? /^BowlSeason(\d+)$/i.exec(weekType) : null;
-  const isPost = !!bowlMatch || w > confChamp;
-  if (isPost) {
-    const round = bowlMatch ? Number(bowlMatch[1]) : Math.max(1, w - confChamp);
+  if (shape.inPostseason) {
+    // THE BUG THIS BRANCH EXISTS TO FIX: "BowlSeason1" is the first week of the POSTSEASON,
+    // not the first round of the PLAYOFF. Roughly 120 of 134 teams spend it in an ordinary
+    // bowl, so mapping the week straight onto a bracket round wrote a Sun Belt team's bowl
+    // game up as "a first round playoff matchup" — reported from a real save.
+    const inBracket = outlook ? outlook.inPlayoffGame : true;
+    if (!inBracket) {
+      return {
+        key: "postseason",
+        label: "POSTSEASON — Bowl Game (NOT a playoff game)",
+        roundName: "Bowl Game",
+        bracketSet: true,
+        playoffGame: false,
+        pressNote:
+          "This is a BOWL GAME, not a playoff game — this team is NOT in the playoff field. It " +
+          "is ONE game and the season ends with it either way: nothing to advance to, nothing " +
+          "to be eliminated from, no bracket, no seeding, no title implications. NEVER call it " +
+          "a playoff game, a playoff round, a first-round/opening-round matchup, a " +
+          "quarterfinal, a semifinal, or a New Year's Six bowl, and never say a win advances " +
+          "them. Do NOT mention the selection committee, résumés or the bubble — that window " +
+          "is closed and it was never about this team. Cover what a bowl week actually is: the " +
+          "reward for the season, the extra practices, opt-outs and the portal, the seniors' " +
+          "last game, and what a win would mean for next year's momentum.",
+      };
+    }
+    const round = shape.round;
     const fromEnd = psWeeks - round; // 0 = the final
     let roundName: string;
     if (fromEnd <= 0) roundName = "National Championship";
@@ -375,6 +456,7 @@ export function computePhase(
       label: `POSTSEASON — ${roundName}`,
       roundName,
       bracketSet: true,
+      playoffGame: true,
       pressNote:
         `THE PLAYOFF FIELD IS SET — this is the ${roundName}, and the selection committee has ` +
         "ALREADY made every pick. Do NOT mention résumés, the committee, 'the bubble', 'making " +
@@ -384,14 +466,29 @@ export function computePhase(
           : "go-home: advance or the season is over. Cover the matchup, the run this team is on, what it takes to survive, and opt-out/NFL-draft shadows."),
     };
   }
+  // Before the postseason, the stakes note has to follow what this team is actually chasing.
+  // A flat "the résumé matters / connect this to the CFP picture" is how an unranked 7-3 Sun
+  // Belt team ended up being written as fighting for a playoff spot every single week.
+  const chase =
+    outlook == null
+      ? ""
+      : outlook.standing === "out"
+        ? outlook.bowlEligible
+          ? " THIS TEAM IS UNRANKED AND NOT IN THE PLAYOFF RACE, and it is ALREADY bowl eligible: the live questions are which bowl, the conference race, and finishing strong — NOT the CFP, the committee, the bubble, a New Year's Six bid, or bowl eligibility, which is settled."
+          : " THIS TEAM IS UNRANKED AND NOT IN THE PLAYOFF RACE: the live question is bowl eligibility and the conference race — NOT the CFP, the committee, the bubble, or a New Year's Six bid."
+        : outlook.standing === "longshot"
+          ? " They are ranked but well outside the field — the playoff is a long shot needing help, never the working assumption."
+          : "";
   if (w === confChamp || weekType === "ConferenceChampionship") {
     return {
       key: "conf-champ",
       label: "CONFERENCE CHAMPIONSHIP WEEK",
       roundName: null,
       bracketSet: false,
+      playoffGame: false,
       pressNote:
-        "Championship-week press: the conference title on the line, the playoff résumé and seeding scenarios a win or loss creates, and revenge/rematch angles. The bracket is NOT set yet — this game helps decide it.",
+        "Championship-week press: the conference title on the line, what a win or loss creates, and revenge/rematch angles. The bracket is NOT set yet — this game helps decide it." +
+        chase,
     };
   }
   if (w >= 11) {
@@ -400,8 +497,10 @@ export function computePhase(
       label: "LATE SEASON — stakes week",
       roundName: null,
       bracketSet: false,
+      playoffGame: false,
       pressNote:
-        "November press: playoff/bowl math is live and the résumé matters. Questions connect this result to the CFP picture, rivalry stakes, and seniors' last rides.",
+        "November press: the season's math is live. Questions connect this result to what this team is actually playing for, rivalry stakes, and seniors' last rides." +
+        chase,
     };
   }
   return {
@@ -409,8 +508,10 @@ export function computePhase(
     label: "REGULAR SEASON",
     roundName: null,
     bracketSet: false,
+    playoffGame: false,
     pressNote:
-      "Regular-season press: this game, the next opponent, position battles, and week-to-week development.",
+      "Regular-season press: this game, the next opponent, position battles, and week-to-week development." +
+      chase,
   };
 }
 
@@ -470,9 +571,11 @@ function socialVarietyBlock(ctx: MediaContext): string {
     "  @Gameday. Handles should feel like real people (@brant_ksu, @PurplePrideMom, @thirdstring_qb).",
     "- Anchor at least half the posts to SPECIFIC real details from the context (a player by",
     "  name and his real numbers, the exact score, the coach's decision, the opponent).",
-    ctx.phase.key === "postseason"
+    ctx.phase.playoffGame
       ? "- It's the playoff — the feed is at maximum intensity: nerves, superstition, ticket-price jokes, legacy talk."
-      : "",
+      : ctx.phase.key === "postseason"
+        ? "- It's BOWL WEEK, not the playoff — the feed is bowl-week energy: the trip, the matchup nobody asked for, opt-out discourse, seniors' last ride, and gallows humour about the bowl's sponsor. Nobody is talking about a bracket."
+        : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -734,7 +837,20 @@ export function buildMediaContext(
 
   // Phase from the REAL calendar (SeasonInfo), not a hardcoded week. This is the single
   // source of playoff-round truth every tab reads.
-  const phase = computePhase(after.calendar, d.weekPlayed);
+  //
+  // The calendar says WHEN we are; the outlook says what this team is PLAYING FOR, and the
+  // phase needs the second to describe the first honestly — a postseason week is a bowl week
+  // for almost every program. Both read `weekShape`, so they can never disagree about
+  // whether this is the postseason at all.
+  const outlook = postseasonOutlook({
+    team: u ?? null,
+    games: after.games ?? [],
+    userRow: after.userTeamRow,
+    calendar: after.calendar,
+    week: d.weekPlayed,
+    inPostseason: weekShape(after.calendar, d.weekPlayed).inPostseason,
+  });
+  const phase = computePhase(after.calendar, d.weekPlayed, outlook);
   const weekDesc =
     phase.key === "postseason" && phase.roundName
       ? `${d.weekPlayed} — ${phase.roundName} (postseason; regular season is OVER)`
@@ -746,7 +862,7 @@ export function buildMediaContext(
   // The phase note goes into the SHARED context, so recaps, social, shows, national, and
   // rankings all obey it — not just the press-conference tab.
   parts.push(phase.pressNote);
-  if (phase.bracketSet) {
+  if (phase.playoffGame) {
     parts.push(
       "REMINDER FOR EVERY STORY THIS WEEK: this team is playing INSIDE the playoff bracket. " +
         "Any line about 'needing to impress the committee', 'building a résumé', 'staying in " +
@@ -754,6 +870,16 @@ export function buildMediaContext(
     );
   }
   parts.push("");
+
+  // The stakes, computed. This is the block that answers "fighting for bowl eligibility" at
+  // 7-3 and "pushing for a New Year's Six" while unranked: both were the model supplying
+  // stakes because the context stated only the week. It goes in the SHARED context, so the
+  // press conference, the situation room and the wire all obey the same arithmetic.
+  const stakesBlock = postseasonBlock(outlook);
+  if (stakesBlock) {
+    parts.push(stakesBlock);
+    parts.push("");
+  }
 
   // The opponent in focus: this week's result, or (bye/preseason) the next scheduled game.
   let opponentName: string | null = null;
@@ -996,6 +1122,31 @@ export function buildMediaContext(
     parts.push("");
   }
 
+  // Year-over-year memory. Same pattern as suspensions: prior seasons are stated as fixed
+  // fact from the Season Archive, which is what makes memory safe to ship at all — asked to
+  // remember without a locked table, a model invents last year's record and a revenge game
+  // that never happened.
+  const history = priorSeasonsBlock({
+    archive: opts.priorSeasons ?? [],
+    currentYear: after.year ?? null,
+    opponent: opponentName,
+    roster,
+    current: u ? { wins: u.wins ?? 0, losses: u.losses ?? 0 } : null,
+  });
+  if (history) {
+    parts.push(history);
+    parts.push("");
+  }
+
+  // Who the man at the podium actually is. Unlike the archive this needs no prior seasons
+  // played through the app — it comes off the save, so it works on a mid-dynasty install and
+  // in year one, which is exactly when "does the beat know him" mattered and nothing did.
+  const resume = coachResumeBlock(after.coach, school);
+  if (resume) {
+    parts.push(resume);
+    parts.push("");
+  }
+
   // Persistent coach identity: written once on the Coach tab, then fed to EVERY generator
   // so recaps, social, pressers, and situations all know who this coach is and reuse the
   // same recurring cast (AD, booster, beat writer, rival) instead of inventing new ones.
@@ -1015,6 +1166,9 @@ export function buildMediaContext(
     oppRoster,
     suspensions,
     backstory,
+    history,
+    resume,
+    outlook,
     weekState,
     phase,
   };
@@ -1062,6 +1216,7 @@ function recapFactsFor(ctx: MediaContext, extra: Extra) {
     oppCoach: headCoachOf(ctx.snapshot, ctx.opponent),
     week: ctx.week,
     year: ctx.snapshot.year ?? null,
+    stakesLines: ctx.outlook?.lines ?? [],
     highlights,
     unavailable: ctx.suspensions.map((s) => ({
       playerName: s.playerName,
@@ -1136,18 +1291,36 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
             : "- Never invent scores, stats, rankings, or records — the context is the source of truth.",
           "- If it is a neutral site or playoff/bowl game, DO NOT claim it was played at either team's home stadium.",
           "- If the week is Postseason, do not refer to the regular season or imply there are more regular season games left.",
-          ctx.phase.key === "postseason"
+          ctx.phase.playoffGame
             ? `- THIS IS THE ${ctx.phase.roundName?.toUpperCase()}. Frame the game as exactly that — ${ctx.phase.roundName === "National Championship" ? "one game for the national title, win-or-go-home, legacy on the line" : "a win-or-go-home playoff game; a win ADVANCES them, a loss ENDS the season"}. NEVER write about résumés, the selection committee, the bubble, or 'making the playoff' — they are already IN it and playing.`
-            : "",
+            : ctx.phase.key === "postseason"
+              ? "- THIS IS A BOWL GAME, NOT A PLAYOFF GAME — this team is not in the field. It is one game and the season ends with it either way; nothing advances, nothing is eliminated. NEVER call it a playoff game, a playoff round, a first-round matchup, or a New Year's Six bowl, and never name a specific bowl — the save does not carry its name. Write the bowl-week story: what the season added up to, the seniors' last game, opt-outs and the portal, and what a win sets up for next year."
+              : "",
           "- Do not invent transfer portal news or roster departures unless explicitly mentioned.",
+          // Year-over-year memory earns its keep here more than anywhere: a beat writer with
+          // history is the difference between a game story and a chapter of one.
+          ctx.history
+            ? "- You have covered this program for years and the archive below proves it. Where it fits, reach back: a rematch, a 'second straight year', a player measured against what he was, a callback to a decision that aged well or badly. Never contradict the archive, and never reach for a past fact that isn't in it."
+            : "",
+          ctx.resume
+            ? "- You know exactly who the coach is — his titles, his career record, his record at this school, how long he's been here. Measure this result against THAT standard. Never award him a championship or a tenure the résumé doesn't list."
+            : "",
           isGame ? "" : hlBlock,
           "",
           // On a game week the brief IS the context. Everywhere else it rides in front of
           // the shared blob so the record and the streak are locked even in a bye column.
           isGame ? recapBrief(facts) : lockedBlock(facts),
           "",
+          // The ported game-week path does NOT receive the shared blob, so anything the
+          // shared context carries has to be handed over explicitly here or it is silently
+          // lost — the same hole that dated a recap to a real-world season.
           ...(isGame
-            ? [...identityBlock(ctx.backstory), `The week: Week ${ctx.week ?? "—"} · ${ctx.phase.label}.`]
+            ? [
+                ctx.history ?? "",
+                ctx.resume ?? "",
+                ...identityBlock(ctx.backstory),
+                `The week: Week ${ctx.week ?? "—"} · ${ctx.phase.label}.`,
+              ]
             : ["Context:", ctx.userContext]),
         ].join("\n"),
       };
@@ -1194,6 +1367,15 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
           "- Use the ACTUAL score, opponent name, and game events from the context below.",
           "- Vary engagement realistically: high-energy fan posts get 500-2000 likes, analyst posts 100-500.",
           "- The 'reposts' field is required (not retweets).",
+          // Fans have the longest memories in sports, and now the app can back them up.
+          ctx.resume
+            ? "- Fans argue about the COACH with his actual résumé in hand (below): his titles or lack of them, his record here, how long he's had. \"X rings and this is what we get\" / \"give him time, it's year one\" are both fair — inventing a championship is not."
+            : "",
+          ctx.history
+            ? "- 2-3 posts should have a LONG MEMORY: last year's collapse or breakout, the rematch, " +
+              '"same as last season", a player who was nothing a year ago. Use ONLY the archived ' +
+              "prior-season facts in the context — a fan may be an idiot about what it means, never wrong about what happened."
+            : "",
           "- NO HTML entities. Use plain text quotes and punctuation.",
           sitBlock,
           "Context:",
@@ -1209,13 +1391,21 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
           "Write a 100-word CFP analyst take about this team's ranking picture as JSON with this exact schema:",
           '{"headline": "string", "body": "string", "movement": "string"}',
           "",
-          ctx.phase.key === "postseason"
+          ctx.phase.playoffGame
             ? `${ctx.school} is IN the College Football Playoff, playing the ${ctx.phase.roundName}. The bracket is SET — do NOT talk about rankings movement, the bubble, or making the field. 'movement' is a short phrase about their run, e.g. '${ctx.phase.roundName === "National Championship" ? "Playing for it all" : "Two wins from a title"}', 'Final Four', 'Cinderella run', 'Title favorite'. The body is a studio analyst breaking down how far this team can go and what it'd take to win it all.`
-            : [
-                `Analyze ${ctx.school}'s playoff/ranking picture after Week ${ctx.week}. If UNRANKED, frame it as trying to break in — never invent a number.`,
-                "movement is a short phrase like 'On the bubble', 'Knocking on the door', 'Holds at #8', 'Up 3 spots', 'Drops out'.",
-                "Write in the voice of a TV studio analyst breaking down the CFP picture.",
-              ].join("\n"),
+            : ctx.phase.key === "postseason"
+              ? `${ctx.school} is NOT in the playoff — they are playing an ordinary BOWL GAME while the bracket runs without them. Do NOT write a playoff take. 'movement' is a short phrase about where the season landed, e.g. 'Bowl bound', 'Season's last act', 'Building something'. The body is a studio analyst on what the year added up to and what the program's next step is — never on a bracket they are not in.`
+              : [
+                  // An unranked team asked "analyze your playoff picture" produces a playoff
+                  // picture, because that is what it was asked for. Reported from a real save:
+                  // a 7-3 unranked Sun Belt team written as fighting for a playoff spot, and
+                  // pushing for a New Year's Six bid, every single week.
+                  ctx.outlook && ctx.outlook.standing === "out"
+                    ? `${ctx.school} is UNRANKED and NOT in the playoff race. Do NOT write a playoff/committee/bubble/New Year's Six take — none of it applies. Analyze what is actually live for them: the bowl math (see the stakes block in the context — do not restate it wrongly), the conference race, and whether this team is trending up or down. 'movement' is a short phrase like 'Bowl eligible', 'Two from a bowl', 'Playing spoiler', 'Trending up'.`
+                    : `Analyze ${ctx.school}'s ranking picture after Week ${ctx.week}, in line with the stakes stated in the context. Never invent a poll number.`,
+                  "movement is a short phrase like 'On the bubble', 'Knocking on the door', 'Holds at #8', 'Up 3 spots', 'Drops out'.",
+                  "Write in the voice of a TV studio analyst.",
+                ].join("\n"),
           "",
           "Context:",
           ctx.userContext,
@@ -1260,6 +1450,26 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
           "  at the same position, SOMEBODY in this room asks about it by name.",
           "- Personality is fair game: reporters phrase questions differently for an Intense star",
           "  than a quiet TeamPlayer, and ask the coach to respond to what players are like.",
+          // The presser is where memory pays off most: a reporter who was in the room last
+          // year asks a different, harder question than one meeting the coach for the first
+          // time. Every comparison must come off the archived table, never from a guess.
+          // The room knows his résumé cold. Whether he has one ring or five changes what
+          // they feel entitled to ask, and it is the difference between a reporter and a
+          // stranger with a microphone.
+          ctx.resume
+            ? "- THE ROOM KNOWS HIS RÉSUMÉ (below) AND WRITES LIKE IT. His titles, his career record,\n" +
+              "  his record at THIS school and how long he has been here all shape the questions: a\n" +
+              "  decorated champion gets asked why THIS team is short of his standard; a first-year\n" +
+              "  coach gets asked to prove he belongs. Cite those facts exactly as given — never\n" +
+              "  invent a title, a former job, or a tenure he doesn't have."
+            : "",
+          ctx.history
+            ? "- THESE REPORTERS HAVE COVERED YOU FOR YEARS. At least ONE question compares this season\n" +
+              "  to a PRIOR one from the archive below — the record then versus now, a rematch with a\n" +
+              "  team that beat you, a returning player measured against his old numbers, or a past\n" +
+              "  decision they are still asking about. Quote the archived facts exactly; never invent\n" +
+              "  a past record, result or number to build a question on."
+            : "",
           "",
           "Answer rules — the coach's response ACTUALLY MATTERS:",
           "- Each question gets EXACTLY 3 answer options with genuinely different postures",
@@ -1816,7 +2026,7 @@ function buildGradeSpec(ctx: MediaContext, extra: Extra): PromptSpec {
 }
 
 function buildStorylinesSpec(ctx: MediaContext, extra: Extra): PromptSpec {
-  const security = ctx.snapshot.coach?.jobSecurity ?? "unknown";
+  const security = jobSecurityLine(ctx.snapshot.coach);
 
   // What's really brewing, computed from the roster (buried stars, NIL grievances, seniors
   // on the bench, confidence collapses, academic risk). Situations built on these are about
@@ -2700,6 +2910,9 @@ function buildNationalDeskSpec(ctx: MediaContext): PromptSpec {
   const anyPlayed = slate.played.length > 0;
   // Committee / playoff-mock talk is nonsense in September. Only allow it once the résumé
   // actually matters (late season onward).
+  // The national desk covers the whole country, so committee talk is legitimate late in the
+  // year whatever the user's own team is doing — it just must not be pointed at a program
+  // that has no business in it.
   const committeeOk = ctx.phase.key === "late-season" || ctx.phase.key === "conf-champ" || ctx.phase.key === "postseason";
   const prompt = [
     "You are the NATIONAL DESK of a college-football media network — the whole country's week,",
@@ -2741,6 +2954,17 @@ function buildNationalDeskSpec(ctx: MediaContext): PromptSpec {
     `  scores. Spend a beat on ${ctx.school} from a NATIONAL lens (respect or skepticism, not fandom).`,
     committeeOk ? "" : "  It is early September — no playoff-bracket or committee talk on the pod either.",
     "- Use only schools from the slate / top-25 below; invent PEOPLE (coaches, players) not named in the context.",
+    // The archive only covers the user's program, so a rise/fall comparison is available for
+    // exactly one team on the board. Saying so is what keeps it from being extended to the
+    // other 130 by invention.
+    ctx.history
+      ? `- ${ctx.school} is the ONE program whose past you actually hold (see PRIOR SEASONS in the context): a national desk noticing it is up or down on a year ago is fair game and should appear once. For every other program, you have NO history — never compare them to a prior season.`
+      : "",
+    // The national lens is exactly where an unranked team gets written into a playoff race,
+    // because a national column is ABOUT the playoff race.
+    ctx.outlook && ctx.outlook.standing === "out"
+      ? `- ${ctx.school} is UNRANKED and NOT in the playoff or New Year's Six conversation. Whatever else the column argues nationally, never place ${ctx.school} in a bracket, a bubble, a committee discussion or a NY6 bid — the national lens on them is a good-season-in-their-own-lane story, or skepticism, not contention.`
+      : "",
     "",
     "=== THIS WEEK'S NATIONAL SLATE (the ONLY games you may reference) ===",
     slate.played.length ? "FINAL (real scores you may cite):" : "FINAL: (none played yet this week)",

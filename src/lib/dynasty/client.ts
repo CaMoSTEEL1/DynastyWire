@@ -51,14 +51,69 @@ export interface CoachInfo {
   /** 'HeadCoach' | 'OffensiveCoordinator' | 'DefensiveCoordinator' — the user's actual job. */
   position?: string | null;
   archetype?: string | null;
+  /** The LIVE status ("Safe" | "SafeForNow" | "Low" | "HotSeat"), never the season-start
+   * sentinel. Null when the save gives no usable value — which must not be shown as a
+   * status, because "unknown" is not the same as "on the hot seat". */
   jobSecurity: string | null;
-  fireReported: boolean | null;
+  /** 0-100 from `CurrentJobSecurityPercentage`. The number the status is derived from. */
+  jobSecurityPct?: number | null;
+  /** @deprecated Never populated. The underlying `COACH_FIREREPORTED` flag reads `true` for
+   * every head coach in the league, so it carries no information. Kept only so snapshots
+   * cached by an older sidecar still deserialize. */
+  fireReported?: boolean | null;
   performanceLevel: number | null;
   age: number | null;
   awardPoints: number | null;
   careerWinSeasons: number | null;
   careerPlayoffs: number | null;
   careerLongWinStreak: number | null;
+  /** Seasons coaching anywhere, and seasons with THIS program (0 in a first season). */
+  yearsCoaching?: number | null;
+  seasonsWithTeam?: number | null;
+  /** The save's own letter grade + score for the coach. */
+  prestige?: string | null;
+  prestigeScore?: number | null;
+  almaMater?: string | null;
+  homeState?: string | null;
+  contractYearsRemaining?: number | null;
+  contractExpectation?: string | null;
+  /** The résumé, from Coach.CareerStats -> CareerCoachStats. Undefined on a save parsed by
+   * an older sidecar; every consumer must treat it as optional. */
+  career?: CoachCareer | null;
+}
+
+/**
+ * A coach's career ledger, straight from the save (`CareerCoachStats`). This is what lets
+ * the beat know whether the man at the podium has won one national title or five, and
+ * whether he built this program or arrived last spring.
+ *
+ * The two record pairs are NOT interchangeable: `wins/losses` is everywhere he has coached,
+ * `winsAtSchool/lossesAtSchool` is this job only.
+ */
+export interface CoachCareer {
+  wins: number | null;
+  losses: number | null;
+  winsAtSchool: number | null;
+  lossesAtSchool: number | null;
+  /** National championships won / lost in the title game. */
+  natTitles: number | null;
+  natTitleLosses: number | null;
+  /** Year of the most recent title, or -2 if he has never won one. */
+  recentTitleYear: number | null;
+  confTitles: number | null;
+  confTitleLosses: number | null;
+  bowlWins: number | null;
+  bowlLosses: number | null;
+  playoffWins: number | null;
+  playoffLosses: number | null;
+  top25Wins: number | null;
+  top25Losses: number | null;
+  rivalWins: number | null;
+  rivalLosses: number | null;
+  timesFired: number | null;
+  top5Classes: number | null;
+  draftPicks: number | null;
+  firstRoundPicks: number | null;
 }
 
 export interface Recruit {
