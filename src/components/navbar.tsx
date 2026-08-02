@@ -54,7 +54,9 @@ const navItems = [
 const rtgNavItems = [
   { label: "The Week", slug: "the-week", icon: Newspaper },
   { label: "His Feed", slug: "my-social", icon: MessageCircle },
-  { label: "Recruitment", slug: "recruitment", icon: Users },
+  { label: "His Podium", slug: "his-podium", icon: Mic },
+  { label: "The Room", slug: "the-room", icon: Users },
+  { label: "Recruitment", slug: "recruitment", icon: Trophy },
   { label: "The Slate", slug: "scoreboard", icon: ListOrdered },
   { label: "Archive", slug: "archive", icon: Archive },
 ] as const;

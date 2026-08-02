@@ -285,3 +285,63 @@ describe("The RTG social feed", () => {
     expect(p).toContain("Depth-chart obsessives");
   });
 });
+
+describe("the position room", () => {
+  const R = (name: string, position: string, over: Record<string, number> = {}) => ({
+    name, position, year: "JR", overall: 80, jersey: null,
+    stats: stats({ gamesPlayed: 4, gamesStarted: 0, ...over }),
+  });
+
+  it("orders by who the staff actually plays, then by production", async () => {
+    const { positionRoom } = await import("./rtg");
+    const room = positionRoom(
+      [
+        R("Backup Guy", "QB", { passYds: 900 }),
+        R("The Starter", "QB", { gamesStarted: 4, passYds: 500 }),
+        R("Skiyzer San-Locus", "QB", { passYds: 120 }),
+        R("A Receiver", "WR", { recYds: 800 }),
+      ] as never,
+      P({ position: "QB" })
+    );
+    expect(room.map((r) => r.name)).toEqual(["The Starter", "Backup Guy", "Skiyzer San-Locus"]);
+    expect(room.find((r) => r.isUser)?.name).toBe("Skiyzer San-Locus");
+  });
+
+  it("tells the writer where he sits and never shows a rating", async () => {
+    const { positionRoom, roomBlock, depthOf } = await import("./rtg");
+    const room = positionRoom(
+      [R("The Starter", "QB", { gamesStarted: 4, passYds: 500 }), R("Skiyzer San-Locus", "QB", { passYds: 120 })] as never,
+      P({ position: "QB" })
+    );
+    expect(depthOf(room)).toBe(2);
+    const b = roomBlock(room, "QB")!;
+    expect(b).toContain("← HIM");
+    expect(b).toContain("He is 2 of 2 in the room");
+    expect(b).not.toMatch(/\b\d{2}\s*OVR\b/);
+    expect(b).not.toMatch(/\boverall\b/i);
+  });
+
+  it("says nothing rather than guessing when he isn't in the room", async () => {
+    const { positionRoom, roomBlock } = await import("./rtg");
+    const room = positionRoom([R("Someone Else", "QB")] as never, P({ position: "QB" }));
+    expect(roomBlock(room, "QB")).toContain("do not claim a depth position");
+  });
+});
+
+describe("his podium", () => {
+  it("asks about not playing, and lets him be nineteen about it", async () => {
+    const { buildSpec } = await import("./gen");
+    const s = stats({ gamesPlayed: 2, gamesStarted: 0 });
+    const ctx = {
+      school: "Oregon State", week: 6, phase: { label: "REGULAR SEASON" },
+      snapshot: { player: P({ stats: s }), schoolInterest: [] },
+      roster: [], backstory: null, history: null, world: null, outlook: null, userContext: "",
+    } as never;
+    const p = buildSpec("rtg-podium", ctx, { baselinePlayer: P({ stats: s }) }).prompt;
+    expect(p).toContain("HE DID NOT PLAY");
+    expect(p).toContain("should not have a good answer to all of them");
+    expect(p).toContain("must sound NINETEEN");
+    expect(p).toContain("failure mode of this surface");
+    expect(p).toContain("THESE DO NOT MOVE TOGETHER");
+  });
+});

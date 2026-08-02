@@ -14,7 +14,7 @@
 // weeks before opening the app — the diff is unattributable, and every function below says so
 // rather than guessing.
 
-import type { RosterStats, RtgPlayer, SchoolInterest } from "./client";
+import type { RosterPlayer, RosterStats, RtgPlayer, SchoolInterest } from "./client";
 
 // ── Where he stands this week ───────────────────────────────────────────────────
 
@@ -262,4 +262,85 @@ export function rtgBrief(facts: RtgFacts): string {
     ...facts.unknown.map((u) => `  ${u}`),
   ];
   return parts.join("\n");
+}
+
+// ── Who is ahead of him ─────────────────────────────────────────────────────────
+//
+// `ForcedDepthChartEntry` turned out to be unusable on its own: a real save carried TWO QB rows
+// and nothing said which was the user's. So the room is reconstructed from the roster instead —
+// everyone at his position, ordered by what they have actually DONE this season rather than by
+// a rating, which is both more honest and the only ordering the no-ratings rule allows.
+
+export interface RoomMate {
+  name: string;
+  classYear: string | null;
+  /** Season production, already in words. Null when he has no line. */
+  line: string | null;
+  gamesStarted: number;
+  isUser: boolean;
+}
+
+const prod = (p: RosterPlayer): number => {
+  const s = side(p.stats);
+  if (!s) return 0;
+  return n(s.passYds) + n(s.rushYds) + n(s.recYds) + n(s.tackles) * 12 + n(s.sacks) * 60;
+};
+
+/**
+ * His position room, best season so far first. Starts are the tiebreak because the depth chart
+ * is decided by who the staff actually plays, not by who has the prettiest total.
+ */
+export function positionRoom(
+  roster: RosterPlayer[] | undefined,
+  player: RtgPlayer | null | undefined
+): RoomMate[] {
+  if (!roster?.length || !player?.position) return [];
+  const pos = player.position.toUpperCase();
+  const mine = (player.name ?? "").toLowerCase();
+  return roster
+    .filter((p) => (p.position ?? "").toUpperCase() === pos)
+    .sort((a, b) => {
+      const gs = n(b.stats?.gamesStarted) - n(a.stats?.gamesStarted);
+      return gs !== 0 ? gs : prod(b) - prod(a);
+    })
+    .map((p) => {
+      const s = side(p.stats);
+      const bits: string[] = [];
+      if (s) {
+        if (n(s.passYds)) bits.push(`${n(s.passYds)} pass yds, ${n(s.passTDs)} TD`);
+        if (n(s.rushYds)) bits.push(`${n(s.rushYds)} rush yds, ${n(s.rushTDs)} TD`);
+        if (n(s.recYds)) bits.push(`${n(s.recCatches)} rec, ${n(s.recYds)} yds`);
+        if (n(s.tackles)) bits.push(`${n(s.tackles)} tkl`);
+      }
+      return {
+        name: p.name,
+        classYear: p.year ?? null,
+        line: bits.length ? bits.join("; ") : null,
+        gamesStarted: n(p.stats?.gamesStarted),
+        isUser: p.name.toLowerCase() === mine,
+      };
+    });
+}
+
+/** Where he sits in that room, 1-indexed, or null when he isn't in it. */
+export function depthOf(room: RoomMate[]): number | null {
+  const i = room.findIndex((r) => r.isUser);
+  return i < 0 ? null : i + 1;
+}
+
+/** The room as the writer is handed it — names and production, never a rating. */
+export function roomBlock(room: RoomMate[], position: string | null): string | null {
+  if (!room.length) return null;
+  const depth = depthOf(room);
+  return [
+    `=== THE ${(position ?? "POSITION").toUpperCase()} ROOM (real — ordered by starts, then production) ===`,
+    ...room.map((r, i) => {
+      const mark = r.isUser ? " ← HIM" : "";
+      const starts = r.gamesStarted ? `${r.gamesStarted} starts` : "no starts";
+      return `  ${i + 1}. ${r.name}${r.classYear ? ` (${r.classYear})` : ""} — ${starts}${r.line ? `; ${r.line}` : ""}${mark}`;
+    }),
+    depth
+      ? `  He is ${depth} of ${room.length} in the room. That is the gap the season is about.`
+      : "  He is not listed in this room — do not claim a depth position for him.",
+  ].join("\n");
 }

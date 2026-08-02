@@ -433,6 +433,7 @@ export const KIND_CONFIG: Record<string, KindConfig> = {
   "rtg-social": cfg({}, { skipFields: ["likes", "reposts"] }),
   // The player wrote the post himself; only the REPLIES are generated.
   "rtg-post": cfg({}, { skipFields: ["likes", "reach", "verdict"] }),
+  "rtg-podium": cfg({}, { skipFields: ["poise", "roomDelta", "brandDelta"] }),
 
   "recap-lead": cfg(),
   "national-desk": cfg(),

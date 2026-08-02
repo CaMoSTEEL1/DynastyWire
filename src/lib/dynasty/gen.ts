@@ -24,7 +24,7 @@ import { lockedBlock, recapBrief, recapFacts } from "./recap";
 import { nationalBrief, nationalFacts } from "./national";
 import { coachResumeBlock, jobSecurityLine, priorSeasonsBlock } from "./history";
 import { postseasonBlock, postseasonOutlook, weekShape, type PostseasonOutlook } from "./postseason";
-import { rtgBrief, rtgFacts, type PlayerWeekState } from "./rtg";
+import { positionRoom, roomBlock, rtgBrief, rtgFacts, type PlayerWeekState } from "./rtg";
 import { worldBlock } from "./world";
 import { brandBlock, brandTier, TIER_NOTE, type BrandState, type FollowerResult } from "./brand";
 import type { SeasonRecord } from "./archive";
@@ -1509,6 +1509,69 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
 
     case "rtg-social":
       return buildRtgSocialSpec(ctx, extra);
+
+    /**
+     * HIS PODIUM. A player's media availability, which is a different animal from a coach's.
+     *
+     * A coach at a microphone is performing a job he has done a thousand times. A nineteen-
+     * year-old is being asked, in public, to explain something he does not control — why he
+     * isn't playing, whether he's transferring, what he thinks of the guy ahead of him. The
+     * questions have to be smaller and more awkward than a coach's, and the answers have to be
+     * allowed to be immature, because that is what makes them his.
+     */
+    case "rtg-podium": {
+      const facts = rtgFacts({
+        player: ctx.snapshot.player ?? null,
+        baseline: (extra.baselinePlayer ?? null) as RtgPlayer | null,
+        school: ctx.school,
+        interest: ctx.snapshot.schoolInterest,
+      });
+      const room = positionRoom((extra.roster as RosterPlayer[]) ?? ctx.roster, ctx.snapshot.player ?? null);
+      const p = ctx.snapshot.player ?? null;
+      const didNotPlay = facts.time.state === "did-not-play";
+      return {
+        maxTokens: 2600,
+        prompt: [
+          "Generate a short media availability with a COLLEGE PLAYER as JSON with this exact schema:",
+          '{"questions": [{',
+          '  "reporterName": "string", "outlet": "string",',
+          '  "question": "string", "tone": "friendly"|"neutral"|"hostile"|"gotcha",',
+          '  "answers": [{"label": "<=4 word posture", "text": "what he actually says", "poise": int, "roomDelta": int, "brandDelta": int}]',
+          "}]}",
+          "",
+          `He is ${p?.name ?? "the player"}, a ${p?.classYear ?? ""} ${p?.position ?? "player"} at ${ctx.school}.`,
+          "",
+          "WRITE 4 QUESTIONS. This is NOT a head coach's press conference:",
+          "- Reporters are gentler with a young player, and more invasive. They ask about his",
+          "  family, his hometown, the adjustment, what his phone looks like after a game.",
+          didNotPlay
+            ? "- HE DID NOT PLAY. At least two questions are about that — what the staff has told him, whether he is frustrated, whether he has thought about leaving. He should not have a good answer to all of them."
+            : "- At least one question is about what he just did on the field, using his real line below.",
+          room.length > 1
+            ? "- One question asks him about the player ahead of or behind him in the room, BY NAME, from the list below. Being asked to comment on a teammate competing for his job is the most uncomfortable question a young player gets."
+            : "",
+          "- One question comes from someone who covered him in high school, or from his hometown.",
+          "",
+          "ANSWERS — 3 per question, and they must sound NINETEEN:",
+          "- He is allowed to be bad at this. Clichés he has obviously been coached to say, a real",
+          "  answer that says too much, and something faintly petulant. A player who sounds like a",
+          "  polished head coach is the failure mode of this surface.",
+          "- poise (-8..+8) is how well he handled the room; roomDelta is what teammates and the",
+          "  staff make of it; brandDelta is whether it plays online. THESE DO NOT MOVE TOGETHER,",
+          "  and the interesting answers are the ones where they conflict — honest and popular but",
+          "  bad for the locker room, or coach-speak that keeps him safe and dull.",
+          "- Never let an answer promise playing time, a start, or a transfer as a decision made.",
+          "",
+          rtgBrief(facts),
+          "",
+          roomBlock(room, p?.position ?? null) ?? "",
+          "",
+          ...identityBlock(ctx.backstory),
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      };
+    }
 
     /**
      * THE PLAYER POSTS. He writes it; the internet answers.
