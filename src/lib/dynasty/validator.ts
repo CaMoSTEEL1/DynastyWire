@@ -434,6 +434,8 @@ export const KIND_CONFIG: Record<string, KindConfig> = {
   // The player wrote the post himself; only the REPLIES are generated.
   "rtg-post": cfg({}, { skipFields: ["likes", "reach", "verdict"] }),
   "rtg-podium": cfg({}, { skipFields: ["poise", "roomDelta", "brandDelta"] }),
+  "rtg-texts": cfg({}, { personaFields: ["with"] }),
+  "rtg-situation": cfg({}, { skipFields: ["cost", "label"] }),
 
   "recap-lead": cfg(),
   "national-desk": cfg(),

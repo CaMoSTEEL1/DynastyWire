@@ -1533,6 +1533,105 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
       return buildRtgSocialSpec(ctx, extra);
 
     /**
+     * HIS PHONE. The group chat, the position coach, home.
+     *
+     * This is the register dynasty has no equivalent for, and the reason it works is that the
+     * people in it were named by the user at setup. A text from "Coach Reyes" lands; a text
+     * from "your position coach" does not. The cast is fixed, so these threads accumulate into
+     * relationships across a season instead of resetting every week.
+     */
+    case "rtg-texts": {
+      const facts = rtgFacts({
+        player: ctx.snapshot.player ?? null,
+        baseline: (extra.baselinePlayer ?? null) as RtgPlayer | null,
+        school: ctx.school,
+        interest: ctx.snapshot.schoolInterest,
+        teamResult: rtgTeamResult(ctx),
+      });
+      const ch = (extra.character ?? null) as RtgCharacter | null;
+      const didNotPlay = facts.time.state === "did-not-play";
+      return {
+        maxTokens: 1800,
+        prompt: [
+          "Write this week's TEXT MESSAGES to a college football player. Return JSON:",
+          '{"threads": [{"with": "who", "relationship": "coach"|"teammate"|"home"|"other",',
+          '  "messages": [{"from": "them"|"him", "text": "string"}]}]}',
+          "",
+          "3-4 threads, 2-5 messages each. These are TEXTS: short, lowercase, unfinished",
+          "sentences, no greeting, no signature. Nobody writes a paragraph. Some threads are two",
+          "messages and a read receipt's worth of silence.",
+          "",
+          "WHO TEXTS HIM — use these people and no invented replacements:",
+          ch?.positionCoach ? `- ${ch.positionCoach}, his position coach. Brief, functional, occasionally warmer than expected. He does not explain himself.` : "",
+          ch?.teammate ? `- ${ch.teammate}, his closest teammate. Jokes, memes described in words, the group-chat register.` : "",
+          ch?.aheadOfHim ? `- ${ch.aheadOfHim}, the man ahead of him — which makes every message between them slightly loaded even when it isn't.` : "",
+          ch?.home ? `- ${ch.home}. This one is not about football. That is the point of it.` : "",
+          "",
+          didNotPlay
+            ? "HE DID NOT PLAY. The coach thread is the hard one — it can be encouragement, a correction, or nothing much at all, and 'nothing much at all' is often the most honest. Home does not mention the game."
+            : "He played. The threads react to what he actually did, using the real line below.",
+          "",
+          "Never promise him playing time or a start — nobody has decided that. Never state a",
+          "score, a record or a rating (rule 6).",
+          "",
+          rtgBrief(facts),
+          "",
+          characterBlock(ch) ?? "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      };
+    }
+
+    /**
+     * HIS SITUATION ROOM. The decisions a player actually gets.
+     *
+     * A coach's situation room is about power he holds. A player's is about the almost total
+     * lack of it: what he does with a week, who he talks to, whether he says the thing he is
+     * thinking. The choices are small on purpose — small choices are all he has, and that is
+     * the honest version of the fantasy.
+     */
+    case "rtg-situation": {
+      const facts = rtgFacts({
+        player: ctx.snapshot.player ?? null,
+        baseline: (extra.baselinePlayer ?? null) as RtgPlayer | null,
+        school: ctx.school,
+        interest: ctx.snapshot.schoolInterest,
+        teamResult: rtgTeamResult(ctx),
+      });
+      const ch = (extra.character ?? null) as RtgCharacter | null;
+      return {
+        maxTokens: 2000,
+        prompt: [
+          "Write ONE situation this college football player faces this week. Return JSON:",
+          '{"headline": "string", "category": "locker-room"|"academics"|"family"|"brand"|"football",',
+          '  "setup": "2-3 sentences putting him in it",',
+          '  "options": [{"label": "<=5 words", "text": "what he does", "cost": "one line on what it costs him"}]}',
+          "",
+          "3 options. NONE of them is free and none of them is obviously right — if one option",
+          "is plainly correct it is not a decision, it is a formality.",
+          "",
+          "WHAT A PLAYER ACTUALLY CONTROLS — this is the whole design of this surface:",
+          "- He does NOT control the depth chart, the play calls, his snaps, or whether he starts.",
+          "- He DOES control: whether he asks the coach a question he might not want answered,",
+          "  what he says to the man ahead of him, whether he goes home this weekend, whether he",
+          "  posts, whether he studies, who he tells the truth to.",
+          "- So the situation must be something INSIDE his control. A situation about whether he",
+          "  gets promoted is not a situation, it is a wish.",
+          "",
+          "Ground it in his week and in the people he actually knows. Never resolve it — the",
+          "options end at the decision, not the outcome. Never promise playing time.",
+          "",
+          rtgBrief(facts),
+          "",
+          characterBlock(ch) ?? "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      };
+    }
+
+    /**
      * HIS PODIUM. A player's media availability, which is a different animal from a coach's.
      *
      * A coach at a microphone is performing a job he has done a thousand times. A nineteen-

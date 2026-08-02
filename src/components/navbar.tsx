@@ -55,6 +55,8 @@ const rtgNavItems = [
   { label: "The Week", slug: "the-week", icon: Newspaper },
   { label: "His Feed", slug: "my-social", icon: MessageCircle },
   { label: "His Podium", slug: "his-podium", icon: Mic },
+  { label: "His Phone", slug: "his-phone", icon: MessageCircle },
+  { label: "His Week", slug: "his-week-decision", icon: Flame },
   { label: "The Room", slug: "the-room", icon: Users },
   { label: "Recruitment", slug: "recruitment", icon: Trophy },
   { label: "The Slate", slug: "scoreboard", icon: ListOrdered },
