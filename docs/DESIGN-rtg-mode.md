@@ -1,6 +1,6 @@
 # Dynasty Wire — Road to Glory mode
 
-Status: **DECIDED (design locked). Build steps 1-3 DONE; step 4 (the gate) NOT YET RUN.** Every decision below came out of a full design
+Status: **DECIDED (design locked). Build steps 1-3 and 5 DONE — all five v1 surfaces exist and build. Step 4 (THE GATE) HAS NOT BEEN RUN: no RTG surface has yet been generated against a real save.** Every decision below came out of a full design
 interview and is a commitment, not a maybe. Where a decision rests on save data, the field is
 named — all of it was read out of a real RTG save (`RTG-SKIYZERSANLOCUS-AUTOSAVE`), not assumed.
 
@@ -210,8 +210,20 @@ because it was measured first.
    case. Not yet wired to a UI surface or the issue cache.
 4. **THE GATE: run decision 12's test.** Three real generations, read them. Do not proceed on a
    bad result — redesign.
-5. Surfaces 4 and 5 (free data), then 2 and 3 (the interactions).
-6. Two front doors, the backstory flow, RTG settings.
+5. ~~Surfaces 4 and 5 (free data), then 2 and 3 (the interactions).~~ **DONE.** All five ship:
+   The Week (`the-week`), His Feed (`my-social`, with the post composer), His Podium
+   (`his-podium`), The Room (`the-room`), Your Recruitment (`recruitment`). The nav is
+   replaced wholesale in RTG mode off `snapshot.mode`.
+   - **The Room deviates from the design**: `ForcedDepthChartEntry` was unusable (two QB rows,
+     no way to tell which is the user's), so the room is rebuilt from the roster and ordered
+     by GAMES STARTED then production — never by rating.
+   - **Brand/followers was added** beyond the original five (`brand.ts`): the save has an RTG
+     meters economy but no readable live follower total, so DynastyWire keeps its own. Code
+     computes every movement from real playing time and production; the model never states a
+     count. The UI says out loud that the number is ours, not the game's.
+6. Two front doors (separate profile lists), the mandatory backstory flow, RTG settings.
+   **NOT BUILT** — RTG currently shares the dynasty profile list and has no backstory step,
+   so decisions 9 and 10 are still outstanding.
 
 ---
 
