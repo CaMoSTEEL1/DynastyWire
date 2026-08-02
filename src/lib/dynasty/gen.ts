@@ -118,6 +118,17 @@ export const SYSTEM_PROMPT = [
   "3. If a team is stated UNRANKED, never assign it a poll number.",
   "4. Write in authentic CFB media voice with real terminology and culture.",
   "5. Match tone to the result — a blowout reads differently than a nail-biter.",
+  // Ratings are the single loudest tell that this was written inside a video game. No beat
+  // writer, coach, fan or analyst has ever said "our 87 overall left tackle" — the number
+  // exists in the save, and the media's job is to translate it into how a player is talked
+  // about. Every rating is therefore stripped from the context and replaced with the words
+  // a staff would actually use.
+  "6. NEVER write a player rating, an overall, an OVR, a 0-99 number, a letter grade for a",
+  "   player, or any phrase like \"an 88 overall corner\" / \"rated 92\" / \"a 74 OVR backup\".",
+  "   Those numbers do not exist in this universe. Real football language ONLY: all-conference,",
+  "   a load in the middle, a burner, the weak link, a program-changer, a guy who's still a",
+  "   year away, the reason they're ranked. When the context grades a player in words, use",
+  "   THOSE words or your own football language — never convert them back into a number.",
 ].join("\n");
 
 // House style for long-form articles (front page recap, national lead, featured wire
@@ -230,6 +241,24 @@ export interface ActiveSuspension {
 
 function fmtRank(r: number | null | undefined): string {
   return r && r <= 25 ? `#${r} ` : "";
+}
+
+/**
+ * A player's ability, in the only vocabulary this universe has.
+ *
+ * The save stores a 0-99 rating. Nobody in football talks that way — no beat writer has
+ * written "our 87 overall left tackle", no fan has ever shouted it, and a rating number in
+ * an article is the loudest possible signal that a video game wrote it. The number stays in
+ * the app for sorting and math; it never reaches a prompt. The scouting report has graded in
+ * words since v0.1.9 — this is that rule applied to every other surface, which is where it
+ * was still leaking.
+ */
+function gradeWord(overall: unknown): string {
+  // Takes `unknown` on purpose: several of these boards arrive as Record<string, unknown>
+  // from the sidecar, and a rating slipping through as a raw value is exactly what this
+  // function exists to prevent.
+  const n = typeof overall === "number" && Number.isFinite(overall) ? overall : null;
+  return TIER_LABEL[tierFor(n)];
 }
 
 // One compact stat line per player, from the save's real season stat tables. This is what
@@ -1018,7 +1047,9 @@ export function buildMediaContext(
   if (opponentName && oppRoster.length) {
     parts.push(`=== OPPONENT ROSTER: ${opponentName} (REAL players from the save) ===`);
     for (const p of oppRoster.slice(0, 18)) {
-      const bits = [p.position, p.year, p.overall != null ? `${p.overall} OVR` : null]
+      // Graded in WORDS, never a number — see rule 6. The staff-board tier is the same one
+      // the scouting report has always used, so the whole app speaks one language.
+      const bits = [p.position, p.year, p.overall != null ? TIER_LABEL[tierFor(p.overall)] : null]
         .filter(Boolean)
         .join(", ");
       const stat = fmtStats(p);
@@ -1043,7 +1074,9 @@ export function buildMediaContext(
   if (roster.length) {
     parts.push("=== YOUR ROSTER (use ONLY these real players for player-specific content) ===");
     parts.push(
-      "Format: Name (Pos, Year, OVR, Personality) — SEASON-TO-DATE TOTALS.",
+      "Format: Name (Pos, Year, how the staff grades him IN WORDS, Personality) — SEASON-TO-DATE TOTALS.",
+      "There are NO rating numbers here on purpose. Never invent one and never convert a grade",
+      "back into a number — see rule 6 in the system prompt.",
       "CRITICAL: these are CUMULATIVE SEASON totals, NOT this week's box score. Never present",
       "a season total as a single-game performance (a QB with 3,100 season yards did NOT throw",
       "for 3,100 this week). If you don't have this game's individual numbers, write about the",
@@ -1053,7 +1086,12 @@ export function buildMediaContext(
       const susp = suspByName.get(p.name.toLowerCase());
       // While suspended the save holds the temporary benching rating — show the real one.
       const shownOverall = susp?.originalOverall ?? p.overall;
-      const bits = [p.position, p.year, shownOverall != null ? `${shownOverall} OVR` : null, p.personality ?? null]
+      const bits = [
+        p.position,
+        p.year,
+        shownOverall != null ? TIER_LABEL[tierFor(shownOverall)] : null,
+        p.personality ?? null,
+      ]
         .filter(Boolean)
         .join(", ");
       const stat = fmtStats(p);
@@ -1112,9 +1150,10 @@ export function buildMediaContext(
       "RULES FOR SUSPENDED PLAYERS:",
       "- They DO NOT play, start, or record stats while suspended. Never write them into game",
       "  action, drives, highlights, or the box score for any suspended week.",
-      "- Their listed OVR above is their TRUE ability. The suspension — not talent, injury, or a",
-      "  ratings drop — is the ONLY reason they're out. NEVER claim a player's rating collapsed,",
-      "  that he 'fell to 40 overall', regressed, or was benched for performance.",
+      "- The grade listed for them above is their TRUE ability. The suspension — not talent,",
+      "  injury, or any drop in ability — is the ONLY reason they're out. NEVER claim a player",
+      "  collapsed, regressed, lost his ability, or was benched for performance (and never put a",
+      "  rating number on it either way).",
       "- This IS a storyline: cover the absence like real media would — who steps up in his spot,",
       "  what the locker room thinks, when he's back, pressers fielding questions about it.",
       "- When he returns, he returns at his true ability. Frame any return week as reinstatement."
@@ -1698,7 +1737,8 @@ const SHOW_DIRECTION: Record<string, string[]> = {
     "single-team update. Jake Morrison works the board team by team; Lisa Chen breaks down what",
     "each move (or looming move) means for the depth chart; Marcus ties it to the national picture.",
     "Work directly off the PORTAL BOARD provided in the context: name real at-risk players by name,",
-    "their program, their OVR, and WHY they're a flight risk (buried behind a starter, playing-time",
+    "their program, how good they are IN FOOTBALL TERMS (never a rating number), and WHY they're a",
+    "flight risk (buried behind a starter, playing-time",
     "dealbreaker). Cover several different programs. If the portal isn't open yet, frame it as the",
     "flight-risk watch list and the storylines building toward the window — never claim someone has",
     "transferred when the board says the portal is closed. Include stage directions and real banter.",
@@ -1736,7 +1776,7 @@ function portalBoardBlock(extra: Extra): string {
   if (p.active && Array.isArray(p.transferred) && p.transferred.length) {
     lines.push("IN THE PORTAL NOW (real transfer chances):");
     for (const t of p.transferred.slice(0, 20)) {
-      lines.push(`  - ${t.name} (${t.position}, ${t.overall} OVR, ${t.year}) — ${t.team}${t.teamRank ? ` (#${t.teamRank})` : ""} · ${t.chance}% chance · wants: ${t.dealbreaker}`);
+      lines.push(`  - ${t.name} (${t.position}, ${gradeWord(t.overall)}, ${t.year}) — ${t.team}${t.teamRank ? ` (#${t.teamRank})` : ""} · ${t.chance}% chance · wants: ${t.dealbreaker}`);
     }
   } else {
     lines.push("PORTAL STATUS: the transfer portal is NOT open yet this week (it opens after the season) — do NOT claim any player has entered the portal or transferred. Cover it as WHO IS AT RISK and the storylines building toward the window.");
@@ -1745,12 +1785,12 @@ function portalBoardBlock(extra: Extra): string {
   if (risk.length) {
     lines.push("", "FLIGHT RISK — good players buried on the depth chart league-wide (this is the story):");
     for (const r of risk.slice(0, 24)) {
-      lines.push(`  - [${r.tier}] ${r.name} (${r.position}, ${r.overall} OVR, ${r.year}) — ${r.team}${r.teamRank ? ` (#${r.teamRank})` : ""} · buried behind a ${r.starterOvr} OVR starter · dealbreaker: ${r.dealbreaker}`);
+      lines.push(`  - [${r.tier}] ${r.name} (${r.position}, ${gradeWord(r.overall)}, ${r.year}) — ${r.team}${r.teamRank ? ` (#${r.teamRank})` : ""} · buried behind a ${gradeWord(r.starterOvr)} starter · dealbreaker: ${r.dealbreaker}`);
     }
   }
   lines.push(
     "",
-    "Every player you name MUST come from the board above. Reason from the data: a high-OVR",
+    "Every player you name MUST come from the board above. Reason from the data: a highly-graded",
     "underclassman stuck behind a returning starter whose dealbreaker is Playing Time is the",
     "textbook flight risk. Cover multiple programs, not just one — this is a league-wide show."
   );
@@ -1824,11 +1864,11 @@ function buildOffseasonBriefSpec(ctx: MediaContext, extra: Extra): PromptSpec {
     .map((c) => `  ${c.name} (${c.position}${c.nationalRank ? `, #${c.nationalRank} nat'l` : ""})`);
   const moverLines = leagueMovers
     .slice(0, 16)
-    .map((m) => `  ${m.name} (${m.position ?? "?"}${m.overall != null ? `, ${m.overall} OVR` : ""}) — LEFT ${m.teamRank ? `#${m.teamRank} ` : ""}${m.team}${m.chance ? `, ${m.chance}% gone` : ""}`);
+    .map((m) => `  ${m.name} (${m.position ?? "?"}${m.overall != null ? `, ${gradeWord(m.overall)}` : ""}) — LEFT ${m.teamRank ? `#${m.teamRank} ` : ""}${m.team}${m.chance ? `, ${m.chance}% gone` : ""}`);
   const lossLines = teamLosses
     .slice(0, 10)
-    .map((t) => `  ${t.teamRank ? `#${t.teamRank} ` : ""}${t.team}: ${t.count} in the portal (top ${t.topOverall} OVR)${t.names.length ? ` — ${t.names.join(", ")}` : ""}`);
-  const userLossLines = userDepartures.slice(0, 12).map((m) => `  ${m.name} (${m.position ?? "?"}${m.overall != null ? `, ${m.overall} OVR` : ""})`);
+    .map((t) => `  ${t.teamRank ? `#${t.teamRank} ` : ""}${t.team}: ${t.count} in the portal (best of them ${gradeWord(t.topOverall)})${t.names.length ? ` — ${t.names.join(", ")}` : ""}`);
+  const userLossLines = userDepartures.slice(0, 12).map((m) => `  ${m.name} (${m.position ?? "?"}${m.overall != null ? `, ${gradeWord(m.overall)}` : ""})`);
   const classLines = topClasses
     .slice(0, 12)
     .map((c) => `  ${c.teamRank ? `#${c.teamRank} ` : ""}${c.school}: ${c.count} commits, ${c.blueChips} blue-chip${c.avgRank ? `, avg nat'l rank ${c.avgRank}` : ""}${c.top.length ? ` — ${c.top.join(", ")}` : ""}`);
@@ -2273,7 +2313,7 @@ function recruitLine(r: Record<string, unknown>): string {
   const bits = [
     r.stars != null ? `${r.stars}★` : null,
     posText,
-    r.overall != null ? `${r.overall} OVR` : null,
+    r.overall != null ? gradeWord(r.overall) : null,
     r.nationalRank != null ? `#${r.nationalRank} nat'l` : null,
     r.positionRank != null ? `#${r.positionRank} at position` : null,
     r.stateRank != null ? `#${r.stateRank} in state` : null,

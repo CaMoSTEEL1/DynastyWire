@@ -212,6 +212,48 @@ describe("recap-lead on a week with no game", () => {
   });
 });
 
+// ── No ratings, anywhere ────────────────────────────────────────────────────────
+// A rating number in an article is the loudest possible tell that a video game wrote it.
+// Nobody in football says "our 87 overall left tackle". The save's 0-99 stays in the app for
+// sorting and math and must never reach a prompt — the scouting report has graded in words
+// since v0.1.9, and this asserts the same rule now holds on every other surface.
+
+describe("the media never sees a rating number", () => {
+  const RATED: RosterPlayer[] = [
+    P("Dorian Whitfield", "QB", { overall: 92 }),
+    P("Kellen Marsh", "HB", { overall: 78 }),
+    P("Isaiah Pruitt", "LB", { overall: 63 }),
+  ];
+  const ctx = () =>
+    gen.buildMediaContext(DELTA, SNAPSHOT, { roster: RATED, oppRoster: [P("Cortez Bly", "QB", { overall: 88 })] });
+
+  it("grades the roster in words instead of numbers", () => {
+    const c = ctx().userContext;
+    expect(c).toContain("Dorian Whitfield (QB, JR, elite");
+    expect(c).toContain("Kellen Marsh (HB, JR, solid starter");
+    expect(c).toContain("Isaiah Pruitt (LB, JR, weak spot");
+  });
+
+  it("grades the opponent in words too", () => {
+    expect(ctx().userContext).toContain("Cortez Bly (QB, JR, all-conference");
+  });
+
+  it("puts no rating number anywhere in the shared context", () => {
+    const c = ctx().userContext;
+    expect(c).not.toMatch(/\b\d{2}\s*OVR\b/);
+    expect(c).not.toMatch(/\b\d{2}\s+overall\b/i);
+    // The tell that started it: the format line used to advertise an OVR column.
+    expect(c).not.toContain("Name (Pos, Year, OVR");
+  });
+
+  it("tells every generator the numbers do not exist in this universe", () => {
+    const spec = gen.buildSpec("social", ctx(), {});
+    const system = spec.system ?? ctx().systemPrompt;
+    expect(system).toContain("NEVER write a player rating");
+    expect(system).toContain("Real football language ONLY");
+  });
+});
+
 // ── What the team is playing for ────────────────────────────────────────────────
 // From a tester's first full season, one save, three complaints — a bowl game written as "a
 // first round playoff matchup", "fighting for bowl eligibility" weeks after clinching it,
