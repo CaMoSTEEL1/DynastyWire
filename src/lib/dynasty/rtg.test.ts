@@ -345,3 +345,66 @@ describe("his podium", () => {
     expect(p).toContain("THESE DO NOT MOVE TOGETHER");
   });
 });
+
+describe("who he is", () => {
+  it("opens the form mostly answered instead of as a blank wall", async () => {
+    const { seedFromSave } = await import("./rtg-character");
+    const seeded = seedFromSave(
+      P({ prospectStars: "FOUR_STAR", homeState: "Georgia" }),
+      [{ teamRow: 1, school: "Alabama", offerStatus: "Offered", score: 1, tier: null, coachTrust: null, teamNeed: null, brandBonus: null, decommitted: false }],
+      "Oregon State"
+    );
+    expect(seeded.arc).toBe("blue-chip");
+    expect(seeded.hometown).toBe("Georgia");
+    expect(seeded.bio).toContain("four star");
+    expect(seeded.bio).toContain("Alabama");
+  });
+
+  it("reads an unranked kid as overlooked", async () => {
+    const { seedFromSave } = await import("./rtg-character");
+    expect(seedFromSave(P({ prospectStars: "TWO_STAR" }), [], "Oregon State").arc).toBe("underrated");
+  });
+
+  it("needs a person, not every field, before the mode unlocks", async () => {
+    const { isComplete, EMPTY_CHARACTER } = await import("./rtg-character");
+    expect(isComplete(EMPTY_CHARACTER)).toBe(false);
+    expect(isComplete(null)).toBe(false);
+    expect(
+      isComplete({ ...EMPTY_CHARACTER, hometown: "Valdosta", bio: "b", positionCoach: "Coach Reyes", home: "his mother" })
+    ).toBe(true);
+  });
+
+  it("hands the cast over as recurring, not decoration", async () => {
+    const { characterBlock, EMPTY_CHARACTER } = await import("./rtg-character");
+    const b = characterBlock(
+      { ...EMPTY_CHARACTER, arc: "underrated", hometown: "Valdosta", bio: "Walked on.", positionCoach: "Coach Reyes", home: "his mother Renee", reporter: "Dana Whitt" }
+    )!;
+    expect(b).toContain("Coach Reyes — his position coach");
+    expect(b).toContain("his mother Renee — home");
+    expect(b).toContain("These people RECUR");
+    expect(b).toContain("never invent replacements");
+  });
+
+  it("says nothing at all until there is a person", async () => {
+    const { characterBlock, EMPTY_CHARACTER } = await import("./rtg-character");
+    expect(characterBlock(EMPTY_CHARACTER)).toBeNull();
+  });
+
+  it("reaches every RTG prompt", async () => {
+    const { buildSpec } = await import("./gen");
+    const character = {
+      arc: "underrated" as const, hometown: "Valdosta", bio: "Walked on.",
+      positionCoach: "Coach Reyes", aheadOfHim: "", teammate: "", reporter: "", home: "his mother", goal: "Play.",
+    };
+    const s = stats({ gamesPlayed: 2, gamesStarted: 0 });
+    const ctx = {
+      school: "Oregon State", week: 6, phase: { label: "REGULAR SEASON" },
+      snapshot: { player: P({ stats: s }), schoolInterest: [] },
+      roster: [], backstory: null, history: null, world: null, outlook: null, userContext: "",
+    } as never;
+    for (const kind of ["rtg-week", "rtg-social", "rtg-podium"]) {
+      const p = buildSpec(kind, ctx, { baselinePlayer: P({ stats: s }), character, text: "hi", brand: { followers: 380, posts: [], history: [] } }).prompt;
+      expect(p, kind).toContain("Coach Reyes");
+    }
+  });
+});

@@ -11,8 +11,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { useIssueTab } from "@/components/dynasty/use-issue-tab";
 import { SectionHeader } from "@/components/ui/section-header";
+import { RtgGate } from "@/components/rtg/rtg-gate";
 import { BrandPanel } from "@/components/rtg/brand-panel";
 import { useBrand } from "@/components/rtg/use-brand";
+import { useCharacter } from "@/components/rtg/use-character";
 import { playingTime, weekLine, weekLineText, WEEK_STATE_LABEL } from "@/lib/dynasty/rtg";
 import { cn } from "@/lib/utils";
 
@@ -24,9 +26,10 @@ interface WeekPiece {
   error?: boolean;
 }
 
-export default function TheWeekPage() {
+function TheWeekPageInner() {
   const { snapshot, generate, loading } = useDynasty();
   const { brand, baseline, week: brandWeek } = useBrand();
+  const character = useCharacter();
 
   const [piece, setPiece] = useState<WeekPiece | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -48,7 +51,7 @@ export default function TheWeekPage() {
     setGenerating(true);
     setError(null);
     try {
-      const data = await generate<WeekPiece>("rtg-week", { baselinePlayer: baseline });
+      const data = await generate<WeekPiece>("rtg-week", { baselinePlayer: baseline, character });
       if (data?.error || !data?.body) setError("Couldn't file this week's story.");
       else setPiece(data);
     } catch (e) {
@@ -56,7 +59,7 @@ export default function TheWeekPage() {
     } finally {
       setGenerating(false);
     }
-  }, [generate, baseline]);
+  }, [generate, baseline, character]);
 
   if (loading) return <p className="p-6 font-serif text-ink3">Reading the save…</p>;
   if (!player) {
@@ -164,5 +167,15 @@ export default function TheWeekPage() {
         </aside>
       </div>
     </div>
+  );
+}
+
+// Every RTG surface is wrapped: the character is mandatory, and whichever page the user opens
+// first is where they meet him. See DESIGN-rtg-mode.md decision 10.
+export default function TheWeekPage() {
+  return (
+    <RtgGate>
+      <TheWeekPageInner />
+    </RtgGate>
   );
 }

@@ -12,7 +12,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { useIssueTab } from "@/components/dynasty/use-issue-tab";
 import { SectionHeader } from "@/components/ui/section-header";
+import { RtgGate } from "@/components/rtg/rtg-gate";
 import { useBrand } from "@/components/rtg/use-brand";
+import { useCharacter } from "@/components/rtg/use-character";
 import { cn } from "@/lib/utils";
 
 interface Answer {
@@ -47,9 +49,10 @@ function Delta({ label, v }: { label: string; v?: number }) {
   );
 }
 
-export default function HisPodiumPage() {
+function HisPodiumPageInner() {
   const { snapshot, roster, generate, loading } = useDynasty();
   const { baseline } = useBrand();
+  const character = useCharacter();
 
   const [presser, setPresser] = useState<Presser | null>(null);
   const [answered, setAnswered] = useState<Record<number, Answer>>({});
@@ -67,7 +70,7 @@ export default function HisPodiumPage() {
     setBusy(true);
     setError(null);
     try {
-      const data = await generate<Presser>("rtg-podium", { baselinePlayer: baseline, roster });
+      const data = await generate<Presser>("rtg-podium", { baselinePlayer: baseline, roster, character });
       if (data?.error || !data?.questions?.length) setError("Nobody came.");
       else setPresser(data);
     } catch (e) {
@@ -75,7 +78,7 @@ export default function HisPodiumPage() {
     } finally {
       setBusy(false);
     }
-  }, [generate, baseline, roster]);
+  }, [generate, baseline, roster, character]);
 
   if (loading) return <p className="p-6 font-serif text-ink3">Reading the save…</p>;
   if (!player) {
@@ -181,5 +184,15 @@ export default function HisPodiumPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// Every RTG surface is wrapped: the character is mandatory, and whichever page the user opens
+// first is where they meet him. See DESIGN-rtg-mode.md decision 10.
+export default function HisPodiumPage() {
+  return (
+    <RtgGate>
+      <HisPodiumPageInner />
+    </RtgGate>
   );
 }

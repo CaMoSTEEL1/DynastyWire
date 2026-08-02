@@ -10,10 +10,11 @@
 import { useMemo } from "react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { SectionHeader } from "@/components/ui/section-header";
+import { RtgGate } from "@/components/rtg/rtg-gate";
 import { depthOf, positionRoom } from "@/lib/dynasty/rtg";
 import { cn } from "@/lib/utils";
 
-export default function TheRoomPage() {
+function TheRoomPageInner() {
   const { snapshot, roster, loading } = useDynasty();
   const player = snapshot?.player ?? null;
 
@@ -88,5 +89,15 @@ export default function TheRoomPage() {
         Ordered by starts, then by production — read from your save, no credits spent.
       </p>
     </div>
+  );
+}
+
+// Every RTG surface is wrapped: the character is mandatory, and whichever page the user opens
+// first is where they meet him. See DESIGN-rtg-mode.md decision 10.
+export default function TheRoomPage() {
+  return (
+    <RtgGate>
+      <TheRoomPageInner />
+    </RtgGate>
   );
 }

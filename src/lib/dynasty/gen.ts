@@ -25,6 +25,7 @@ import { nationalBrief, nationalFacts } from "./national";
 import { coachResumeBlock, jobSecurityLine, priorSeasonsBlock } from "./history";
 import { postseasonBlock, postseasonOutlook, weekShape, type PostseasonOutlook } from "./postseason";
 import { positionRoom, roomBlock, rtgBrief, rtgFacts, type PlayerWeekState } from "./rtg";
+import { characterBlock, type RtgCharacter } from "./rtg-character";
 import { worldBlock } from "./world";
 import { brandBlock, brandTier, TIER_NOTE, type BrandState, type FollowerResult } from "./brand";
 import type { SeasonRecord } from "./archive";
@@ -1367,6 +1368,9 @@ function buildRtgWeekSpec(ctx: MediaContext, extra: Extra): PromptSpec {
       "",
       rtgBrief(facts),
       "",
+      // Who he is. Without this the piece is a stat line with adjectives.
+      characterBlock((extra.character ?? null) as RtgCharacter | null) ?? "",
+      "",
       ctx.history ?? "",
       ...identityBlock(ctx.backstory),
       `The week: Week ${ctx.week ?? "—"} · ${ctx.phase.label}.`,
@@ -1486,6 +1490,8 @@ function buildRtgSocialSpec(ctx: MediaContext, extra: Extra): PromptSpec {
       "",
       brand ? brandBlock({ state: brand, week: brandWeek }) : "",
       "",
+      characterBlock((extra.character ?? null) as RtgCharacter | null) ?? "",
+      "",
       rtgBrief(facts),
       "",
       // The league's own headlines give the feed real events to react to, which is what stops
@@ -1564,6 +1570,8 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
           "",
           rtgBrief(facts),
           "",
+          characterBlock((extra.character ?? null) as RtgCharacter | null) ?? "",
+          "",
           roomBlock(room, p?.position ?? null) ?? "",
           "",
           ...identityBlock(ctx.backstory),
@@ -1619,6 +1627,7 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
           "Never invent a follower count, a stat, or a rating (see rule 6). Never claim the post",
           "changed his playing time — that is the coaching staff's call and it has not been made.",
           "",
+          characterBlock((extra.character ?? null) as RtgCharacter | null) ?? "",
           ctx.snapshot.player ? rtgBrief(rtgFacts({
             player: ctx.snapshot.player,
             baseline: (extra.baselinePlayer ?? null) as RtgPlayer | null,

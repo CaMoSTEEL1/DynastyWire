@@ -9,6 +9,7 @@
 import { useMemo } from "react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { SectionHeader } from "@/components/ui/section-header";
+import { RtgGate } from "@/components/rtg/rtg-gate";
 import { recruitmentBoard } from "@/lib/dynasty/rtg";
 import { cn } from "@/lib/utils";
 import type { SchoolInterest } from "@/lib/dynasty/client";
@@ -44,7 +45,7 @@ function Row({ s, committed }: { s: SchoolInterest; committed: boolean }) {
   );
 }
 
-export default function RecruitmentPage() {
+function RecruitmentPageInner() {
   const { snapshot, loading } = useDynasty();
   const player = snapshot?.player ?? null;
   const school = snapshot?.userTeam?.name ?? null;
@@ -109,5 +110,15 @@ export default function RecruitmentPage() {
         Read directly from your save — no AI, no credits spent.
       </p>
     </div>
+  );
+}
+
+// Every RTG surface is wrapped: the character is mandatory, and whichever page the user opens
+// first is where they meet him. See DESIGN-rtg-mode.md decision 10.
+export default function RecruitmentPage() {
+  return (
+    <RtgGate>
+      <RecruitmentPageInner />
+    </RtgGate>
   );
 }

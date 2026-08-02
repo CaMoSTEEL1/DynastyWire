@@ -11,8 +11,10 @@ import { useCallback, useEffect, useState } from "react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { useIssueTab } from "@/components/dynasty/use-issue-tab";
 import { SectionHeader } from "@/components/ui/section-header";
+import { RtgGate } from "@/components/rtg/rtg-gate";
 import { BrandPanel } from "@/components/rtg/brand-panel";
 import { useBrand } from "@/components/rtg/use-brand";
+import { useCharacter } from "@/components/rtg/use-character";
 import { fmtFollowers } from "@/lib/dynasty/brand";
 import { cn } from "@/lib/utils";
 
@@ -67,9 +69,10 @@ function PostCard({ p }: { p: Post }) {
   );
 }
 
-export default function MySocialPage() {
+function MySocialPageInner() {
   const { snapshot, generate, loading } = useDynasty();
   const { brand, baseline, week, recordPost } = useBrand();
+  const character = useCharacter();
 
   const [feed, setFeed] = useState<Feed | null>(null);
   const [busy, setBusy] = useState(false);
@@ -91,7 +94,7 @@ export default function MySocialPage() {
     setBusy(true);
     setError(null);
     try {
-      const data = await generate<Feed>("rtg-social", { baselinePlayer: baseline, brand, brandWeek: week });
+      const data = await generate<Feed>("rtg-social", { baselinePlayer: baseline, brand, brandWeek: week, character });
       if (data?.error || !data?.posts?.length) setError("Nothing's being said about him right now.");
       else setFeed(data);
     } catch (e) {
@@ -99,7 +102,7 @@ export default function MySocialPage() {
     } finally {
       setBusy(false);
     }
-  }, [generate, baseline, brand, week]);
+  }, [generate, baseline, brand, week, character]);
 
   const send = useCallback(async () => {
     const text = draft.trim();
@@ -107,7 +110,7 @@ export default function MySocialPage() {
     setPosting(true);
     setError(null);
     try {
-      const res = await generate<PostResult>("rtg-post", { text, brand, baselinePlayer: baseline }, { force: true });
+      const res = await generate<PostResult>("rtg-post", { text, brand, baselinePlayer: baseline, character }, { force: true });
       if (res?.error || !res?.reach) {
         setError("The post didn't go through.");
         return;
@@ -121,7 +124,7 @@ export default function MySocialPage() {
     } finally {
       setPosting(false);
     }
-  }, [draft, posting, generate, brand, baseline, recordPost]);
+  }, [draft, posting, generate, brand, baseline, recordPost, character]);
 
   if (loading) return <p className="p-6 font-serif text-ink3">Reading the save…</p>;
   if (!player) {
@@ -242,5 +245,15 @@ export default function MySocialPage() {
         </aside>
       </div>
     </div>
+  );
+}
+
+// Every RTG surface is wrapped: the character is mandatory, and whichever page the user opens
+// first is where they meet him. See DESIGN-rtg-mode.md decision 10.
+export default function MySocialPage() {
+  return (
+    <RtgGate>
+      <MySocialPageInner />
+    </RtgGate>
   );
 }
