@@ -15,6 +15,7 @@ import {
   type LlmConfig,
   type Recruit,
   type RosterPlayer,
+  type RtgPlayer,
   type WeekDelta,
 } from "./client";
 import { recordBaseline, rowFromReport } from "./baseline";
@@ -23,6 +24,9 @@ import { lockedBlock, recapBrief, recapFacts } from "./recap";
 import { nationalBrief, nationalFacts } from "./national";
 import { coachResumeBlock, jobSecurityLine, priorSeasonsBlock } from "./history";
 import { postseasonBlock, postseasonOutlook, weekShape, type PostseasonOutlook } from "./postseason";
+import { rtgBrief, rtgFacts, type PlayerWeekState } from "./rtg";
+import { worldBlock } from "./world";
+import { brandBlock, brandTier, TIER_NOTE, type BrandState, type FollowerResult } from "./brand";
 import type { SeasonRecord } from "./archive";
 import type { CoachBackstory } from "./saga";
 import {
@@ -198,6 +202,9 @@ export interface MediaContext {
   /** The coach's career résumé from the save — titles, career record, record at THIS
    * school, tenure. Carried separately for the same reason as `history`. */
   resume: string | null;
+  /** The league's own life: the game's own headlines, the record book, the carousel, the
+   * anniversaries. Parsed, never generated — see world.ts. */
+  world: string | null;
   /** What this team is playing for: bowl math, playoff standing, and whether a postseason
    * game is a bracket game or an ordinary bowl. Null when the save has no user team. */
   outlook: PostseasonOutlook | null;
@@ -1186,6 +1193,21 @@ export function buildMediaContext(
     parts.push("");
   }
 
+  // The league moving without you. All four of these are parsed from the save, so they cost
+  // nothing and cannot be wrong — the game itself decided what was newsworthy.
+  const world = worldBlock({
+    world: after.world,
+    school: knownSchool,
+    opponent: opponentName,
+    week: d.weekPlayed,
+    archive: opts.priorSeasons ?? [],
+    currentYear: after.year ?? null,
+  });
+  if (world) {
+    parts.push(world);
+    parts.push("");
+  }
+
   // Persistent coach identity: written once on the Coach tab, then fed to EVERY generator
   // so recaps, social, pressers, and situations all know who this coach is and reuse the
   // same recurring cast (AD, booster, beat writer, rival) instead of inventing new ones.
@@ -1207,6 +1229,7 @@ export function buildMediaContext(
     backstory,
     history,
     resume,
+    world,
     outlook,
     weekState,
     phase,
@@ -1267,10 +1290,284 @@ function recapFactsFor(ctx: MediaContext, extra: Extra) {
   });
 }
 
+/**
+ * ROAD TO GLORY — "The Week". The only generated surface in RTG v1, and therefore the whole
+ * cost model of the mode.
+ *
+ * Built entirely on the deterministic core in rtg.ts: code settles whether he played, what he
+ * did in the actual game, and where he stands, then the writer builds prose around a table it
+ * may not contradict. The load-bearing case is the week he DIDN'T play — that has to be a real
+ * piece about not playing, not padding, or the mode does not work. See DESIGN-rtg-mode.md
+ * decision 12.
+ */
+const RTG_FRAMING: Record<PlayerWeekState, string> = {
+  "did-not-play":
+    "HE DID NOT PLAY THIS WEEK. Write the piece about exactly that — the scout-team reps nobody " +
+    "saw, watching from the sideline in a clean uniform, the guy ahead of him having a night, " +
+    "what a week looks like when you are not part of the plan. This is the honest experience of " +
+    "most of a young player's season and it is the part the game never shows. Do NOT invent a " +
+    "snap, a rep in the game, a stat, or a moment on the field for him.",
+  "played-off-bench":
+    "HE GOT ON THE FIELD but did not start. Write what that is: the wait, the number being " +
+    "called, what he did with it. His real line for this game is below — use it, and do not " +
+    "inflate it into a starring role.",
+  "first-start":
+    "THIS WAS HIS FIRST CAREER START. It only happens once — write it that way: the week " +
+    "leading in, the walk out, what the job actually asked of him, and how he answered. His " +
+    "real line is below.",
+  starter:
+    "HE STARTED. Write the game he had, using the real line below, and what it does to his hold " +
+    "on the job.",
+  "multi-week-gap":
+    "MORE THAN ONE GAME HAS PASSED since the last reading, so nothing can be pinned to a single " +
+    "week. Write about the stretch as a stretch — never claim what happened in one specific game.",
+  unknown:
+    "THERE IS NO PREVIOUS READING to compare against, so whether he played this week is UNKNOWN. " +
+    "Write about where he stands overall — his season, his standing, the room he is in — and " +
+    "never claim he did or did not play.",
+};
+
+function buildRtgWeekSpec(ctx: MediaContext, extra: Extra): PromptSpec {
+  const snap = ctx.snapshot;
+  const baseline = (extra.baselinePlayer ?? null) as RtgPlayer | null;
+  const facts = rtgFacts({
+    player: snap.player ?? null,
+    baseline,
+    school: ctx.school,
+    interest: snap.schoolInterest,
+    teamResult: ctx.outlook ? ctx.outlook.lines[0] ?? null : null,
+  });
+  const player = snap.player ?? null;
+  return {
+    maxTokens: 2200,
+    prompt: [
+      "Write this week's story about ONE PLAYER for his own personal wire. 400-550 words.",
+      "Return JSON with this exact schema:",
+      '{"headline": "string", "byline": "string", "body": "string", "pullQuote": "string"}',
+      "",
+      ctx.backstory?.reporterName
+        ? `You ARE ${ctx.backstory.reporterName}, who covers ${ctx.school}.`
+        : `You are a beat writer covering ${ctx.school}.`,
+      "",
+      HOUSE_STYLE,
+      "",
+      "FOR THIS PIECE SPECIFICALLY:",
+      `- The subject is ${player?.name ?? "the player"}, and the story is HIS week — not the team's.`,
+      "- 4-6 paragraphs separated by \\n\\n.",
+      RTG_FRAMING[facts.time.state],
+      // The whole emotional premise of the mode: he is one of 85, and the world is indifferent
+      // until it isn't. A piece that treats a freshman as the centre of the program is the
+      // failure mode here.
+      "- HE IS NOT THE CENTRE OF THIS PROGRAM YET. The team has its own season and it does not " +
+        "revolve around him. Write him as one of eighty-five — the interest of the piece is what " +
+        "it looks like from where he actually stands, not a manufactured spotlight.",
+      "- The pullQuote is a single line, text only, no quote marks — him, a coach, or a teammate.",
+      "- Invent the texture freely (the walk to the facility, the group chat, the weather, what " +
+        "his hands were doing) as long as it never contradicts the locked facts.",
+      "",
+      rtgBrief(facts),
+      "",
+      ctx.history ?? "",
+      ...identityBlock(ctx.backstory),
+      `The week: Week ${ctx.week ?? "—"} · ${ctx.phase.label}.`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  };
+}
+
+/**
+ * ROAD TO GLORY — social. Not the dynasty feed with a different subject in it.
+ *
+ * Dynasty social works because 40,000 people care about your program and argue about it. A
+ * freshman backup has none of that, and pointing the dynasty generator at him produces the
+ * single worst failure this mode can have: a fanbase treating a kid who took zero snaps as
+ * the centre of the sport. That is the "manufactured spotlight" problem, and at week three of
+ * a two-star's freshman year it is not just wrong, it's embarrassing.
+ *
+ * So the RTG feed is built on a different premise: THE INTERNET DOES NOT KNOW HIM YET. The
+ * accounts that talk about him are the ones that talk about players nobody has heard of —
+ * recruiting services who ranked him, position-battle obsessives, his own high school's
+ * account, his teammates, his hometown. National attention is something the feed EARNS as his
+ * week-state climbs, and withholding it early is what makes it land later.
+ */
+function buildRtgSocialSpec(ctx: MediaContext, extra: Extra): PromptSpec {
+  const snap = ctx.snapshot;
+  const player = snap.player ?? null;
+  const baseline = (extra.baselinePlayer ?? null) as RtgPlayer | null;
+  const facts = rtgFacts({
+    player,
+    baseline,
+    school: ctx.school,
+    interest: snap.schoolInterest,
+    teamResult: ctx.outlook ? ctx.outlook.lines[0] ?? null : null,
+  });
+  const state = facts.time.state;
+  const brand = (extra.brand ?? null) as BrandState | null;
+  const brandWeek = (extra.brandWeek ?? null) as FollowerResult | null;
+
+  // How much of the internet has any reason to be looking at him this week.
+  const attention: Record<PlayerWeekState, string> = {
+    "did-not-play":
+      "ATTENTION LEVEL: ALMOST NONE. He did not play. The feed is mostly NOT about him — it is " +
+      "the fanbase arguing about the team, and he surfaces only at the edges: a recruiting " +
+      "account still tracking him, a depth-chart obsessive asking why he isn't seeing the " +
+      "field, his high school posting about a former player, a teammate's group post he happens " +
+      "to be in. NOBODY national is discussing him. Do not manufacture buzz that does not exist.",
+    "played-off-bench":
+      "ATTENTION LEVEL: LOCAL AND CURIOUS. He got in. A few people noticed — the film-watchers, " +
+      "the recruiting account that ranked him, the fans who wanted to see him. It is interest, " +
+      "not hype. The rest of the feed is still about the team.",
+    "first-start":
+      "ATTENTION LEVEL: THIS IS THE SPIKE. His first career start is the first time the wider " +
+      "fanbase has an opinion about him, and opinions arrive fully formed and mostly unfair. " +
+      "Include the people who are suddenly experts on him, the ones defending him before he has " +
+      "done anything, and the recruiting account posting 'told you' with his old ranking.",
+    starter:
+      "ATTENTION LEVEL: HE IS THE STORY NOW. He is the starter and gets starter treatment: " +
+      "credit, blame, and takes from people who did not watch. Rivals have opinions about him.",
+    "multi-week-gap":
+      "ATTENTION LEVEL: unclear — more than one game has passed. Keep the feed about the team " +
+      "and the stretch, never about one specific game of his.",
+    unknown:
+      "ATTENTION LEVEL: unknown — there is no reading of whether he played. Keep the feed about " +
+      "the program and his standing in general, and never react to a game of his.",
+  };
+
+  const board = facts.board;
+  return {
+    maxTokens: 2600,
+    prompt: [
+      "Generate 14 social media posts as JSON with this exact schema:",
+      '{"posts": [{"handle": "string", "displayName": "string", "type": "fan"|"rival"|"analyst"|"insider"|"reddit", "body": "string", "likes": number, "reposts": number}]}',
+      "",
+      `The subject is ${player?.name ?? "a player"}, a ${player?.classYear ?? ""} ${player?.position ?? "player"} at ${ctx.school}.`,
+      attention[state],
+      "",
+      "WHO IS ACTUALLY POSTING — this is a PLAYER's feed, not a program's:",
+      "- Recruiting-service accounts who ranked him coming out of high school, and treat every " +
+        "snap as evidence about their own ranking. Use type \"analyst\".",
+      "- Depth-chart obsessives who track snap counts and argue about who should be playing. " +
+        "Type \"fan\" or \"reddit\".",
+      "- Teammates and other players — short, in-group, emoji-heavy, often just a reaction. " +
+        "Type \"fan\". They talk TO him, not about him.",
+      "- His hometown and high school: the local paper account, a former coach, people who knew " +
+        "him at 16. This is the register nothing else in the app has — use it.",
+      "- The beat writer noting where he sits, factually. Type \"insider\".",
+      "- Rival fans, ONLY once he is worth their attention. Type \"rival\".",
+      "",
+      "HARD RULES:",
+      "- The type field MUST be one of exactly: fan, rival, analyst, insider, reddit.",
+      "- MOST OF THIS FEED IS NOT ABOUT HIM unless he is the starter. A feed where fourteen " +
+        "posts all discuss a backup freshman is the failure mode of this surface.",
+      "- Engagement must match reality: posts about an unknown freshman get 3-80 likes, not " +
+        "thousands. A recruiting account has more reach than a fan. Only once he starts do " +
+        "numbers climb. Fake virality for a nobody reads as fake.",
+      "- Never state a rating, an overall or any 0-99 number (see rule 6).",
+      "- Never invent a stat for him. His real line, if he has one, is below.",
+      player?.prospectStars
+        ? `- His high-school ranking (${player.prospectStars.replace(/_/g, " ").toLowerCase()}) is a REAL fact and recruiting accounts will cite it. It is what he WAS rated, not what he is.`
+        : "",
+      board.offers.length
+        ? `- Schools that offered him are real and fans reference them: ${board.offers.map((o) => o.school).join(", ")}.`
+        : "",
+      board.decommittedFrom.length
+        ? `- He DECOMMITTED from ${board.decommittedFrom.map((o) => o.school).join(", ")} — that fanbase has not forgotten.`
+        : "",
+      "- NO HTML entities. Plain text only.",
+      // His reach is a computed number, and every engagement figure in the feed has to be
+      // consistent with it. This is what stops a 380-follower freshman getting 2,000 likes.
+      brand
+        ? "- SCALE EVERY LIKE AND REPOST TO HIS ACTUAL REACH, stated below. His own posts sit in " +
+          "that range; other accounts' reach is their own."
+        : "",
+      "",
+      socialVarietyBlock(ctx),
+      "",
+      brand ? brandBlock({ state: brand, week: brandWeek }) : "",
+      "",
+      rtgBrief(facts),
+      "",
+      // The league's own headlines give the feed real events to react to, which is what stops
+      // it inventing league news to fill fourteen posts.
+      ctx.world ?? "",
+      "",
+      "Context:",
+      ctx.userContext,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  };
+}
+
 /** Exported so a ported surface can be tested without a network call — the v2 port is a
  * claim about what the model is HANDED, and that claim should be under test. */
 export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): PromptSpec {
   switch (kind) {
+    case "rtg-week":
+      return buildRtgWeekSpec(ctx, extra);
+
+    case "rtg-social":
+      return buildRtgSocialSpec(ctx, extra);
+
+    /**
+     * THE PLAYER POSTS. He writes it; the internet answers.
+     *
+     * The split is the one the whole app runs on: the model judges how the post LANDED —
+     * reach and whether it drew backlash — and writes the replies in real voices. It does NOT
+     * decide the follower number. `postDelta()` does that from the judgement plus his actual
+     * reach, so the count stays auditable and can never drift from the model's mood.
+     */
+    case "rtg-post": {
+      const text = typeof extra.text === "string" ? extra.text : "";
+      const brand = (extra.brand ?? null) as BrandState | null;
+      const followers = brand?.followers ?? 0;
+      const tier = brandTier(followers);
+      return {
+        maxTokens: 1400,
+        prompt: [
+          "A college football player just posted this on social media. Judge how it landed and",
+          "write the replies. Return JSON with this exact schema:",
+          '{"reach": "ignored"|"local"|"viral", "backlash": boolean, "verdict": "one line on how it read",',
+          ' "replies": [{"handle": "string", "displayName": "string", "type": "fan"|"rival"|"analyst"|"insider"|"reddit", "body": "string", "likes": number}]}',
+          "",
+          `HE POSTED: "${text}"`,
+          "",
+          `WHO HE IS: ${ctx.snapshot.player?.name ?? "the player"}, ${ctx.snapshot.player?.classYear ?? ""} ${ctx.snapshot.player?.position ?? "player"} at ${ctx.school}.`,
+          `HIS REACH: ${TIER_NOTE[tier]}`,
+          "",
+          "JUDGING IT — be honest, and mostly unimpressed:",
+          "- \"ignored\" is the DEFAULT and the most common outcome. Most posts by most players do",
+          "  nothing at all. A bland post from someone with a small following is ignored, full stop.",
+          "- \"local\" means his own fanbase saw it and reacted.",
+          "- \"viral\" is RARE and requires an actual reason — genuinely funny, genuinely reckless,",
+          "  or he is already a name. Do not hand it out for a normal post.",
+          "- backlash is true when it reads as arrogant, whiny, ungrateful, aimed at a teammate or",
+          "  coach, or when it will not survive a bad game next week. A player calling out his own",
+          "  coaching staff draws backlash however true it is.",
+          "- Reach is capped by who he actually is. Someone nobody follows cannot go viral inside",
+          "  his own fanbase for an ordinary opinion.",
+          "",
+          "THE REPLIES: 5-8, in real voices — teammates, his own fanbase, rival fans if it travelled,",
+          "a recruiting account, someone from his hometown. Short. Some are just an emoji or a",
+          "single word. Reply likes must be small relative to his reach; a reply is never bigger",
+          "than the post unless it is a dunk from a much larger account.",
+          "",
+          "Never invent a follower count, a stat, or a rating (see rule 6). Never claim the post",
+          "changed his playing time — that is the coaching staff's call and it has not been made.",
+          "",
+          ctx.snapshot.player ? rtgBrief(rtgFacts({
+            player: ctx.snapshot.player,
+            baseline: (extra.baselinePlayer ?? null) as RtgPlayer | null,
+            school: ctx.school,
+            interest: ctx.snapshot.schoolInterest,
+          })) : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      };
+    }
+
     case "recap-lead": {
       const hl = Array.isArray(extra.highlights) ? (extra.highlights as { text: string; player?: string | null }[]) : [];
       const hlBlock = hl.length

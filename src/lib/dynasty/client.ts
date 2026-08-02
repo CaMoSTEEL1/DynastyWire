@@ -116,6 +116,112 @@ export interface CoachCareer {
   firstRoundPicks: number | null;
 }
 
+/**
+ * The user's player in Road to Glory. Everything here is read from the save.
+ *
+ * `overall` is carried for the app's own math ONLY and must never reach a generator — see
+ * `gradeWord()` in gen.ts and SYSTEM_PROMPT rule 6.
+ */
+export interface RtgPlayer {
+  name: string | null;
+  teamIndex: number | null;
+  position: string | null;
+  classYear: string | null;
+  /** What he was rated coming OUT OF HIGH SCHOOL — not his current ability. The arc. */
+  prospectStars: string | null;
+  redshirt: string | null;
+  homeState: string | null;
+  overall: number | null;
+  confidence: number | null;
+  legacyScore: number | null;
+  experiencePoints: number | null;
+  performLevel: number | null;
+  awardCount: number | null;
+  hotCold: string | null;
+  injuryStatus: string | null;
+  draftRound: number | null;
+  draftPick: number | null;
+  transferChance: number | null;
+  nilValue: number | null;
+  nilComp: number | null;
+  idealPitch: string | null;
+  dealbreaker: string | null;
+  /** Season-to-date line. Games played/started here are what the week-state diffs. */
+  stats?: RosterStats | null;
+}
+
+export interface SchoolInterest {
+  teamRow: number | null;
+  school: string | null;
+  offerStatus: string | null;
+  score: number | null;
+  tier: string | null;
+  coachTrust: number | null;
+  teamNeed: number | null;
+  brandBonus: number | null;
+  decommitted: boolean | null;
+}
+
+export interface DepthEntry {
+  position: string | null;
+  depth: number | null;
+  locked: number | null;
+  userEditable: boolean | null;
+}
+
+/** A headline the GAME wrote. Real events, already prioritised by the game itself. */
+export interface WorldHeadline {
+  headline: string | null;
+  summary: string | null;
+  category: string | null;
+  week: number | null;
+  seasonWeek: number | null;
+  year: number | null;
+  priority: number | null;
+  topStory: boolean | null;
+  breaking: boolean | null;
+  teamRow: number | null;
+  team: string | null;
+}
+
+export interface LeagueAward {
+  award: string | null;
+  name: string;
+  position: string | null;
+  school: string | null;
+}
+
+export interface ConferenceTitle {
+  conference: string | null;
+  winner: string;
+  winnerCoach: string | null;
+  winnerScore: number | null;
+  winnerRecord: string | null;
+  loser: string | null;
+  loserScore: number | null;
+  loserRecord: string | null;
+}
+
+export interface CoachMove {
+  coach: string | null;
+  from: string | null;
+  to: string | null;
+  fromRole: string | null;
+  toRole: string | null;
+  year: number | null;
+  week: number | null;
+  stage: string | null;
+  contractYears: number | null;
+  status: string | null;
+}
+
+export interface WorldData {
+  headlines: WorldHeadline[];
+  awards: LeagueAward[];
+  confChampions: ConferenceTitle[];
+  carousel: CoachMove[];
+}
+
 export interface Recruit {
   name: string;
   position: string | null;
@@ -172,6 +278,20 @@ export interface DynastySnapshot {
   dynastyYear: number | null;
   /** Real season calendar from SeasonInfo — drives playoff-round awareness. */
   calendar: DynastyCalendar | null;
+  /** Which kind of save this is, DETECTED not asked: a dynasty save flags a Coach as
+   * user-controlled, a Road to Glory save flags a Player. Absent on snapshots cached by an
+   * older sidecar, which must be treated as "dynasty". */
+  mode?: "dynasty" | "rtg";
+  /** The user's PLAYER. Only present in RTG mode. */
+  player?: RtgPlayer | null;
+  /** Every school's real interest in him (`SchoolRelationship`). RTG only. */
+  schoolInterest?: SchoolInterest[];
+  /** The league's own life: the game's own news feed, the record book, the carousel. Free —
+   * parsed, never generated. Absent on snapshots cached by an older sidecar. */
+  world?: WorldData;
+  /** Raw `ForcedDepthChartEntry` rows. A real save carried TWO for the same position and
+   * nothing says which is the user's, so this is a LIST and callers must not assume. */
+  depthPosition?: DepthEntry[];
   coachName: string | null;
   coach: CoachInfo | null;
   tableCount: number;

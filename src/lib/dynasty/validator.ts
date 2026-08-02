@@ -425,6 +425,15 @@ function cfg(checks: Partial<KindChecks> = {}, extra: Partial<KindConfig> = {}):
  */
 export const KIND_CONFIG: Record<string, KindConfig> = {
   // The seven surfaces on the v2 frozen list.
+  // Road to Glory. Same contract as the dynasty surfaces — the ground truth is the team's
+  // roster and the user's own player, and his stat line is checked exactly like anyone's.
+  // The invented cast (hometown accounts, a former high-school coach, teammates' handles)
+  // rides the persona allowlist, same as the dynasty backstory cast.
+  "rtg-week": cfg(),
+  "rtg-social": cfg({}, { skipFields: ["likes", "reposts"] }),
+  // The player wrote the post himself; only the REPLIES are generated.
+  "rtg-post": cfg({}, { skipFields: ["likes", "reach", "verdict"] }),
+
   "recap-lead": cfg(),
   "national-desk": cfg(),
   "national-wire": cfg(),

@@ -366,6 +366,259 @@ async function resolveCoachCareer(f, coachRec) {
   };
 }
 
+/**
+ * ROAD TO GLORY. The user is a PLAYER, not a coach.
+ *
+ * RTG saves are the same file format as dynasty saves — same schema, same tables — and the only
+ * reliable way to tell them apart is who is flagged as user-controlled. In a dynasty save it is
+ * a Coach row; in RTG it is a Player row and `Coach.IsUserControlled` matches nobody. That
+ * matters beyond a label: the existing user-team resolution falls through to a heuristic and
+ * picks the WRONG SCHOOL on an RTG save (it chose Georgia for a player on team 73).
+ *
+ * Returns null on a dynasty save, which is what makes `mode` computable.
+ */
+function detectUserPlayer(playerTable) {
+  if (!playerTable) return null;
+  for (const r of playerTable.records) {
+    if (r.isEmpty) continue;
+    let flag;
+    try {
+      flag = r['IsUserControlled'];
+    } catch (e) {
+      continue;
+    }
+    if (flag !== true && flag !== 1) continue;
+    const name = [str(r, 'FirstName'), str(r, 'LastName')].filter(Boolean).join(' ') || null;
+    return {
+      name,
+      teamIndex: num(r, 'TeamIndex'),
+      position: str(r, 'Position'),
+      classYear: str(r, 'SchoolYear'),
+      // What he was rated coming OUT OF HIGH SCHOOL — the whole point of the arc, and not the
+      // same thing as his current ability.
+      prospectStars: str(r, 'ProspectStarRating'),
+      redshirt: str(r, 'RedshirtStatus'),
+      homeState: str(r, 'PLYR_HOME_STATE'),
+      // Ability is carried for the app's own math only. It is NEVER shown to a generator —
+      // see gradeWord() in gen.ts and SYSTEM_PROMPT rule 6.
+      overall: num(r, 'OverallRating'),
+      confidence: num(r, 'ConfidenceRating'),
+      legacyScore: num(r, 'LegacyScore'),
+      experiencePoints: num(r, 'ExperiencePoints'),
+      performLevel: num(r, 'PLYR_PERFORMLEVEL'),
+      awardCount: num(r, 'YearlyAwardCount'),
+      hotCold: str(r, 'StartingHotCold'),
+      injuryStatus: str(r, 'InjuryStatus'),
+      draftRound: num(r, 'PLYR_DRAFTROUND'),
+      draftPick: num(r, 'PLYR_DRAFTPICK'),
+      transferChance: num(r, 'AbsoluteTransferChance'),
+      nilValue: num(r, 'BaseNILValue'),
+      nilComp: num(r, 'CurrentNILCompensation'),
+      idealPitch: str(r, 'IdealRecruitingPitch'),
+      dealbreaker: str(r, 'RecruitingDealbreaker'),
+      _rec: r,
+    };
+  }
+  return null;
+}
+
+/**
+ * Where he sits on the depth chart. `ForcedDepthChartEntry` is RTG's own record of it.
+ *
+ * UNVERIFIED, and returned as a LIST on purpose: a real save carried TWO QB entries —
+ * (depth 0, locked 0) and (depth 5, locked 1) — and there is no field that obviously says
+ * which one is the user's. Guessing here would put a confident wrong number in front of the
+ * writer, which is the exact failure this codebase keeps paying for. Callers must treat depth
+ * as best-effort until someone confirms the semantics against a save where the answer is known.
+ */
+async function readDepthPosition(f) {
+  const t = await readRecords(pickTable(f, 'ForcedDepthChartEntry'));
+  if (!t || !t.records) return [];
+  const out = [];
+  for (const r of t.records) {
+    if (r.isEmpty) continue;
+    try {
+      const pos = str(r, 'Position');
+      if (!pos) continue;
+      out.push({
+        position: pos,
+        depth: num(r, 'CurrentDepth'),
+        locked: num(r, 'LockedDepth'),
+        userEditable: safeBool(r, 'UserEditable'),
+      });
+    } catch (e) {
+      /* unreadable row */
+    }
+  }
+  return out;
+}
+
+/**
+ * Every school's real interest in him — `SchoolRelationship`, one row per program. This is the
+ * entire recruitment of the user as hard data: who offered, how hard they are pushing, and
+ * whether he ever decommitted. Zero invention, zero tokens.
+ */
+async function buildSchoolInterest(f, teams) {
+  const t = await readRecords(pickTable(f, 'SchoolRelationship'));
+  if (!t || !t.records) return [];
+  const byIndex = new Map();
+  for (const row of Object.keys(teams)) {
+    const team = teams[row];
+    if (team && team.teamIndex != null) byIndex.set(team.teamIndex, team.name);
+  }
+  const out = [];
+  for (const r of t.records) {
+    if (r.isEmpty) continue;
+    let teamIdx = null;
+    try {
+      const fld = r.fields['Team'];
+      const rd = fld && fld.referenceData ? fld.referenceData : null;
+      if (rd && rd.tableId) teamIdx = rd.rowNumber;
+    } catch (e) {
+      /* leave null */
+    }
+    const offer = str(r, 'ScholarshipOfferStatus');
+    const score = num(r, 'ScholarshipScore');
+    // A school with no offer and no interest is noise — 138 rows of it would swamp the UI.
+    if (!offer && !score) continue;
+    out.push({
+      teamRow: teamIdx,
+      school: teamIdx != null && teams[teamIdx] ? teams[teamIdx].name : null,
+      offerStatus: offer,
+      score,
+      tier: str(r, 'ScholarshipBonusTier'),
+      coachTrust: num(r, 'CoachTrustBonus'),
+      teamNeed: num(r, 'TeamNeedScore'),
+      brandBonus: num(r, 'BrandMeterBonus'),
+      decommitted: safeBool(r, 'WasDecommitted'),
+    });
+  }
+  out.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  return out;
+}
+
+/**
+ * THE LEAGUE'S OWN LIFE — four tables the app has never read, all of them real and all of them
+ * free (no generation, no invention).
+ *
+ * - `Story`: the game writes its OWN news feed. Real headlines with a one-line summary, tagged
+ *   by category and week. It already decided what was newsworthy league-wide — reading it means
+ *   the wire can never be wrong about what mattered. Verified: 61 rows in a real dynasty save,
+ *   including school records and milestone watches ("Tennessee HB Nate Gumbs is now the
+ *   all-time team leader in Rushing Yards").
+ * - `LeagueHistoryAward`: every award winner, by name, position and school.
+ * - `LeagueHistoryConferenceChampion`: every conference title game, with both coaches, both
+ *   records and the score.
+ * - `CoachTransactionHistoryEntry`: the coaching carousel — who moved where, in which year and
+ *   week. This is what lets the media know a rival just hired someone, and who held YOUR job
+ *   before you.
+ *
+ * NOTE: the two history tables carry no year column. Rows appear to accumulate in order, so
+ * they are returned oldest-first WITHOUT a year attached — a story must never date one.
+ */
+async function buildWorld(f, teams, coachTable) {
+  const nameOfTeamRow = (row) => (row != null && teams[row] ? teams[row].name : null);
+
+  // The game's own headlines.
+  const headlines = [];
+  const storyT = await readRecords(pickTable(f, 'Story'));
+  if (storyT && storyT.records) {
+    for (const r of storyT.records) {
+      if (r.isEmpty) continue;
+      const header = str(r, 'Header');
+      const tag = str(r, 'Tag');
+      if (!header && !tag) continue;
+      headlines.push({
+        headline: header,
+        summary: tag,
+        category: str(r, 'Category'),
+        week: num(r, 'CurrentWeek'),
+        seasonWeek: num(r, 'SeasonWeek'),
+        year: num(r, 'SeasonYear'),
+        priority: num(r, 'Priority'),
+        topStory: safeBool(r, 'IsTopStory'),
+        breaking: safeBool(r, 'IsBreaking'),
+        teamRow: refRow(r, 'Team'),
+        team: nameOfTeamRow(refRow(r, 'Team')),
+      });
+    }
+    headlines.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+  }
+
+  // Award winners.
+  const awards = [];
+  const awardT = await readRecords(pickTable(f, 'LeagueHistoryAward'));
+  if (awardT && awardT.records) {
+    for (const r of awardT.records) {
+      if (r.isEmpty) continue;
+      const last = str(r, 'lastName');
+      const first = str(r, 'firstName');
+      const type = str(r, 'AwardType');
+      if (!type || (!last && !first)) continue;
+      awards.push({
+        award: type,
+        name: [first, last].filter(Boolean).join(' '),
+        position: str(r, 'Position'),
+        school: str(r, 'TeamDisplayName'),
+      });
+    }
+  }
+
+  // Conference title games.
+  const confChampions = [];
+  const ccT = await readRecords(pickTable(f, 'LeagueHistoryConferenceChampion'));
+  if (ccT && ccT.records) {
+    for (const r of ccT.records) {
+      if (r.isEmpty) continue;
+      const winner = str(r, 'WinningTeamName');
+      if (!winner) continue;
+      confChampions.push({
+        conference: str(r, 'ConferenceName'),
+        winner,
+        winnerCoach: [str(r, 'WinningCoachFirstName'), str(r, 'WinningCoachLastName')].filter(Boolean).join(' ') || null,
+        winnerScore: num(r, 'WinningTeamScore'),
+        winnerRecord: `${num(r, 'WinningTeamWins') || 0}-${num(r, 'WinningTeamLosses') || 0}`,
+        loser: str(r, 'LosingTeamName'),
+        loserScore: num(r, 'LosingTeamScore'),
+        loserRecord: `${num(r, 'LosingTeamWins') || 0}-${num(r, 'LosingTeamLosses') || 0}`,
+      });
+    }
+  }
+
+  // The carousel. Coach refs resolve into the Coach table for a real name.
+  const carousel = [];
+  const txT = await readRecords(pickTable(f, 'CoachTransactionHistoryEntry'));
+  if (txT && txT.records && coachTable && coachTable.records) {
+    for (const r of txT.records) {
+      if (r.isEmpty) continue;
+      const coachRow = refRow(r, 'Coach');
+      const cRec = coachRow != null ? coachTable.records[coachRow] : null;
+      let coachName = null;
+      if (cRec && !cRec.isEmpty) {
+        coachName = [str(cRec, 'FirstName'), str(cRec, 'LastName')].filter(Boolean).join(' ') || null;
+      }
+      const from = nameOfTeamRow(refRow(r, 'OldTeam'));
+      const to = nameOfTeamRow(refRow(r, 'NewTeam'));
+      if (!coachName && !from && !to) continue;
+      carousel.push({
+        coach: coachName,
+        from,
+        to,
+        fromRole: str(r, 'OldCoachPosition'),
+        toRole: str(r, 'NewCoachPosition'),
+        year: num(r, 'SeasonYear'),
+        week: num(r, 'SeasonWeek'),
+        stage: str(r, 'SeasonStage'),
+        contractYears: num(r, 'ContractLength'),
+        status: str(r, 'ContractStatus'),
+      });
+    }
+    carousel.sort((a, b) => (b.year || 0) - (a.year || 0) || (b.week || 0) - (a.week || 0));
+  }
+
+  return { headlines, awards, confChampions, carousel };
+}
+
 // Every program's REAL head coach from the save: teamIndex -> "First Last". Feeds the
 // generators so other teams' coaches are the save's actual names, never invented.
 function buildHeadCoaches(coachTable) {
@@ -396,7 +649,9 @@ async function buildSnapshot(pathOrFile, opts = {}) {
   // v7: coach résumé (career record, national/conference titles, record at THIS school).
   // v8: live job security (CurrentJobSecurityStatus/Percentage) instead of the stale
   //     season-start field; COACH_FIREREPORTED dropped as meaningless.
-  const cf = isPath ? cacheFile(pathOrFile, `snap|v8|${optKey}`) : null;
+  // v9: RTG — mode detection, the user player, school interest, depth position.
+  // v10: depth entries returned as a LIST (which row is the user's is still unverified).
+  const cf = isPath ? cacheFile(pathOrFile, `snap|v12|${optKey}`) : null;
   if (cf) {
     const cached = readCache(cf);
     if (cached) return cached;
@@ -434,6 +689,24 @@ async function buildSnapshot(pathOrFile, opts = {}) {
     userCoach.career = await resolveCoachCareer(f, userCoach._careerStatsRec);
   }
   for (const c of userCoaches) delete c._careerStatsRec; // never serialize a parser record
+
+  // ROAD TO GLORY. Only looked for when no user COACH was found — a dynasty save should never
+  // pay for a full Player-table scan, and the two flags are mutually exclusive in practice.
+  let userPlayer = null;
+  if (!userCoach) {
+    const playerT = await readRecords(pickTable(f, 'Player'));
+    userPlayer = detectUserPlayer(playerT);
+  }
+  const mode = userPlayer ? 'rtg' : 'dynasty';
+
+  // In RTG the player's team is authoritative and the coach heuristic is not just unhelpful,
+  // it is WRONG — it resolved Georgia for a player on team 73. Override it.
+  if (userPlayer && userPlayer.teamIndex != null) {
+    const match = Object.keys(teams)
+      .map(Number)
+      .find((row) => teams[row].teamIndex === userPlayer.teamIndex);
+    if (match !== undefined) userTeamRow = match;
+  }
 
   // If we still don't have a team, but we have a user coach, use the coach's team
   if (userTeamRow == null && userCoach && userCoach.teamIndex != null) {
@@ -473,6 +746,25 @@ async function buildSnapshot(pathOrFile, opts = {}) {
       }
     : null;
 
+  // RTG extras. Resolved only in RTG mode so a dynasty parse costs nothing extra.
+  let schoolInterest = [];
+  let depthPosition = [];
+  if (userPlayer) {
+    schoolInterest = await buildSchoolInterest(f, teams);
+    depthPosition = await readDepthPosition(f);
+    // His season line — GAMESPLAYED/GAMESSTARTED are what the week-state is computed from
+    // (by diffing against the archived baseline; the row itself is season-cumulative).
+    // Reuses the roster resolver so the user player and his teammates can never disagree
+    // about which stat table a line lives in.
+    try {
+      const statsFor = makeStatsResolver(f, si ? num(si, 'CurrentYear') : null);
+      userPlayer.stats = await statsFor(userPlayer._rec);
+    } catch (e) {
+      userPlayer.stats = null;
+    }
+    delete userPlayer._rec; // never serialize a parser record
+  }
+
   const result = {
     week,
     year: si ? num(si, 'CurrentSeasonYear') : null,
@@ -480,6 +772,13 @@ async function buildSnapshot(pathOrFile, opts = {}) {
     calendar,
     coachName,
     coach: userCoach,
+    // "dynasty" | "rtg" — detected, never asked. See detectUserPlayer().
+    mode,
+    player: userPlayer,
+    schoolInterest,
+    depthPosition,
+    // The league's own life — free, no generation. See buildWorld().
+    world: await buildWorld(f, teams, coachTable),
     tableCount: f.tables.length,
     userTeamRow,
     userTeam: userTeamRow != null ? teams[userTeamRow] : null,
