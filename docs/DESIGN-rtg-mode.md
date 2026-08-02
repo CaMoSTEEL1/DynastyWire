@@ -1,6 +1,6 @@
 # Dynasty Wire — Road to Glory mode
 
-Status: **DECIDED (design locked). Build steps 1-3 and 5 DONE — all five v1 surfaces exist and build. Step 4 (THE GATE) HAS NOT BEEN RUN: no RTG surface has yet been generated against a real save.** Every decision below came out of a full design
+Status: **DECIDED (design locked). Steps 1-5 DONE, and THE GATE HAS BEEN RUN AND PASSED (2026-08-02) against the real save on the cheap model.** Remaining: decision 9 (separate profile lists) and the rest of decision 2's interaction layer (texts, RTG situation room). Every decision below came out of a full design
 interview and is a commitment, not a maybe. Where a decision rests on save data, the field is
 named — all of it was read out of a real RTG save (`RTG-SKIYZERSANLOCUS-AUTOSAVE`), not assumed.
 
@@ -186,6 +186,23 @@ RTG mode is a stats viewer with a group chat.
 **The test, before any surface is built:** point the existing engine at a real RTG save,
 hand-assemble the context for three real weeks — one `did-not-play`, one mop-up, one first start
 — generate The Week for each, and read them. One afternoon, about a dollar.
+
+**RESULT (2026-08-02) — PASSED.** Three real generations on Haiku against
+`RTG-SKIYZERSANLOCUS-AUTOSAVE`, using his actual first start (20/30, 187 yds, 3 TD, 255 rush,
+2 TD). **The `did-not-play` piece is the best of the three** — the creased jersey, the
+scout-team reps nobody watches, the roommate who took his job, and a mother who texts to ask
+how the game went rather than whether he played. The load-bearing assumption holds: a
+well-written piece about not playing is good content.
+
+**And the gate did its job by finding two real bugs, both now fixed with regression tests:**
+1. **All three pieces invented the football around him** — "Oregon State up big enough", "a 1-0
+   record that nobody in Corvallis will forget", "the game was 14-10, their way". Nothing in
+   the brief locked the TEAM's game, so the writer supplied one. `rtgFacts` now carries the
+   real result (or says plainly there isn't one) and the unknown list forbids inventing a
+   score, a lead or a record.
+2. **One piece filed under "Beat Writer, Oregon State Athletics"** while the character named a
+   beat writer. The byline is now held to the named reporter.
+Re-run after the fixes: three named bylines, zero invented team facts.
 
 This follows the lesson the codebase has already paid for twice: fixtures written before seeing
 real output caught none of the real bugs, and the deterministic recap was only worth porting

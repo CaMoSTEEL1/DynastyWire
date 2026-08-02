@@ -1328,6 +1328,18 @@ const RTG_FRAMING: Record<PlayerWeekState, string> = {
     "never claim he did or did not play.",
 };
 
+/** The team's actual game this week, or null. Null must stay null: an invented scoreline is
+ * exactly what the gate caught. */
+function rtgTeamResult(ctx: MediaContext): string | null {
+  const g = ctx.delta?.userResult ?? null;
+  const u = ctx.snapshot.userTeam ?? null;
+  if (!g || g.homeScore == null || g.awayScore == null) {
+    return u ? `${u.name} are ${u.wins}-${u.losses}. NO game result is available for this week — do not invent one.` : null;
+  }
+  const won = g.winner === u?.name;
+  return `${g.home} ${g.homeScore}, ${g.away} ${g.awayScore} — ${u?.name ?? "his team"} ${won ? "won" : "lost"}. Record: ${u?.wins ?? "?"}-${u?.losses ?? "?"}.`;
+}
+
 function buildRtgWeekSpec(ctx: MediaContext, extra: Extra): PromptSpec {
   const snap = ctx.snapshot;
   const baseline = (extra.baselinePlayer ?? null) as RtgPlayer | null;
@@ -1336,7 +1348,7 @@ function buildRtgWeekSpec(ctx: MediaContext, extra: Extra): PromptSpec {
     baseline,
     school: ctx.school,
     interest: snap.schoolInterest,
-    teamResult: ctx.outlook ? ctx.outlook.lines[0] ?? null : null,
+    teamResult: rtgTeamResult(ctx),
   });
   const player = snap.player ?? null;
   return {
@@ -1346,9 +1358,13 @@ function buildRtgWeekSpec(ctx: MediaContext, extra: Extra): PromptSpec {
       "Return JSON with this exact schema:",
       '{"headline": "string", "byline": "string", "body": "string", "pullQuote": "string"}',
       "",
-      ctx.backstory?.reporterName
-        ? `You ARE ${ctx.backstory.reporterName}, who covers ${ctx.school}.`
-        : `You are a beat writer covering ${ctx.school}.`,
+      // The gate caught a piece filing under "Beat Writer, Oregon State Athletics" while the
+      // character named one. If a name is given, the byline IS that name.
+      (extra.character as { reporter?: string } | null)?.reporter
+        ? `You ARE ${(extra.character as { reporter: string }).reporter}, who covers ${ctx.school}. The byline is YOUR NAME — never a generic title.`
+        : ctx.backstory?.reporterName
+          ? `You ARE ${ctx.backstory.reporterName}, who covers ${ctx.school}. The byline is YOUR NAME.`
+          : `You are a veteran beat writer covering ${ctx.school}. The byline is your own (fictional, realistic) name — never a generic title like "Staff Writer".`,
       "",
       HOUSE_STYLE,
       "",
@@ -1404,7 +1420,7 @@ function buildRtgSocialSpec(ctx: MediaContext, extra: Extra): PromptSpec {
     baseline,
     school: ctx.school,
     interest: snap.schoolInterest,
-    teamResult: ctx.outlook ? ctx.outlook.lines[0] ?? null : null,
+    teamResult: rtgTeamResult(ctx),
   });
   const state = facts.time.state;
   const brand = (extra.brand ?? null) as BrandState | null;

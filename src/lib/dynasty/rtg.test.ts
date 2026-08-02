@@ -408,3 +408,42 @@ describe("who he is", () => {
     }
   });
 });
+
+// ── Regressions from THE GATE (real generations, real save) ─────────────────────
+// All three test pieces invented the football around him — "Oregon State up big enough",
+// "a 1-0 record that nobody in Corvallis will forget", "the game was 14-10, their way".
+// Nothing in the brief locked the team's game, so the writer supplied one.
+
+describe("the gate's findings", () => {
+  const before = P({ stats: stats({ gamesPlayed: 2, gamesStarted: 0 }) });
+
+  it("forbids inventing the team's score, lead or record", () => {
+    const brief = rtgBrief(rtgFacts({ player: before, baseline: before, school: "Oregon State" }));
+    expect(brief).toContain("THE TEAM'S SCORE, RESULT, LEAD AND RECORD");
+    expect(brief).toContain("Do NOT write that the team");
+    expect(brief).toContain("the game around him is");
+  });
+
+  it("states the real result when there is one", () => {
+    const brief = rtgBrief(
+      rtgFacts({ player: before, baseline: before, school: "Oregon State", teamResult: "Oregon State 31, Cal 17 — won. Record: 3-1." })
+    );
+    expect(brief).toContain("Oregon State 31, Cal 17");
+  });
+
+  it("makes the byline the named beat writer, never a generic title", async () => {
+    const { buildSpec } = await import("./gen");
+    const s = stats({ gamesPlayed: 2, gamesStarted: 0 });
+    const ctx = {
+      school: "Oregon State", week: 6, phase: { label: "REGULAR SEASON" },
+      snapshot: { player: P({ stats: s }), schoolInterest: [], userTeam: { name: "Oregon State", wins: 3, losses: 1 } },
+      delta: null, roster: [], backstory: null, history: null, world: null, outlook: null, userContext: "",
+    } as never;
+    const character = { reporter: "Dana Whitt", hometown: "V", bio: "b", positionCoach: "Coach Reyes", home: "mum", arc: "underrated" as const, aheadOfHim: "", teammate: "", goal: "" };
+    const p = buildSpec("rtg-week", ctx, { baselinePlayer: P({ stats: s }), character }).prompt;
+    expect(p).toContain("You ARE Dana Whitt");
+    expect(p).toContain("never a generic title");
+    // and with no game this week, the brief must say so rather than leave it open
+    expect(p).toContain("NO game result is available for this week");
+  });
+});

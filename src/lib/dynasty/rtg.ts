@@ -235,6 +235,13 @@ export function rtgFacts(input: RtgFactsInput): RtgFacts {
     "His snap count, his practice reps, and anything a coach said to him privately. Invent those " +
       "as colour if the piece needs them, never as reported fact.",
     "What the coaching staff intends to do with him next week. Nobody has told anyone that.",
+    // Found by the gate: with nothing locking the team's game, all three test pieces invented
+    // one — a scoreline, a lead, a record. The player's week is the subject, but a story about
+    // a football player inevitably reaches for the football around him.
+    "THE TEAM'S SCORE, RESULT, LEAD AND RECORD, unless stated above. Do NOT write that the team " +
+      "was ahead, behind, won, lost, or holds any record. Do not invent a scoreline, a margin, " +
+      "or how many games are left. If it is not in the locked facts, the game around him is " +
+      "UNKNOWN and the piece must be written without it.",
   ];
   if (time.state === "multi-week-gap") {
     unknown.push(
