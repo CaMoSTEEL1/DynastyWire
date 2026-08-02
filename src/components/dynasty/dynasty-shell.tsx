@@ -109,6 +109,18 @@ function ShellInner({ children }: { children: React.ReactNode }) {
       <TutorialProvider>
         <DynastySwitcher />
         <Masthead
+          // RTG turns it into a different publication entirely — RoadWire, covering one kid.
+          rtg={
+            snapshot?.mode === "rtg" && snapshot.player
+              ? {
+                  playerName: snapshot.player.name,
+                  stars: snapshot.player.prospectStars,
+                  homeState: snapshot.player.homeState,
+                  position: snapshot.player.position,
+                  classYear: snapshot.player.classYear,
+                }
+              : null
+          }
           school={u.name}
           coachName={dynastyInfo.coachName}
           fanSentiment={null}

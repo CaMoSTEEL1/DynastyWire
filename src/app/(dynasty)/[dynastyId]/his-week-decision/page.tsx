@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 interface Option { label: string; text: string; cost: string }
 interface Situation {
   headline: string;
-  category: "locker-room" | "academics" | "family" | "brand" | "football";
+  category: "locker-room" | "academics" | "family" | "brand" | "football" | "money" | "body" | "future";
   setup: string;
   options: Option[];
   error?: boolean;

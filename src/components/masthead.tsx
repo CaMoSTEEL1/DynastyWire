@@ -4,6 +4,8 @@ import { cn } from "@/lib/utils";
 import { DateTime } from "luxon";
 
 interface MastheadProps {
+  /** RTG turns the paper into a different publication — see the render below. */
+  rtg?: { playerName: string | null; stars: string | null; homeState: string | null; position: string | null; classYear: string | null } | null;
   school?: string;
   coachName?: string;
   fanSentiment?: string | null;
@@ -107,11 +109,25 @@ export default function Masthead({
   seasonMomentum,
   lastResult,
   record,
+  rtg,
 }: MastheadProps) {
   const now = DateTime.now();
   const formattedDate = now.toFormat("EEEE, MMMM d, yyyy");
 
-  const tagline = getReactiveTagline({ school, coachName, fanSentiment, hotSeatLevel, seasonMomentum, lastResult, record });
+  const tagline = rtg
+    ? {
+        // Never "under Coach Head Coach" — reported from a real RTG save. There is no user
+        // coach in this mode, so the subtitle is about him.
+        text: [
+          rtg.playerName ?? "The player",
+          rtg.classYear && rtg.position ? `· ${rtg.classYear} ${rtg.position}` : null,
+          school ? `at ${school}` : null,
+        ]
+          .filter(Boolean)
+          .join(" "),
+        color: "text-ink2",
+      }
+    : getReactiveTagline({ school, coachName, fanSentiment, hotSeatLevel, seasonMomentum, lastResult, record });
   const isAlert = hotSeatLevel === "volcanic" || fanSentiment === "furious" || seasonMomentum === "freefall";
 
   return (
@@ -120,7 +136,21 @@ export default function Masthead({
         {/* Top meta bar — school left, date right */}
         <div className="flex items-baseline justify-between mb-3 md:mb-4">
           <span className="font-sans text-[10px] uppercase tracking-widest text-ink3">
-            {school ? `Covering the ${school} Dynasty` : "Dynasty Football Coverage"}
+            {rtg
+              ? // The whole premise of the mode, in the kicker: the paper is not covering a
+                // program, it is covering ONE KID — and it says what he was rated, because
+                // being overlooked is the story.
+                [
+                  "Covering",
+                  rtg.stars ? `the ${rtg.stars.replace(/_/g, " ").toLowerCase()} recruit` : "the recruit",
+                  rtg.homeState ? `from ${rtg.homeState}` : null,
+                  school ? `· ${school}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" ")
+              : school
+                ? `Covering the ${school} Dynasty`
+                : "Dynasty Football Coverage"}
           </span>
           <span className="font-serif text-xs text-ink3">{formattedDate}</span>
         </div>
@@ -133,7 +163,7 @@ export default function Masthead({
             "leading-tight"
           )}
         >
-          DynastyWire
+          {rtg ? "RoadWire" : "DynastyWire"}
         </h1>
 
         {/* Rule diamond */}
