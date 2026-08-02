@@ -21,6 +21,7 @@ import {
   Archive,
   ListOrdered,
 } from "lucide-react";
+import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { useSettings } from "@/components/settings/settings-context";
 import { useTutorial } from "@/components/tutorial/tutorial-context";
 
@@ -46,9 +47,25 @@ const navItems = [
   { label: "Trophy Room", slug: "trophy-room", icon: Award },
 ] as const;
 
+// ROAD TO GLORY gets its own front door (DESIGN-rtg-mode.md, decision 9). None of the dynasty
+// tabs apply — you don't run the program, you play for it — so the strip is replaced wholesale
+// rather than appended to. The two zero-cost surfaces (Recruitment, Depth) sit next to the two
+// that spend, so the cheap half of the mode is always visible.
+const rtgNavItems = [
+  { label: "The Week", slug: "the-week", icon: Newspaper },
+  { label: "His Feed", slug: "my-social", icon: MessageCircle },
+  { label: "Recruitment", slug: "recruitment", icon: Users },
+  { label: "The Slate", slug: "scoreboard", icon: ListOrdered },
+  { label: "Archive", slug: "archive", icon: Archive },
+] as const;
+
 export default function Navbar({ dynastyId }: NavbarProps) {
   const pathname = usePathname();
+  const { snapshot } = useDynasty();
   const { toggle } = useSettings();
+  // Detected from the save, never asked — a Road to Glory save flags a PLAYER as
+  // user-controlled where a dynasty save flags a COACH.
+  const items = snapshot?.mode === "rtg" ? rtgNavItems : navItems;
   const { showTutorial } = useTutorial();
 
   function isActive(slug: string): boolean {
@@ -72,7 +89,7 @@ export default function Navbar({ dynastyId }: NavbarProps) {
           "px-2 md:px-4"
         )}
       >
-        {navItems.map(({ label, slug, icon: Icon }) => {
+        {items.map(({ label, slug, icon: Icon }) => {
           const active = isActive(slug);
           // Plain <a> full-page navigation (not next/link): client-side routing needs RSC
           // payload fetches that fail silently over Tauri's asset protocol, eating the click.
