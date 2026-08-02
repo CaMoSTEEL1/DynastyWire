@@ -15,7 +15,7 @@ import { RtgGate } from "@/components/rtg/rtg-gate";
 import { BrandPanel } from "@/components/rtg/brand-panel";
 import { useBrand } from "@/components/rtg/use-brand";
 import { useCharacter } from "@/components/rtg/use-character";
-import { playingTime, weekLine, weekLineText, WEEK_STATE_LABEL } from "@/lib/dynasty/rtg";
+import { playingTime, seasonRole, weekLine, weekLineText, WEEK_STATE_LABEL } from "@/lib/dynasty/rtg";
 import { cn } from "@/lib/utils";
 
 interface WeekPiece {
@@ -46,6 +46,9 @@ function TheWeekPageInner() {
   const time = useMemo(() => playingTime(player, baseline), [player, baseline]);
   const line = useMemo(() => weekLine(player, baseline, time), [player, baseline, time]);
   const lineText = weekLineText(line);
+  // True from the first ingest, no baseline required — this is what stops a starter being
+  // shown as a man who didn't play.
+  const role = useMemo(() => seasonRole(player), [player]);
 
   const run = useCallback(async () => {
     setGenerating(true);
@@ -93,19 +96,22 @@ function TheWeekPageInner() {
                 : "border-l-dw-accent2 border border-paper4"
             )}
           >
-            <p className="font-sans text-[10px] uppercase tracking-widest text-ink3">This week</p>
-            <p className="mt-1 font-headline text-xl uppercase tracking-wide text-ink">
-              {player.name} {WEEK_STATE_LABEL[time.state]}
+            <p className="font-sans text-[10px] uppercase tracking-widest text-ink3">
+              {role.role === "starter" ? "The starter" : role.role === "splitting-time" ? "Splitting time" : role.role === "rotation" ? "In the rotation" : "Yet to play"}
             </p>
-            {lineText && <p className="mt-1 font-serif text-[15px] text-ink2">{lineText}</p>}
+            <p className="mt-1 font-headline text-xl uppercase tracking-wide text-ink">
+              {player.name} — {role.gamesStarted} start{role.gamesStarted === 1 ? "" : "s"} in{" "}
+              {role.gamesPlayed} game{role.gamesPlayed === 1 ? "" : "s"}
+            </p>
             {time.hasBaseline && (
-              <p className="mt-1 font-sans text-[11px] text-ink3">
-                {time.gamesPlayed} games played · {time.gamesStarted} started
+              <p className="mt-1 font-serif text-[15px] text-ink2">
+                This week he {WEEK_STATE_LABEL[time.state]}.
               </p>
             )}
+            {lineText && <p className="mt-1 font-serif text-[15px] text-ink2">{lineText}</p>}
             {!time.hasBaseline && (
               <p className="mt-1 font-sans text-[11px] text-ink3">
-                No previous reading yet — open the app each week and this fills in.
+                First reading of this save — from next week the app can tell you what changed.
               </p>
             )}
           </div>

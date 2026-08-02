@@ -195,6 +195,9 @@ export function rtgFacts(input: RtgFactsInput): RtgFacts {
   const board = recruitmentBoard(input.interest);
 
   const locked: string[] = [];
+  // His ROLE first, because it is true regardless of whether we can read this week — and
+  // because reading the week wrong is how a starter got written up as a benchwarmer.
+  if (p) locked.push(seasonRole(p).text);
   if (p) {
     locked.push(
       `${p.name ?? "The player"} — ${p.classYear ?? "unknown class"} ${p.position ?? "player"}` +
@@ -350,4 +353,52 @@ export function roomBlock(room: RoomMate[], position: string | null): string | n
       ? `  He is ${depth} of ${room.length} in the room. That is the gap the season is about.`
       : "  He is not listed in this room — do not claim a depth position for him.",
   ].join("\n");
+}
+
+// ── His role, which needs no baseline ───────────────────────────────────────────
+//
+// REPORTED BUG, and it was a design mistake: the week-state was the only thing describing him,
+// so on a save with no prior reading a player with one start in one game read as "playing time
+// unknown" — and once a baseline existed and matched, as "did NOT play". Both are wrong, and
+// both made a starter look like he wasn't one.
+//
+// Two different questions got conflated. "What happened THIS WEEK" genuinely needs a diff.
+// "Is he the starter" does not — his season totals answer it outright, and they are available
+// from the very first ingest.
+
+export type SeasonRole = "starter" | "splitting-time" | "rotation" | "has-not-played";
+
+export const ROLE_LABEL: Record<SeasonRole, string> = {
+  starter: "the starter",
+  "splitting-time": "splitting time",
+  rotation: "in the rotation",
+  "has-not-played": "hasn't played",
+};
+
+export interface RoleFacts {
+  role: SeasonRole;
+  gamesPlayed: number;
+  gamesStarted: number;
+  /** Plain English, for the UI and the prompt alike. */
+  text: string;
+}
+
+export function seasonRole(player: RtgPlayer | null | undefined): RoleFacts {
+  const gp = n(player?.stats?.gamesPlayed);
+  const gs = n(player?.stats?.gamesStarted);
+  let role: SeasonRole;
+  if (gp === 0) role = "has-not-played";
+  else if (gs === 0) role = "rotation";
+  else if (gs >= gp) role = "starter";
+  else role = "splitting-time";
+
+  const text =
+    role === "starter"
+      ? `He is THE STARTER — ${gs} start${gs === 1 ? "" : "s"} in ${gp} game${gp === 1 ? "" : "s"}.`
+      : role === "splitting-time"
+        ? `He is splitting time — ${gs} start${gs === 1 ? "" : "s"} in ${gp} games.`
+        : role === "rotation"
+          ? `He has played in ${gp} game${gp === 1 ? "" : "s"} without starting one.`
+          : "He has not played a game this season.";
+  return { role, gamesPlayed: gp, gamesStarted: gs, text };
 }

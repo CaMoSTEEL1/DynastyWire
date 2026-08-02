@@ -447,3 +447,36 @@ describe("the gate's findings", () => {
     expect(p).toContain("NO game result is available for this week");
   });
 });
+
+// ── Reported bug: a starter read as a man who wasn't ────────────────────────────
+// Two faults compounded. The baseline was never seeded (the settle effect bailed when the
+// follower delta was 0, which it always is on a first reading), so every week read "unknown".
+// And more fundamentally the week-state was the ONLY thing describing him — but "is he the
+// starter" needs no diff at all, because his season totals answer it outright.
+
+describe("his role does not need a baseline", () => {
+  it("calls a man who started every game he played the starter", async () => {
+    const { seasonRole } = await import("./rtg");
+    const r = seasonRole(P({ stats: stats({ gamesPlayed: 1, gamesStarted: 1 }) }));
+    expect(r.role).toBe("starter");
+    expect(r.text).toContain("THE STARTER");
+    expect(r.text).toContain("1 start in 1 game");
+  });
+
+  it("distinguishes splitting time from the rotation from not playing", async () => {
+    const { seasonRole } = await import("./rtg");
+    expect(seasonRole(P({ stats: stats({ gamesPlayed: 6, gamesStarted: 3 }) })).role).toBe("splitting-time");
+    expect(seasonRole(P({ stats: stats({ gamesPlayed: 6, gamesStarted: 0 }) })).role).toBe("rotation");
+    expect(seasonRole(P({ stats: stats({ gamesPlayed: 0, gamesStarted: 0 }) })).role).toBe("has-not-played");
+  });
+
+  it("puts the role in the locked facts even with NO baseline at all", () => {
+    // This is the exact failing case: a real save, first reading, one start in one game.
+    const brief = rtgBrief(
+      rtgFacts({ player: P({ stats: stats({ gamesPlayed: 1, gamesStarted: 1 }) }), baseline: null, school: "Oregon State" })
+    );
+    expect(brief).toContain("THE STARTER");
+    // ...and it must not be contradicted by the week line right underneath it
+    expect(brief).not.toContain("did NOT play");
+  });
+});

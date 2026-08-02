@@ -23,6 +23,8 @@ interface Answer {
   poise?: number;
   roomDelta?: number;
   brandDelta?: number;
+  /** How the room took it, when he spoke for himself. */
+  reaction?: string;
 }
 interface Question {
   reporterName: string;
@@ -32,6 +34,8 @@ interface Question {
   answers?: Answer[];
 }
 interface Presser { questions: Question[]; error?: boolean }
+/** What the room made of something he said in his own words. */
+interface OwnWordsResult { reaction: string; headline?: string; poise?: number; roomDelta?: number; brandDelta?: number; error?: boolean }
 
 const TONE: Record<Question["tone"], string> = {
   friendly: "border-dw-green/40 text-dw-green",
@@ -58,6 +62,11 @@ function HisPodiumPageInner() {
   const [answered, setAnswered] = useState<Record<number, Answer>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Speaking for himself — parity with the coach's podium, where "in his own words" is the
+  // option people actually reach for.
+  const [ownWordsFor, setOwnWordsFor] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+  const [answering, setAnswering] = useState(false);
 
   const cached = useIssueTab<Presser>("rtg-podium");
   useEffect(() => {
@@ -79,6 +88,39 @@ function HisPodiumPageInner() {
       setBusy(false);
     }
   }, [generate, baseline, roster, character]);
+
+  const sayItHimself = useCallback(
+    async (qi: number, q: Question) => {
+      const text = draft.trim();
+      if (!text || answering) return;
+      setAnswering(true);
+      try {
+        const res = await generate<OwnWordsResult>(
+          "podium-answer",
+          { question: { reporterName: q.reporterName, outlet: q.outlet, question: q.question, tone: q.tone }, answer: text, character, player: snapshot?.player ?? null },
+          { force: true }
+        );
+        setAnswered((prev) => ({
+          ...prev,
+          [qi]: {
+            label: "In his own words",
+            text,
+            poise: res?.poise ?? 0,
+            roomDelta: res?.roomDelta ?? 0,
+            brandDelta: res?.brandDelta ?? 0,
+            reaction: res?.error ? undefined : res?.reaction,
+          },
+        }));
+        setOwnWordsFor(null);
+        setDraft("");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "The room didn't hear him.");
+      } finally {
+        setAnswering(false);
+      }
+    },
+    [draft, answering, generate, character, snapshot]
+  );
 
   if (loading) return <p className="p-6 font-serif text-ink3">Reading the save…</p>;
   if (!player) {
@@ -142,6 +184,11 @@ function HisPodiumPageInner() {
                       <p className="mt-1 font-serif text-[15px] leading-snug text-ink">
                         &ldquo;{chosen.text}&rdquo;
                       </p>
+                      {chosen.reaction && (
+                        <p className="mt-2 border-t border-dw-border pt-2 font-serif text-sm text-ink2">
+                          {chosen.reaction}
+                        </p>
+                      )}
                       <div className="mt-2 flex flex-wrap gap-3">
                         <Delta label="Poise" v={chosen.poise} />
                         <Delta label="Room" v={chosen.roomDelta} />
@@ -176,6 +223,50 @@ function HisPodiumPageInner() {
                         </span>
                       </button>
                     ))
+                  )}
+
+                  {/* Say it himself — the coach's podium has this and it is the option people
+                      actually reach for. A scripted list is a menu; this is a press conference. */}
+                  {!chosen && ownWordsFor !== qi && (
+                    <button
+                      type="button"
+                      onClick={() => { setOwnWordsFor(qi); setDraft(""); }}
+                      className="w-full rounded border border-dashed border-ink3/70 bg-paper2 px-4 py-2.5 text-left font-sans text-[11px] uppercase tracking-wider text-ink2 transition-colors hover:border-dw-accent2 hover:text-ink"
+                    >
+                      In his own words…
+                    </button>
+                  )}
+                  {!chosen && ownWordsFor === qi && (
+                    <div className="rounded border border-dw-accent2/50 bg-paper3 px-4 py-3">
+                      <p className="font-sans text-[10px] uppercase tracking-widest text-dw-accent2">
+                        He answers it himself
+                      </p>
+                      <textarea
+                        autoFocus
+                        rows={3}
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        placeholder="What does he actually say?"
+                        className="mt-2 w-full resize-none rounded border border-paper4 bg-paper px-3 py-2 font-serif text-[15px] text-ink outline-none placeholder:text-ink3 focus:border-dw-accent2"
+                      />
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          disabled={answering || !draft.trim()}
+                          onClick={() => void sayItHimself(qi, q)}
+                          className="rounded border border-dw-crimson bg-dw-crimson px-4 py-2 font-sans text-[11px] uppercase tracking-wider text-paper disabled:opacity-40"
+                        >
+                          {answering ? "The room reacts…" : "Say it"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setOwnWordsFor(null)}
+                          className="rounded border border-paper4 bg-paper3 px-4 py-2 font-sans text-[11px] uppercase tracking-wider text-ink2 hover:text-ink"
+                        >
+                          Back
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>

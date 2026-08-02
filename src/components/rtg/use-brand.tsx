@@ -76,17 +76,24 @@ export function useBrand() {
   }, [ready, player, brand.followers, time, line, delta, snapshot]);
 
   // Settle it — once per (year, week), per the idempotence in applyWeek.
+  //
+  // REPORTED BUG: this used to bail when the delta was 0, which it ALWAYS is on a save with no
+  // prior reading — so the baseline was never written and every week read as "unknown"
+  // forever. The baseline must be seeded on first sight whether or not any followers moved.
   useEffect(() => {
-    if (!ready || !player || !week_ || week_.delta === 0) return;
+    if (!ready || !player) return;
     const key = `${dynastyId}::${year}::${week}`;
     if (settled.current === key) return;
     settled.current = key;
-    setBrand((prev) => {
-      const next = applyWeek(prev, year, week, week_);
-      if (next !== prev) void saveBrand(dynastyId, next);
-      return next;
-    });
-    // Roll the baseline forward so NEXT week diffs against this one.
+    if (week_ && week_.delta !== 0) {
+      setBrand((prev) => {
+        const next = applyWeek(prev, year, week, week_);
+        if (next !== prev) void saveBrand(dynastyId, next);
+        return next;
+      });
+    }
+    // Roll the baseline forward so NEXT week diffs against this one. Unconditional: without
+    // this the app can never learn anything about a week.
     void baselineStore
       .set(`baseline::${dynastyId}`, player)
       .then(() => baselineStore.save())
