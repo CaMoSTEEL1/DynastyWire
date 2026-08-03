@@ -1,59 +1,57 @@
-> **v0.2.0** — everything since v0.1.9
->
-> 🏗️ **What v0.2.0 actually is**
->
-> This is the first half of an architecture rewrite, and it's the reason the fixes below are fixes instead of another round of asking the AI nicely.
->
-> The app had already run the experiment on itself. The scouting report works — *"at least the scouting report gets the names right!"* — because **the code works out the facts and the AI only writes the prose around them.** The game recap was the opposite: handed a pile of context and asked to figure out, in writing, who mattered and what it meant. Same AI, same save, same week, opposite results.
->
-> So the wrong names and the mixed-up stats were never really an AI problem. They were an architecture problem — one this app had already solved in one corner. v2 makes that corner the whole app: **the recap, the stakes, the bowl/playoff picture, your history and your coach's résumé are all computed first**, then handed over as facts the writer isn't allowed to argue with.
->
-> On top of that, **every piece is now fact-checked against your save** — invented people, players on the wrong team, wrong scores, wrong records, stat lines that belong to someone else. You can see the running count yourself at Settings → Fact-check baseline.
->
-> The rule underneath all of it: it punishes **contradiction**, never **invention**. A fan can be an idiot about whether you deserved to win. He can't be wrong about who plays for you. Your invented beat writer, the student section, the 3rd-and-8 call, the weather — all still yours.
->
-> Two of seven sections are fully rewritten so far (front page + Around the League). The rest are fact-checked but not yet rebuilt — that's the back half of v2.
->
-> ✨ **New**
->
-> • New: **the media knows your coach.** Titles won, career record, his record at THIS school, how long he's been here, whether he's safe — all pulled from your save. A two-time champ gets asked different questions than a first-year hire, and if he's never won anything the Wire says so instead of handing him a ring he doesn't have
->
-> • New: **year-over-year memory** — from your second season on, the media remembers. Last year's record, revenge games (and it knows when you *won*, so it stops inventing them), rivalries, what a returning player used to be, and the decisions you made that people haven't forgotten
->
-> • New: **the app updates itself** — one portable file, no installer, a small prompt in the corner you can always decline. It now confirms the update landed when it comes back up, and tells you if it didn't
->
-> • New: the weekly issue waits while an update is pending instead of writing pages the restart throws away
->
-> • New: Settings → Fact-check baseline — every generated piece is checked against your save and recorded, so there's a real number on how often the Wire gets a fact wrong
->
-> 🐛 **Fixes**
->
-> • Fixed: **the AI talking about overalls.** It was being handed raw 0-99 ratings and writing "an 88 overall corner" — nobody in football talks like that. It never sees a number now, only football language: all-conference, a quality starter, the weak link
->
-> • Fixed: your bowl game was written as a first round playoff matchup. Bowls are bowls now — one game, season over either way, no bracket, no "first round"
->
-> • Fixed: unranked teams were being pushed into the playoff race, the committee and the New Year's Six every week. That talk is gone unless you're actually in it
->
-> • Fixed: "fighting for bowl eligibility" weeks after you'd already clinched it. It knows when it's settled — and when you're mathematically out
->
-> • Fixed: season totals written as single-game lines. No more 900-yard, 100-carry games — writers now get a real per-game average to work from
->
-> • Fixed: hot-seat talk in the middle of a great season. It reads your actual job security now, not a stale value that comes back blank
->
-> • Fixed: pregame press conference answers coming back attached to post-game questions after a reload
->
-> • Fixed: the press conference hanging on the loading screen with Skip as the only way out
->
-> • Fixed: the answer buttons at the podium were nearly invisible
->
-> • Fixed: players showing up on the wrong team and stat lines getting swapped between them — recaps are built on computed facts now instead of the AI sorting through a wall of data
->
-> • Fixed: Around the League inventing people. One piece named ten players who don't exist; it uses your save's real programs, coaches and rosters now
->
-> • Fixed: articles dating things to 2024 instead of your dynasty's year
->
-> • Fixed: the front page occasionally printing the AI's refusal instead of an article
->
-> • Fixed: a week's issue interrupted mid-write sitting at "writing…" forever
->
-> • Fixed: using an OpenAI-compatible provider with no vision support dumped a huge error instead of saying so
+PASTE-READY. Discord caps a message at 2000 characters and the full changelog is ~3,360, so
+it goes out as TWO messages. Post them back to back, message 1 first.
+
+Emoji are real Unicode, not `:shortcodes:` — shortcodes are what put the invisible characters
+around the football in the last draft. Everything between the lines is literal; don't add
+quote marks or code fences.
+
+────────────────────────── MESSAGE 1 ──────────────────────────
+
+**DynastyWire v0.2.0 — the v2 overhaul**
+*Everything since v0.1.9.*
+
+The whole app was rebuilt underneath: the recap, the stakes, your history, your coach and your playing time are all worked out in code now, then handed to the AI as facts it isn't allowed to change. Every piece also gets fact-checked against your save — see Settings → Fact-check baseline.
+
+**🏈 ROAD TO GLORY MODE**
+• New: point it at an RTG save and it becomes a different app — **RoadWire**
+• New: **The Week** — your week, written. Including the weeks you don't play
+• New: **His Feed** — followers that move off what you actually do on the field
+• New: **His Podium** — media as a 19-year-old. Answer in your own words or take one from the room
+• New: **His Phone** — texts from your position coach, your teammates, and home
+• New: **His Week** — the real ones. A hamstring that's "fine", a redshirt window closing, a handler in your DMs, a text from your coach you haven't answered in two days
+• New: **His Gameplan** — the scouting report as a player gets it. Your matchup and nothing else
+• New: **The Room** — who's ahead of you, ordered by who the staff actually plays
+• New: **Your Recruitment** — all 138 schools with real offers
+• New: dynasty and Road to Glory careers are separate lists in the switcher
+
+────────────────────────── MESSAGE 2 ──────────────────────────
+
+**✨ NEW FOR EVERYONE**
+• New: the media knows your coach — titles won, career record, his record at THIS school, how long he's been here, whether he's safe
+• New: year-over-year memory — from season two it remembers last year's record, revenge games, what a returning player used to be, and the calls you made
+• New: the league's own headlines, the record book, the coaching carousel, and the man who had your job before you — all read from your save, no credits
+• New: the app updates itself. One file, no installer, and it confirms the update landed when it comes back
+• New: the weekly issue waits while an update is pending instead of writing pages the restart throws away
+
+**🐛 FIXES**
+• Fixed: the AI talking about overalls. It never sees a rating number now — only football language
+• Fixed: your bowl game written as a first round playoff matchup. Bowls are bowls — one game, no bracket
+• Fixed: unranked teams pushed into the playoff race, the committee and the New Year's Six. Gone unless you're actually in it
+• Fixed: "fighting for bowl eligibility" weeks after you'd already clinched it
+• Fixed: season totals written as single-game lines. No more 900-yard, 100-carry games
+• Fixed: hot-seat talk in the middle of a great season
+• Fixed: a starter reading as if he wasn't one on a fresh RTG save
+• Fixed: players on the wrong team and stat lines swapped between them
+• Fixed: Around the League inventing people who don't exist
+• Fixed: articles dating things to 2024 instead of your dynasty's year
+• Fixed: pregame press conference answers coming back attached to post-game questions
+• Fixed: the press conference hanging on the loading screen with Skip as the only way out
+• Fixed: the answer buttons at the podium being nearly invisible
+• Fixed: the front page occasionally printing the AI's refusal instead of an article
+• Fixed: a week's issue interrupted mid-write sitting at "writing…" forever
+• Fixed: "under Coach Head Coach" on a Road to Glory save
+
+Download: https://github.com/CaMoSTEEL1/DynastyWire/releases/latest
+If you're already on 0.2.1 from earlier today, grab the zip manually — the updater won't offer you 0.2.0.
+
+───────────────────────────────────────────────────────────────
