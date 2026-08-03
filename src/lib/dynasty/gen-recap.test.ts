@@ -326,13 +326,14 @@ describe("season totals are labelled, and the writer is given the number he need
   it("hands over a per-game average, which is what a story about ONE game needs", () => {
     // Reported: "my running back had 900+ yards in a single game with 100+ carries." With
     // only a cumulative total on the page, the total is the only number there is to use.
-    expect(ctx().userContext).toContain("HIS AVERAGE GAME");
-    expect(ctx().userContext).toContain("117.5 rush yds");
+    expect(ctx().userContext).toContain("rush yds PER GAME");
+    expect(ctx().userContext).toContain("117.5 rush yds PER GAME");
+    expect(ctx().userContext).toContain("yds PER CARRY");
   });
 
   it("puts the same average in the ported recap's cast", () => {
     const p = gen.buildSpec("recap-lead", ctx(), {}).prompt;
-    expect(p).toContain("his AVERAGE game");
+    expect(p).toContain("PER GAME");
   });
 });
 
@@ -402,10 +403,12 @@ describe("year-over-year memory reaches the surfaces", () => {
     expect(p).toContain("Dorian Whitfield — 2028");
   });
 
-  it("says nothing about the past in year one", () => {
-    const p = gen.buildSpec("recap-lead", gen.buildMediaContext(DELTA, SNAPSHOT, opts), {}).prompt;
-    expect(p).not.toContain("PRIOR SEASONS");
+  it("states the past is unknown in year one rather than staying silent", () => {
+    const p = gen.buildSpec("recap-lead", gen.buildMediaContext(DELTA, SNAPSHOT, opts).userContext ? gen.buildMediaContext(DELTA, SNAPSHOT, opts) : gen.buildMediaContext(DELTA, SNAPSHOT, opts), {}).prompt;
     expect(p).not.toContain("covered this program for years");
+    const ctx = gen.buildMediaContext(DELTA, SNAPSHOT, opts);
+    expect(ctx.userContext).toContain("PRIOR SEASONS: NO RECORD");
+    expect(ctx.userContext).toContain("THEY ARE RIGHT AND YOU DEFER");
   });
 
   it("tells every surface who the coach is, straight from the save", () => {

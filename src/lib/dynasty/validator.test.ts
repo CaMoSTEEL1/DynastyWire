@@ -540,3 +540,38 @@ describe("report", () => {
     expect(report.units).toBe(3);
   });
 });
+
+// ── False positives found in a real session ─────────────────────────────────────
+// A live baseline read 1.13 violations/piece. Six of seventeen were the checker, not the
+// model: "San Jos" (a program cut at its accent) four times, and award phrases twice. A
+// checker that inflates its own number is worse than no number.
+
+describe("checker false positives from the field", () => {
+  it("does not cut a program at its accent and report the fragment as a person", () => {
+    const withAccent = buildGroundTruth({
+      snapshot: {
+        ...SNAPSHOT,
+        teams: { ...SNAPSHOT.teams, "4": team({ row: 4, name: "San José State", nickname: "Spartans" }) },
+      },
+      delta: DELTA,
+      roster: OURS,
+      oppRoster: THEIRS,
+    });
+    const v = validateGeneration(
+      "recap-lead",
+      recap("San José State linebacker Jamal Reed chased him down."),
+      withAccent
+    ).violations;
+    expect(v.map((x) => x.claim)).not.toContain("San Jos");
+    expect(v.filter((x) => x.kind === "unknown-person")).toHaveLength(0);
+  });
+
+  it("does not read an award as a person", () => {
+    for (const line of [
+      "The linebacker was a First Team All-American selection.",
+      "He is a Team All-American at his position.",
+    ]) {
+      expect(kinds(recap(line))).not.toContain("unknown-person");
+    }
+  });
+});

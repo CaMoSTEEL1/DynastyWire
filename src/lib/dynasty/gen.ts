@@ -22,7 +22,7 @@ import { recordBaseline, rowFromReport } from "./baseline";
 import { buildGroundTruth, validateGeneration } from "./validator";
 import { lockedBlock, recapBrief, recapFacts } from "./recap";
 import { nationalBrief, nationalFacts } from "./national";
-import { coachResumeBlock, jobSecurityLine, priorSeasonsBlock } from "./history";
+import { coachResumeBlock, jobSecurityLine, priorSeasons, priorSeasonsBlock } from "./history";
 import { postseasonBlock, postseasonOutlook, weekShape, type PostseasonOutlook } from "./postseason";
 import { gameplan, gameplanBlock, positionRoom, roomBlock, rtgBrief, rtgFacts, type PlayerWeekState } from "./rtg";
 import { characterBlock, type RtgCharacter } from "./rtg-character";
@@ -128,7 +128,14 @@ export const SYSTEM_PROMPT = [
   // exists in the save, and the media's job is to translate it into how a player is talked
   // about. Every rating is therefore stripped from the context and replaced with the words
   // a staff would actually use.
-  "6. NEVER write a player rating, an overall, an OVR, a 0-99 number, a letter grade for a",
+  // Reported repeatedly: an average gets re-labelled with a denominator it never had. A back
+  // averaging 97.5 rushing yards A GAME became "97.5 yards per carry" — a number that cannot
+  // exist. Every rate in the context now states its own unit; this forbids changing it.
+  "6. EVERY AVERAGE KEEPS THE UNIT IT IS GIVEN. If the context says PER GAME, it is per game;",
+  "   if it says PER CARRY, it is per carry. NEVER re-label a rate, never divide one number by",
+  "   another to invent a rate, and never compute an average the context did not give you. If",
+  "   the rate you want is not listed, it is UNKNOWN — write the sentence without a number.",
+  "7. NEVER write a player rating, an overall, an OVR, a 0-99 number, a letter grade for a",
   "   player, or any phrase like \"an 88 overall corner\" / \"rated 92\" / \"a 74 OVR backup\".",
   "   Those numbers do not exist in this universe. Real football language ONLY: all-conference,",
   "   a load in the middle, a burner, the weak link, a program-changer, a guy who's still a",
@@ -200,6 +207,10 @@ export interface MediaContext {
    * separately as well as folded into userContext, because the ported surfaces no longer
    * receive the shared blob and would silently lose the program's history with it. */
   history: string | null;
+  /** True only when REAL prior seasons exist. `history` is now always non-null — it states
+   * ignorance when the archive is empty — so anything that should only fire when there IS a
+   * past must key on this instead. */
+  hasHistory: boolean;
   /** The coach's career résumé from the save — titles, career record, record at THIS
    * school, tenure. Carried separately for the same reason as `history`. */
   resume: string | null;
@@ -335,18 +346,38 @@ function fmtPerGame(s: NonNullable<RosterPlayer["stats"]>): string {
   if (gp == null || gp < 2) return "";
   const o = s.offense ?? (s.side === "offense" ? s : null);
   const d = s.defense ?? (s.side === "defense" ? s : null);
-  const avg = (v: number | null | undefined) => (typeof v === "number" ? Math.round((v / gp) * 10) / 10 : null);
+  const rate = (v: number | null | undefined, by: number | null | undefined) =>
+    typeof v === "number" && typeof by === "number" && by > 0 ? Math.round((v / by) * 10) / 10 : null;
+  const avg = (v: number | null | undefined) => rate(v, gp);
+
+  // EVERY NUMBER CARRIES ITS OWN DENOMINATOR. Reported from a real save: a back averaging
+  // 97.5 rushing yards A GAME was written up as "97.5 yards per carry", which is not a
+  // possible number. The unit was in the header and the figure itself was bare, so the model
+  // was free to attach any denominator it liked to it.
   const bits: string[] = [];
   const pass = avg(o?.passYds);
   const rush = avg(o?.rushYds);
   const rec = avg(o?.recYds);
   const tkl = avg(d?.tackles);
-  if (pass) bits.push(`${pass} pass yds`);
-  if (rush) bits.push(`${rush} rush yds`);
-  if (rec) bits.push(`${rec} rec yds`);
-  if (tkl) bits.push(`${tkl} tkl`);
+  if (pass) bits.push(`${pass} pass yds PER GAME`);
+  if (rush) bits.push(`${rush} rush yds PER GAME`);
+  if (rec) bits.push(`${rec} rec yds PER GAME`);
+  if (tkl) bits.push(`${tkl} tackles PER GAME`);
+
+  // And give the real per-attempt rates, so the writer never has to derive one. A number he
+  // has is a number he cannot get wrong.
+  const ypc = rate(o?.rushYds, o?.rushAtt);
+  const ypr = rate(o?.recYds, o?.recCatches);
+  const ypa = rate(o?.passYds, o?.passAtt);
+  if (ypc) bits.push(`${ypc} yds PER CARRY`);
+  if (ypr) bits.push(`${ypr} yds PER CATCH`);
+  if (ypa) bits.push(`${ypa} yds PER PASS ATTEMPT`);
+
   if (!bits.length) return "";
-  return ` — HIS AVERAGE GAME (total ÷ ${gp}, use THIS to describe a single game): ${bits.join(", ")}`;
+  return (
+    ` — RATES (each already divided; use the one whose label matches what you are saying, and` +
+    ` NEVER re-divide or re-label one): ${bits.join(", ")}`
+  );
 }
 
 function fmtStats(p: RosterPlayer): string | null {
@@ -1173,6 +1204,7 @@ export function buildMediaContext(
   // fact from the Season Archive, which is what makes memory safe to ship at all — asked to
   // remember without a locked table, a model invents last year's record and a revenge game
   // that never happened.
+  const hasHistory = priorSeasons(opts.priorSeasons ?? [], after.year ?? null).length > 0;
   const history = priorSeasonsBlock({
     archive: opts.priorSeasons ?? [],
     currentYear: after.year ?? null,
@@ -1229,6 +1261,7 @@ export function buildMediaContext(
     suspensions,
     backstory,
     history,
+    hasHistory,
     resume,
     world,
     outlook,
@@ -1903,7 +1936,7 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
           "- Do not invent transfer portal news or roster departures unless explicitly mentioned.",
           // Year-over-year memory earns its keep here more than anywhere: a beat writer with
           // history is the difference between a game story and a chapter of one.
-          ctx.history
+          ctx.hasHistory
             ? "- You have covered this program for years and the archive below proves it. Where it fits, reach back: a rematch, a 'second straight year', a player measured against what he was, a callback to a decision that aged well or badly. Never contradict the archive, and never reach for a past fact that isn't in it."
             : "",
           ctx.resume
@@ -1975,7 +2008,7 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
           ctx.resume
             ? "- Fans argue about the COACH with his actual résumé in hand (below): his titles or lack of them, his record here, how long he's had. \"X rings and this is what we get\" / \"give him time, it's year one\" are both fair — inventing a championship is not."
             : "",
-          ctx.history
+          ctx.hasHistory
             ? "- 2-3 posts should have a LONG MEMORY: last year's collapse or breakout, the rematch, " +
               '"same as last season", a player who was nothing a year ago. Use ONLY the archived ' +
               "prior-season facts in the context — a fan may be an idiot about what it means, never wrong about what happened."
@@ -2067,7 +2100,7 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
               "  coach gets asked to prove he belongs. Cite those facts exactly as given — never\n" +
               "  invent a title, a former job, or a tenure he doesn't have."
             : "",
-          ctx.history
+          ctx.hasHistory
             ? "- THESE REPORTERS HAVE COVERED YOU FOR YEARS. At least ONE question compares this season\n" +
               "  to a PRIOR one from the archive below — the record then versus now, a rematch with a\n" +
               "  team that beat you, a returning player measured against his old numbers, or a past\n" +
@@ -3461,6 +3494,14 @@ function buildNationalWireSpec(ctx: MediaContext, extra: Extra = {}): PromptSpec
     "",
     nationalBrief(facts),
     "",
+    // The rules above tell the desk that any score it cites must come from "the slate below".
+    // It has to actually be below, or that rule points at nothing and the desk fills the gap.
+    "=== THIS WEEK'S NATIONAL SLATE (the ONLY games you may reference) ===",
+    slate.played.length ? "FINAL (real scores you may cite):" : "FINAL: (none played yet this week)",
+    ...slate.played.map((s) => `  ${s}`),
+    slate.upcoming.length ? "UPCOMING (NOT played — preview only, NO scores):" : "UPCOMING: (none)",
+    ...slate.upcoming.map((s) => `  ${s}`),
+    "",
     "=== AP TOP 25 (real, from the save) ===",
     ...ranked,
     "",
@@ -3562,7 +3603,7 @@ function buildNationalDeskSpec(ctx: MediaContext): PromptSpec {
     // The archive only covers the user's program, so a rise/fall comparison is available for
     // exactly one team on the board. Saying so is what keeps it from being extended to the
     // other 130 by invention.
-    ctx.history
+    ctx.hasHistory
       ? `- ${ctx.school} is the ONE program whose past you actually hold (see PRIOR SEASONS in the context): a national desk noticing it is up or down on a year ago is fair game and should appear once. For every other program, you have NO history — never compare them to a prior season.`
       : "",
     // The national lens is exactly where an unranked team gets written into a playoff race,

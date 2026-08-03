@@ -350,9 +350,18 @@ describe("priorSeasonsBlock", () => {
     current: { wins: 6, losses: 2 },
   })!;
 
-  it("is null in year one so the model is never handed an empty history to fill in", () => {
-    expect(priorSeasonsBlock({ archive: [season({ year: 2029 })], currentYear: 2029 })).toBeNull();
-    expect(priorSeasonsBlock({ archive: [], currentYear: 2029 })).toBeNull();
+  it("states its ignorance in year one rather than saying nothing at all", () => {
+    // Reported from a real save: with no archive the media asserted the program had missed
+    // the playoff last year, then treated the coach as confused when he corrected it.
+    // Silence is where invention lives, so an empty archive now speaks.
+    for (const b of [
+      priorSeasonsBlock({ archive: [season({ year: 2029 })], currentYear: 2029 }),
+      priorSeasonsBlock({ archive: [], currentYear: 2029 }),
+    ]) {
+      expect(b).toContain("PRIOR SEASONS: NO RECORD");
+      expect(b).toContain("NEVER state what happened in a previous season");
+      expect(b).toContain("THEY ARE RIGHT AND YOU DEFER");
+    }
   });
 
   it("states the past as fixed fact and forbids inventing the rest", () => {

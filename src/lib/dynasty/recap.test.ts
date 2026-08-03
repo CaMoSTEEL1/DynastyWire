@@ -278,7 +278,11 @@ describe("recapCast", () => {
     // number he can build that sentence on.
     const cast = recapCast({ roster: ROSTER, team: "Coastal Carolina", game });
     const rb = cast.find((c) => c.name === "Kellen Marsh")!;
-    expect(rb.perGame).toBe("his AVERAGE game (÷8): 117.5 rush yds");
+    // Every figure states its own denominator: a back averaging 97.5 rush yards A GAME was
+    // written up as "97.5 yards per carry", which is not a possible number.
+    expect(rb.perGame).toContain("117.5 rush yds PER GAME");
+    expect(rb.perGame).toContain("5.6 yds PER CARRY");
+    expect(rb.perGame).toContain("never re-divide or re-label");
   });
 
   it("omits the average when one game cannot be told apart from the season", () => {

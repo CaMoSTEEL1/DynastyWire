@@ -646,6 +646,9 @@ const NAME_STOPWORDS = new Set(
     "athletic","sun","belt","mountain","pac","sec","acc","cfp","ncaa","espn","gameday","nil",
     "portal","transfer","signing","day","half","quarter","overtime","kickoff","touchdown",
     "field","goal","offense","defense","special","teams",
+    // Honours and award phrases parse as "First Last" and are not people: "Team All-American",
+    // "First Team All-American", "Preseason All-Conference". All flagged in a real session.
+    "team","all","american","all-american","preseason","honorable","mention","player","coach",
   ]
 );
 
@@ -721,7 +724,13 @@ function sentencesOf(text: string): Sentence[] {
 
 // ── Checks ──────────────────────────────────────────────────────────────────────
 
-const NAME_RE = /\b[A-Z][a-zA-Z'’\-]+(?:\s+(?:[A-Z][a-zA-Z'’.\-]+|de|da|van|von|del|la))+\b/g;
+// Accented letters belong to names AND to programs. "San José State" was being cut at the
+// accent, leaving "San Jos" — which matches no team alias and was therefore reported as an
+// invented person FOUR TIMES in one real session, across four different surfaces. Same class
+// as the K-State bug: a checker false positive masquerading as a model failure. norm() already
+// strips diacritics before any lookup, so the regex just had to reach them.
+const NAME_RE =
+  /\b[A-ZÀ-ÖØ-Þ][a-zA-ZÀ-ÖØ-öø-ÿ'’\-]+(?:\s+(?:[A-ZÀ-ÖØ-Þ][a-zA-ZÀ-ÖØ-öø-ÿ'’.\-]+|de|da|van|von|del|la))+\b/g;
 
 function stripPossessive(s: string): string {
   return s.replace(/['’]s$/i, "").trim();

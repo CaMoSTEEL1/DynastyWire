@@ -333,7 +333,27 @@ export interface HistoryInput {
  */
 export function priorSeasonsBlock(input: HistoryInput): string | null {
   const prior = priorSeasons(input.archive, input.currentYear);
-  if (!prior.length) return null;
+  // NO ARCHIVE IS NOT NO INSTRUCTION. This used to return null, on the theory that an empty
+  // header invites the model to fill it in — but saying NOTHING about the past was worse.
+  // Reported from a real save: with no archived seasons the media asserted the program had
+  // missed the playoff last year, and when the coach corrected it in his own words the piece
+  // treated him as the one making things up. Silence is where invention lives; this states
+  // the ignorance out loud, and tells it who to believe.
+  if (!prior.length) {
+    return [
+      "=== PRIOR SEASONS: NO RECORD ===",
+      "  This app has NOT seen any season before the current one, so the program's past is",
+      "  genuinely UNKNOWN to you. That is not the same as the program having no past.",
+      "  - NEVER state what happened in a previous season: no past record, no bowl, no playoff",
+      "    appearance or absence, no 'first time since', no 'second straight year', no droughts,",
+      "    no streaks, and no claim that something has or has not happened before.",
+      "  - Write about THIS season only. A piece that needs history simply does not mention it.",
+      "  - IF THE COACH OR ANYONE ELSE REFERS TO A PAST SEASON, THEY ARE RIGHT AND YOU DEFER.",
+      "    They lived it and you have no record to check it against. Never contradict them,",
+      "    never imply they are misremembering, and never treat their account as a claim to be",
+      "    corrected — take it as fact and write around it.",
+    ].join("\n");
+  }
 
   const parts: string[] = [
     "=== PRIOR SEASONS (archived — this is the program's REAL history) ===",

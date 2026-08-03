@@ -337,17 +337,29 @@ function perGameOf(p: RosterPlayer): string | null {
   if (gp == null || gp < 2) return null;
   const o = side(p, "offense");
   const d = side(p, "defense");
-  const avg = (v: number | null | undefined) => (typeof v === "number" && v ? Math.round((v / gp) * 10) / 10 : null);
+  const rate = (v: number | null | undefined, by: number | null | undefined) =>
+    typeof v === "number" && v && typeof by === "number" && by > 0 ? Math.round((v / by) * 10) / 10 : null;
+  const avg = (v: number | null | undefined) => rate(v, gp);
+  // Every figure states its own denominator. A back averaging 97.5 rushing yards A GAME was
+  // written up as "97.5 yards per carry" because the unit lived in the label and the number
+  // did not carry it.
   const bits: string[] = [];
   const pass = avg(o?.passYds);
   const rush = avg(o?.rushYds);
   const rec = avg(o?.recYds);
   const tkl = avg(d?.tackles);
-  if (pass) bits.push(`${pass} pass yds`);
-  if (rush) bits.push(`${rush} rush yds`);
-  if (rec) bits.push(`${rec} rec yds`);
-  if (tkl) bits.push(`${tkl} tkl`);
-  return bits.length ? `his AVERAGE game (÷${gp}): ${bits.join(", ")}` : null;
+  if (pass) bits.push(`${pass} pass yds PER GAME`);
+  if (rush) bits.push(`${rush} rush yds PER GAME`);
+  if (rec) bits.push(`${rec} rec yds PER GAME`);
+  if (tkl) bits.push(`${tkl} tackles PER GAME`);
+  // The per-attempt rates, computed, so no one has to derive one.
+  const ypc = rate(o?.rushYds, o?.rushAtt);
+  const ypr = rate(o?.recYds, o?.recCatches);
+  const ypa = rate(o?.passYds, o?.passAtt);
+  if (ypc) bits.push(`${ypc} yds PER CARRY`);
+  if (ypr) bits.push(`${ypr} yds PER CATCH`);
+  if (ypa) bits.push(`${ypa} yds PER PASS ATTEMPT`);
+  return bits.length ? `RATES (already divided — never re-divide or re-label): ${bits.join(", ")}` : null;
 }
 
 function seasonLineOf(p: RosterPlayer): string | null {
