@@ -1,5 +1,5 @@
 PASTE-READY. Discord caps a message at 2000 characters and the full changelog is ~3,360, so
-it goes out as TWO messages. Post them back to back, message 1 first.
+it goes out as THREE messages. Post them back to back, in order.
 
 Emoji are real Unicode, not `:shortcodes:` — shortcodes are what put the invisible characters
 around the football in the last draft. Everything between the lines is literal; don't add
@@ -32,6 +32,8 @@ The whole app was rebuilt underneath: the recap, the stakes, your history, your 
 • New: the league's own headlines, the record book, the coaching carousel, and the man who had your job before you — all read from your save, no credits
 • New: the app updates itself. One file, no installer, and it confirms the update landed when it comes back
 • New: the weekly issue waits while an update is pending instead of writing pages the restart throws away
+
+────────────────────────── MESSAGE 3 ──────────────────────────
 
 **🐛 FIXES**
 • Fixed: the AI talking about overalls. It never sees a rating number now — only football language
