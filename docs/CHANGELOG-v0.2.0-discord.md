@@ -1,19 +1,14 @@
-PASTE-READY. Discord caps a message at 2000 characters and the full changelog is ~3,360, so
-it goes out as THREE messages. Post them back to back, in order.
+PASTE-READY. Discord caps a message at 2000 characters, so this goes out as three messages.
+Post them back to back, in order. Everything between the divider lines is literal — paste
+as-is, no quote marks, no code fences, nothing added.
 
 Emoji are real Unicode, not `:shortcodes:` — shortcodes are what put the invisible characters
-around the football in the last draft. Everything between the lines is literal; don't add
-quote marks or code fences.
+around the football last time.
 
 ────────────────────────── MESSAGE 1 ──────────────────────────
-
-**DynastyWire v0.2.0 — the v2 overhaul**
-*Everything since v0.1.9.*
-
 The whole app was rebuilt underneath: the recap, the stakes, your history, your coach and your playing time are all worked out in code now, then handed to the AI as facts it isn't allowed to change. Every piece also gets fact-checked against your save — see Settings → Fact-check baseline.
-
 **🏈 ROAD TO GLORY MODE**
-• New: point it at an RTG save and it becomes a different app — **RoadWire**
+• New: point it at an RTG save and it becomes a different app **RoadWire**
 • New: **The Week** — your week, written. Including the weeks you don't play
 • New: **His Feed** — followers that move off what you actually do on the field
 • New: **His Podium** — media as a 19-year-old. Answer in your own words or take one from the room
@@ -23,18 +18,14 @@ The whole app was rebuilt underneath: the recap, the stakes, your history, your 
 • New: **The Room** — who's ahead of you, ordered by who the staff actually plays
 • New: **Your Recruitment** — all 138 schools with real offers
 • New: dynasty and Road to Glory careers are separate lists in the switcher
-
 ────────────────────────── MESSAGE 2 ──────────────────────────
-
 **✨ NEW FOR EVERYONE**
 • New: the media knows your coach — titles won, career record, his record at THIS school, how long he's been here, whether he's safe
 • New: year-over-year memory — from season two it remembers last year's record, revenge games, what a returning player used to be, and the calls you made
 • New: the league's own headlines, the record book, the coaching carousel, and the man who had your job before you — all read from your save, no credits
 • New: the app updates itself. One file, no installer, and it confirms the update landed when it comes back
 • New: the weekly issue waits while an update is pending instead of writing pages the restart throws away
-
 ────────────────────────── MESSAGE 3 ──────────────────────────
-
 **🐛 FIXES**
 • Fixed: the AI talking about overalls. It never sees a rating number now — only football language
 • Fixed: your bowl game written as a first round playoff matchup. Bowls are bowls — one game, no bracket
@@ -52,8 +43,5 @@ The whole app was rebuilt underneath: the recap, the stakes, your history, your 
 • Fixed: the front page occasionally printing the AI's refusal instead of an article
 • Fixed: a week's issue interrupted mid-write sitting at "writing…" forever
 • Fixed: "under Coach Head Coach" on a Road to Glory save
-
 Download: https://github.com/CaMoSTEEL1/DynastyWire/releases/latest
-If you're already on 0.2.1 from earlier today, grab the zip manually — the updater won't offer you 0.2.0.
-
 ───────────────────────────────────────────────────────────────
