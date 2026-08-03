@@ -134,8 +134,13 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>
         <SettingsDrawer />
         <IssueLoadingOverlay />
-        {/* The podium takes over the screen when a game week lands — see presser-overlay. */}
-        <PresserOverlay />
+        {/* The podium takes over the screen when a game week lands — see presser-overlay.
+            DYNASTY ONLY. It is the COACH's press conference: it addresses "Coach <name>",
+            asks about his game plan and his program, and writes to the coach's saga meters.
+            Fired on a Road to Glory save it put a head coach's presser in front of a
+            nineteen-year-old backup — reported from a real save. RTG has its own podium at
+            /his-podium and must never see this one. */}
+        {snapshot?.mode !== "rtg" && <PresserOverlay />}
         {/* Self-update prompt. Corner toast, always declinable — never interrupts a week. */}
         <UpdateGate />
         <TutorialWizard />
