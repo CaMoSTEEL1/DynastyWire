@@ -79,6 +79,9 @@ interface DynastyContextValue {
   delta: WeekDelta | null;
   /** The user team's parsed roster (with personalities + stat lines). */
   roster: RosterPlayer[];
+  /** This week's opponent's roster. Exposed so a screen can show a matchup without paying
+   * for a generation to tell it who the opponent's players are. */
+  oppRoster: RosterPlayer[];
   currentSavePath: string | null;
   /** Stable identity of the current dynasty/week — shared by the Saga (see use-saga.ts). */
   dynastyId: string;
@@ -434,6 +437,23 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       void disburseWeekly(dynastyId, currentSavePath, ti, year, week).catch(() => {});
     }
   }, [dynastyId, currentSavePath, snapshot, year, week, settings.nilWriteToSave]);
+
+  // Backfill a profile's mode from the parsed save. Detection is free and unambiguous, so a
+  // career never has to be told which world it is in — and profiles added before RTG existed
+  // get corrected the first time they are opened.
+  useEffect(() => {
+    if (!snapshot || !activeProfile) return;
+    const mode = snapshot.mode ?? "dynasty";
+    const playerName = snapshot.player?.name ?? null;
+    if (activeProfile.mode === mode && (mode !== "rtg" || activeProfile.playerName === playerName)) return;
+    setSettings((prev) => {
+      const dynasties = (prev.dynasties ?? []).map((d) =>
+        d.id === activeProfile.id ? { ...d, mode, playerName } : d
+      );
+      void saveSettings({ dynasties });
+      return { ...prev, dynasties };
+    });
+  }, [snapshot, activeProfile]);
 
   // Season Archive checkpoint: continuously upsert THIS season's record (record, stat lines,
   // games, leaders, storyline ledger) keyed by year. Idempotent, so by the time a new season
@@ -828,6 +848,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       snapshot,
       delta,
       roster,
+      oppRoster,
       currentSavePath,
       dynastyId,
       year,
@@ -856,6 +877,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       snapshot,
       delta,
       roster,
+      oppRoster,
       currentSavePath,
       dynastyId,
       year,

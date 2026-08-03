@@ -436,6 +436,7 @@ export const KIND_CONFIG: Record<string, KindConfig> = {
   "rtg-podium": cfg({}, { skipFields: ["poise", "roomDelta", "brandDelta"] }),
   "rtg-texts": cfg({}, { personaFields: ["with"] }),
   "rtg-situation": cfg({}, { skipFields: ["cost", "label"] }),
+  "rtg-gameplan": cfg({}, { skipFields: ["title", "assignment"] }),
 
   "recap-lead": cfg(),
   "national-desk": cfg(),

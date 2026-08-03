@@ -24,7 +24,7 @@ import { lockedBlock, recapBrief, recapFacts } from "./recap";
 import { nationalBrief, nationalFacts } from "./national";
 import { coachResumeBlock, jobSecurityLine, priorSeasonsBlock } from "./history";
 import { postseasonBlock, postseasonOutlook, weekShape, type PostseasonOutlook } from "./postseason";
-import { positionRoom, roomBlock, rtgBrief, rtgFacts, type PlayerWeekState } from "./rtg";
+import { gameplan, gameplanBlock, positionRoom, roomBlock, rtgBrief, rtgFacts, type PlayerWeekState } from "./rtg";
 import { characterBlock, type RtgCharacter } from "./rtg-character";
 import { worldBlock } from "./world";
 import { brandBlock, brandTier, TIER_NOTE, type BrandState, type FollowerResult } from "./brand";
@@ -1531,6 +1531,61 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
 
     case "rtg-social":
       return buildRtgSocialSpec(ctx, extra);
+
+    /**
+     * HIS GAMEPLAN — the scouting report as a PLAYER receives it.
+     *
+     * The dynasty version is the whole board: every unit, both sides, the staff view. He gets
+     * his own matchup and nothing else, and the withholding is the feature. A freshman
+     * quarterback is handed the coverage install, not the run-fit chart, and a report that
+     * gave him everything would quietly turn him back into the head coach.
+     */
+    case "rtg-gameplan": {
+      const p = ctx.snapshot.player ?? null;
+      const plan = gameplan(p, ctx.oppRoster, ctx.opponent, gradeWord);
+      const ch = (extra.character ?? null) as RtgCharacter | null;
+      return {
+        maxTokens: 2000,
+        prompt: [
+          "Write this week's GAMEPLAN for ONE PLAYER — what his position coach put in front of",
+          "him. Return JSON with this exact schema:",
+          '{"headline": "string", "assignment": "1-2 sentences: what his job IS this week",',
+          '  "keys": [{"title": "<=6 words", "detail": "2-3 sentences of actual football"}],',
+          '  "theyDoThis": "what the man across from him does well, in film language",',
+          '  "goAtThis": "the one thing he can win with", "coachSays": "one line from his position coach"}',
+          "",
+          `He is a ${p?.classYear ?? ""} ${p?.position ?? "player"}. 3-4 keys.`,
+          "",
+          "WRITE IT LIKE A POSITION MEETING, not a broadcast:",
+          "- Real football language — leverage, alignment, hips, hands, the snap count, what he",
+          "  sees pre-snap, what tells him it's coming. Concrete, physical, specific.",
+          "- The men he faces are named below and they are REAL. Use those names. If none are",
+          "  listed, refer to them by role and NEVER invent one.",
+          "- NO RATINGS, no 0-99 numbers, no overalls (rule 6). Film language only.",
+          "- He is not the coordinator. Nothing about the team's overall plan, the other side of",
+          "  the ball, or units he does not play against — he has not been shown any of it.",
+          ch?.positionCoach
+            ? `- "coachSays" is ${ch.positionCoach} in his own voice — short, blunt, the way a position coach actually talks.`
+            : '- "coachSays" is his position coach, short and blunt.',
+          "",
+          gameplanBlock(plan) ?? "",
+          "",
+          rtgBrief(
+            rtgFacts({
+              player: p,
+              baseline: (extra.baselinePlayer ?? null) as RtgPlayer | null,
+              school: ctx.school,
+              interest: ctx.snapshot.schoolInterest,
+              teamResult: rtgTeamResult(ctx),
+            })
+          ),
+          "",
+          characterBlock(ch) ?? "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      };
+    }
 
     /**
      * HIS PHONE. The group chat, the position coach, home.

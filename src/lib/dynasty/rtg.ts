@@ -402,3 +402,131 @@ export function seasonRole(player: RtgPlayer | null | undefined): RoleFacts {
           : "He has not played a game this season.";
   return { role, gamesPlayed: gp, gamesStarted: gs, text };
 }
+
+// ── His gameplan ────────────────────────────────────────────────────────────────
+//
+// The dynasty scouting report is the whole board: every unit, both sides, the full staff view.
+// A player does not get that. He gets his own position's prep — the guys he will personally be
+// lined up across from — and the fact that the rest is withheld is not a limitation, it is the
+// point. A freshman quarterback is handed the coverage install, not the run-fit chart.
+//
+// Same contract as scouting.ts, which this reuses rather than reimplements: code works out who
+// he actually faces, the model writes the prep around a locked table.
+
+/** The opposing position groups that matter to each position. Anything outside this list is
+ * deliberately NOT shown to him — see the block below. */
+const FACES: Record<string, { units: string[]; label: string }> = {
+  QB: { units: ["CB", "FS", "SS", "S", "DB", "MLB", "LOLB", "ROLB", "LB", "LE", "RE", "DE"], label: "their coverage and their rush" },
+  HB: { units: ["MLB", "LOLB", "ROLB", "LB", "DT", "NT", "LE", "RE", "DE", "SS"], label: "their front seven" },
+  RB: { units: ["MLB", "LOLB", "ROLB", "LB", "DT", "NT", "LE", "RE", "DE", "SS"], label: "their front seven" },
+  FB: { units: ["MLB", "LOLB", "ROLB", "LB", "DT", "NT"], label: "their linebackers" },
+  WR: { units: ["CB", "FS", "SS", "S", "DB"], label: "their secondary" },
+  TE: { units: ["SS", "FS", "S", "MLB", "LOLB", "ROLB", "LB"], label: "their linebackers and safeties" },
+  LT: { units: ["RE", "DE", "ROLB"], label: "the man over him" },
+  RT: { units: ["LE", "DE", "LOLB"], label: "the man over him" },
+  LG: { units: ["DT", "NT"], label: "their interior" },
+  RG: { units: ["DT", "NT"], label: "their interior" },
+  C: { units: ["DT", "NT", "MLB"], label: "their interior and the mike" },
+  LE: { units: ["RT", "TE"], label: "the man over him" },
+  RE: { units: ["LT", "TE"], label: "the man over him" },
+  DE: { units: ["LT", "RT", "TE"], label: "the tackles" },
+  DT: { units: ["LG", "RG", "C"], label: "their interior line" },
+  NT: { units: ["C", "LG", "RG"], label: "the centre" },
+  MLB: { units: ["HB", "RB", "C", "LG", "RG", "TE"], label: "their run game" },
+  LOLB: { units: ["HB", "RB", "TE", "RT"], label: "their run game and tight ends" },
+  ROLB: { units: ["HB", "RB", "TE", "LT"], label: "their run game and tight ends" },
+  LB: { units: ["HB", "RB", "TE", "C"], label: "their run game" },
+  CB: { units: ["WR", "TE"], label: "their receivers" },
+  FS: { units: ["WR", "TE", "HB", "RB"], label: "their passing game" },
+  SS: { units: ["TE", "HB", "RB", "WR"], label: "their tight ends and backs" },
+  S: { units: ["WR", "TE", "HB"], label: "their passing game" },
+  K: { units: [], label: "the operation" },
+  P: { units: [], label: "the operation" },
+};
+
+export interface Opponent {
+  name: string;
+  position: string | null;
+  classYear: string | null;
+  /** Graded in words. Never a rating — see SYSTEM_PROMPT rule 6. */
+  grade: string;
+  /** Season production, when the save carries it. */
+  line: string | null;
+}
+
+export interface Gameplan {
+  position: string | null;
+  /** What his prep is ABOUT, in a writer's words. */
+  focus: string;
+  opponent: string | null;
+  /** The men he will personally line up across from, best first. */
+  faces: Opponent[];
+  /** Positions deliberately withheld, so the block can say so out loud. */
+  withheld: boolean;
+}
+
+export function gameplan(
+  player: RtgPlayer | null | undefined,
+  oppRoster: RosterPlayer[] | undefined,
+  opponent: string | null,
+  gradeWord: (o: number | null | undefined) => string,
+  limit = 5
+): Gameplan | null {
+  const pos = (player?.position ?? "").toUpperCase();
+  const spec = FACES[pos];
+  if (!spec) return null;
+  const wanted = new Set(spec.units);
+  const faces = (oppRoster ?? [])
+    .filter((p) => wanted.has((p.position ?? "").toUpperCase()))
+    .sort((a, b) => (b.overall ?? 0) - (a.overall ?? 0))
+    .slice(0, limit)
+    .map((p) => {
+      const s = side(p.stats);
+      const bits: string[] = [];
+      if (s) {
+        if (n(s.tackles)) bits.push(`${n(s.tackles)} tkl`);
+        if (n(s.sacks)) bits.push(`${n(s.sacks)} sacks`);
+        if (n(s.ints)) bits.push(`${n(s.ints)} INT`);
+        if (n(s.recYds)) bits.push(`${n(s.recCatches)} rec, ${n(s.recYds)} yds`);
+        if (n(s.rushYds)) bits.push(`${n(s.rushYds)} rush yds`);
+      }
+      return {
+        name: p.name,
+        position: p.position ?? null,
+        classYear: p.year ?? null,
+        grade: gradeWord(p.overall),
+        line: bits.length ? bits.join(", ") : null,
+      };
+    });
+  return { position: pos, focus: spec.label, opponent, faces, withheld: true };
+}
+
+export function gameplanBlock(g: Gameplan | null): string | null {
+  if (!g) return null;
+  const lines = [
+    `=== HIS GAMEPLAN — ${g.position} vs ${g.opponent ?? "the opponent"} ===`,
+    `  His week is about ONE THING: ${g.focus}.`,
+  ];
+  if (g.faces.length) {
+    lines.push("  THE MEN HE LINES UP ACROSS FROM (real, from the save):");
+    for (const f of g.faces) {
+      lines.push(
+        `    ${f.name} — ${f.position ?? "?"}${f.classYear ? `, ${f.classYear}` : ""}, ${f.grade}` +
+          (f.line ? ` · ${f.line}` : "")
+      );
+    }
+  } else {
+    lines.push(
+      `  The save carries no ${g.opponent ?? "opponent"} players at the positions he faces. Write the`,
+      "  prep by ROLE only — never invent a name for the man across from him."
+    );
+  }
+  lines.push(
+    "",
+    "  THIS IS A PLAYER'S PREP, NOT A COACHING STAFF'S BOARD. He is given his own matchup and",
+    "  NOTHING ELSE: no team-wide gameplan, no other position group's install, no scheme",
+    "  overview, no personnel report on units he never sees. If it is not his matchup, he has",
+    "  not been told it and must not discuss it. Never state a rating or a 0-99 number."
+  );
+  return lines.join("\n");
+}

@@ -781,6 +781,13 @@ export interface DynastyProfile {
   saveFile: string; // exact path to the dynasty save file
   userTeam: string | null;
   coachName: string | null;
+  /** Which world this career belongs to. Detected from the save when it is added — a dynasty
+   * save flags a COACH as user-controlled, a Road to Glory save flags a PLAYER. Absent on
+   * profiles added before RTG existed; those are treated as dynasties and corrected the first
+   * time the save is opened. */
+  mode?: "dynasty" | "rtg";
+  /** RTG only — the player's name, so the list can show WHO rather than which school. */
+  playerName?: string | null;
 }
 
 export interface DynastySettings {

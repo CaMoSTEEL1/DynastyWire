@@ -172,7 +172,21 @@ function DynastySwitcher() {
           </button>
           {open_ && (
             <div className="absolute right-0 z-50 mt-1 w-64 rounded border border-dw-border bg-paper shadow-2xl">
-              {dynasties.map((d) => (
+              {/* TWO LISTS, not one (DESIGN-rtg-mode.md decision 9). A dynasty and a Road to
+                  Glory career are different products sharing a binary, and mixing them in one
+                  flat list is where "it feels like its own thing" quietly dies. Mode is
+                  detected from the save, so nothing here has to be chosen by the user. */}
+              {([
+                { key: "dynasty", head: "Dynasties", items: dynasties.filter((d) => (d.mode ?? "dynasty") !== "rtg") },
+                { key: "rtg", head: "Road to Glory", items: dynasties.filter((d) => d.mode === "rtg") },
+              ] as const)
+                .filter((g) => g.items.length > 0)
+                .map((g) => (
+                  <div key={g.key} className="border-b border-dw-border last:border-b-0">
+                    <p className="px-3 pt-2 pb-1 font-sans text-[9px] uppercase tracking-[0.25em] text-ink3">
+                      {g.head}
+                    </p>
+                    {g.items.map((d) => (
                 <button
                   key={d.id}
                   type="button"
@@ -185,10 +199,13 @@ function DynastySwitcher() {
                     d.id === active?.id ? "text-dw-accent" : "text-ink"
                   )}
                 >
-                  <span className="truncate">{d.label}</span>
+                  {/* An RTG career is identified by WHO, not by which school. */}
+                  <span className="truncate">{d.mode === "rtg" && d.playerName ? d.playerName : d.label}</span>
                   {d.id === active?.id && <span className="text-[10px] uppercase tracking-wider text-dw-accent">Active</span>}
                 </button>
-              ))}
+                    ))}
+                  </div>
+                ))}
               <button
                 type="button"
                 onClick={addAnother}
