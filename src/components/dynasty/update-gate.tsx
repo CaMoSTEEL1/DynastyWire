@@ -58,6 +58,7 @@ export default function UpdateGate() {
   /** What we were trying to become, when we didn't. */
   const [expected, setExpected] = useState<string | null>(null);
   const [notes, setNotes] = useState<string>("");
+  const [notesOpen, setNotesOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -167,7 +168,7 @@ export default function UpdateGate() {
     <div
       role="status"
       className={cn(
-        "fixed bottom-4 right-4 z-[60] w-[min(22rem,calc(100vw-2rem))] rounded p-3 shadow-lg",
+        "fixed bottom-4 right-4 z-[60] w-[min(26rem,calc(100vw-2rem))] rounded p-3 shadow-lg",
         "border bg-paper2",
         phase === "landed" ? "border-dw-green/50" : phase === "stalled" ? "border-dw-yellow/50" : "border-dw-border"
       )}
@@ -195,9 +196,28 @@ export default function UpdateGate() {
       </div>
 
       {releaseNotes && (phase === "available" || phase === "landed") && (
-        <p className="mt-1 max-h-24 overflow-y-auto whitespace-pre-line text-[11px] leading-relaxed text-ink2">
-          {releaseNotes}
-        </p>
+        <div className="mt-1.5">
+          <div
+            className={cn(
+              "overflow-y-auto whitespace-pre-line rounded border border-dw-border bg-paper",
+              "px-2.5 py-2 font-serif text-[12px] leading-relaxed text-ink2",
+              notesOpen ? "max-h-[60vh]" : "max-h-24"
+            )}
+          >
+            {releaseNotes}
+          </div>
+          {/* Only offer it when there is genuinely more to see — a toggle that does nothing
+              visible is worse than no toggle. */}
+          {releaseNotes.length > 220 && (
+            <button
+              type="button"
+              onClick={() => setNotesOpen((v) => !v)}
+              className="mt-1 font-sans text-[10px] uppercase tracking-wider text-dw-accent2 hover:text-ink"
+            >
+              {notesOpen ? "Show less" : "Read the full changelog"}
+            </button>
+          )}
+        </div>
       )}
 
       {phase === "installing" && (
