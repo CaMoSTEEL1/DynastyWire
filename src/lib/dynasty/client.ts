@@ -23,6 +23,10 @@ export interface TeamInfo {
   rankCFP: number | null;
   prestige: number | null;
   ratingOVR: number | null;
+  /** What they run, read from the save: "Air Raid", "Option", "Multiple Offense" … */
+  offScheme?: string | null;
+  /** "4-2-5", "3-3-5 Tite", "Base 3-4" … */
+  defScheme?: string | null;
   // Dynasty "points" economy (user team only).
   pointBudget?: number | null;
   pointsRemaining?: number | null;

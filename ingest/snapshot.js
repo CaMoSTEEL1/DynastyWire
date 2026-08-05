@@ -107,6 +107,35 @@ function str(rec, field) {
 }
 
 // Build the Team lookup: rowIndex -> { name, rank, record, prestige, ... }
+/**
+ * "OFF_SPREAD_OPTION" -> "Spread Option", "DEF_3_3_5_TITE" -> "3-3-5 Tite".
+ * Front sizes come back as digits joined by hyphens, which is how anyone who watches
+ * football writes them; words are title-cased. Unknown shapes fall through to the raw
+ * string rather than a guess.
+ */
+function schemeLabel(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const body = raw.replace(/^(OFF|DEF)_/i, '');
+  if (!body) return null;
+  // Tokenize letters and digits separately so DEF_BASE3_4 reads "Base 3-4", not "Base3 4".
+  const tokens = body.split('_').flatMap((p) => p.match(/\d+|[A-Za-z]+/g) ?? []);
+  const out = [];
+  let digits = [];
+  const flushDigits = () => {
+    if (digits.length) out.push(digits.join('-'));
+    digits = [];
+  };
+  for (const t of tokens) {
+    if (/^\d+$/.test(t)) digits.push(t);
+    else {
+      flushDigits();
+      out.push(t.charAt(0).toUpperCase() + t.slice(1).toLowerCase());
+    }
+  }
+  flushDigits();
+  return out.join(' ').trim() || null;
+}
+
 function buildTeams(teamTable) {
   const teams = {};
   for (const r of teamTable.records) {
@@ -136,6 +165,11 @@ function buildTeams(teamTable) {
       rankCFP: rankOrNull(num(r, 'CFPPoll_CurrentRank')),
       prestige: num(r, 'TeamPrestige'),
       ratingOVR: num(r, 'TEAM_RATINGOVR'),
+      // What they actually run, from the save: OFF_AIR_RAID, OFF_OPTION, DEF_3_3_5_TITE …
+      // The scouting report reads these so a matchup preview can talk about the offense the
+      // opponent runs instead of inferring one from their yardage.
+      offScheme: schemeLabel(str(r, 'CurrentOffensiveScheme')),
+      defScheme: schemeLabel(str(r, 'CurrentDefensiveScheme')),
       confStanding: num(r, 'CurSeasonConfStanding'),
       // User-only dynasty resources — CPU teams leave these at 0. Used to detect the
       // human's team (verified: unique to the controlled team, e.g. Kansas State).
@@ -181,6 +215,48 @@ function buildGames(sgTable) {
       simmed: safeBool(r, 'IsSimmed'),
       status: num(r, 'GameStatus'),
     });
+  }
+  return games;
+}
+
+/**
+ * The save pre-populates postseason game rows with a score BEFORE the game is played.
+ * Verified on a real week-18 save: Kansas State sat at 13-0 with fourteen scored rows on the
+ * schedule, and all twelve quarterfinal rows in the league carried a final. Trusting the
+ * score meant the app opened the playoff already recapping a game that had not kicked off —
+ * no matchup breakdown, and a press conference asking how it felt to win it.
+ *
+ * A team's record is the honest count: it goes up only when a game actually finishes. So for
+ * every team whose record we know, the first (wins+losses) scored rows in week order are the
+ * real ones and anything past that is the save running ahead of itself. A row survives only
+ * if BOTH participants can account for it — one team's word is not enough to erase a game
+ * from the other's schedule.
+ *
+ * FCS opponents carry no record (0-0 always), so they abstain rather than voting every game
+ * they appear in out of existence.
+ */
+function unplayFutureGames(games, teams) {
+  const season = games.reduce((m, g) => (g.year != null && g.year > m ? g.year : m), -1);
+  if (season < 0) return games;
+
+  const trusted = new Set();
+  const voters = new Map(); // game -> how many participants had a record to check it against
+
+  for (const key of Object.keys(teams)) {
+    const row = Number(key);
+    const t = teams[key];
+    const recordGames = (t.wins || 0) + (t.losses || 0);
+    if (recordGames <= 0) continue; // no record to check against — abstain
+
+    const played = games
+      .filter((g) => g.year === season && g.played && (g.homeRow === row || g.awayRow === row))
+      .sort((a, b) => (a.week || 0) - (b.week || 0));
+    for (const g of played) voters.set(g, (voters.get(g) || 0) + 1);
+    for (const g of played.slice(0, recordGames)) trusted.add(g);
+  }
+
+  for (const g of games) {
+    if (g.played && voters.has(g) && !trusted.has(g)) g.played = false;
   }
   return games;
 }
@@ -651,7 +727,8 @@ async function buildSnapshot(pathOrFile, opts = {}) {
   //     season-start field; COACH_FIREREPORTED dropped as meaningless.
   // v9: RTG — mode detection, the user player, school interest, depth position.
   // v10: depth entries returned as a LIST (which row is the user's is still unverified).
-  const cf = isPath ? cacheFile(pathOrFile, `snap|v12|${optKey}`) : null;
+  // v13: postseason rows carry a score before kickoff — the record decides what was played.
+  const cf = isPath ? cacheFile(pathOrFile, `snap|v13|${optKey}`) : null;
   if (cf) {
     const cached = readCache(cf);
     if (cached) return cached;
@@ -664,7 +741,8 @@ async function buildSnapshot(pathOrFile, opts = {}) {
   const coachTable = await readRecords(pickTable(f, 'Coach'));
 
   const teams = buildTeams(teamTable);
-  const games = buildGames(sgTable);
+  // Scores alone lie about the postseason — see unplayFutureGames().
+  const games = unplayFutureGames(buildGames(sgTable), teams);
 
   // Priority: explicit override -> reliable Coach.IsUserControlled -> last-resort heuristic.
   let userTeamRow = resolveUserTeam(teams, opts);
@@ -1452,4 +1530,4 @@ async function buildCommitments(pathOrFile, opts = {}) {
   return result;
 }
 
-module.exports = { openSave, pickTable, readRecords, buildSnapshot, buildRecruits, buildRoster, buildPortal, buildCommitments };
+module.exports = { openSave, pickTable, readRecords, buildSnapshot, buildRecruits, buildRoster, buildPortal, buildCommitments, unplayFutureGames, schemeLabel };

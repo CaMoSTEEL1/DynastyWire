@@ -123,18 +123,35 @@ export async function readTab<T = unknown>(
   return (issue?.tabs[tabKey] as TabState<T> | undefined) ?? null;
 }
 
+// Every write is load-modify-persist over the WHOLE issue record, so two of them in flight
+// at once lose one of the two tabs: both read the same issue, and the second save writes its
+// tab over a copy that never saw the first. That was harmless while the weekly pass wrote one
+// section at a time. It is not harmless now that the pass runs several at once, so writes are
+// serialised through one chain — the cost is a few milliseconds, and the alternative is a
+// section that silently never appears.
+let writeChain: Promise<unknown> = Promise.resolve();
+
+function serialize<T>(job: () => Promise<T>): Promise<T> {
+  const next = writeChain.then(job, job);
+  // Keep the chain alive even when a job rejects; the caller still sees the rejection.
+  writeChain = next.catch(() => {});
+  return next;
+}
+
 /** Write one tab's state, creating the issue record on first write. Returns the issue. */
-export async function writeTab(
+export function writeTab(
   key: string,
   tabKey: string,
   state: TabState,
   meta: { dynastyId: string; year: number; week: number }
 ): Promise<Issue> {
-  const issue =
-    (await loadIssue(key)) ?? newIssue(key, meta.dynastyId, meta.year, meta.week);
-  issue.tabs[tabKey] = state;
-  await persist(issue);
-  return issue;
+  return serialize(async () => {
+    const issue =
+      (await loadIssue(key)) ?? newIssue(key, meta.dynastyId, meta.year, meta.week);
+    issue.tabs[tabKey] = state;
+    await persist(issue);
+    return issue;
+  });
 }
 
 /** Drop a week's whole issue (used by "regenerate this week"'s force path via re-write). */

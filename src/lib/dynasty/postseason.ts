@@ -88,6 +88,8 @@ export interface PostseasonOutlook {
   winsToBowl: number | null;
   cfpRank: number | null;
   mediaRank: number | null;
+  /** False before the committee's first release, when no team has a CFP number at all. */
+  cfpReleased: boolean;
   standing: PlayoffStanding;
   /** True when the team is playing a POSTSEASON game and is not in the bracket — i.e. an
    * ordinary bowl game, which is what almost every postseason team is playing. */
@@ -106,6 +108,13 @@ export interface PostseasonInput {
   week: number | null | undefined;
   /** True once the save says we are in a postseason week (computed by computePhase). */
   inPostseason: boolean;
+  /**
+   * Whether the CFP committee has released a poll at all yet. Before the first release every
+   * team's rankCFP is null, which is NOT the same as being left out of it — treating it as
+   * "unranked" had the press asking about a snub in September, weeks before the first
+   * rankings existed. Defaults to true so an omitted flag keeps the old behaviour.
+   */
+  cfpReleased?: boolean;
 }
 
 const ranked = (n: number | null | undefined): number | null =>
@@ -129,9 +138,13 @@ export function postseasonOutlook(input: PostseasonInput): PostseasonOutlook | n
   const cfpRank = ranked(t.rankCFP);
   const mediaRank = ranked(t.rankMedia);
   const size = fieldSize(input.calendar);
+  const cfpReleased = input.cfpReleased !== false;
 
+  // Before the committee's first release the AP poll is the only field there is, so it stands
+  // in as the proxy. After it, the CFP poll is the only one that decides anything.
   let standing: PlayoffStanding;
   if (cfpRank != null && cfpRank <= size) standing = "in-field";
+  else if (!cfpReleased && mediaRank != null && mediaRank <= size) standing = "in-field";
   else if ((cfpRank != null && cfpRank <= size + 6) || (mediaRank != null && mediaRank <= size + 3)) {
     standing = "contender";
   } else if (cfpRank != null || mediaRank != null) standing = "longshot";
@@ -177,9 +190,17 @@ export function postseasonOutlook(input: PostseasonInput): PostseasonOutlook | n
   const pollState =
     cfpRank != null
       ? `#${cfpRank} in the CFP rankings`
-      : mediaRank != null
-        ? `UNRANKED in the CFP rankings (#${mediaRank} in the AP poll)`
-        : "UNRANKED in both the CFP rankings and the AP poll";
+      : !cfpReleased
+        ? mediaRank != null
+          ? `#${mediaRank} in the AP poll — THE CFP RANKINGS HAVE NOT BEEN RELEASED YET this season, ` +
+            "so nobody has a CFP number. Never write, ask, or imply that they were left out of, " +
+            "snubbed by, or omitted from the CFP rankings; there is nothing yet to be left out of"
+          : "UNRANKED in the AP poll — THE CFP RANKINGS HAVE NOT BEEN RELEASED YET this season, so " +
+            "nobody has a CFP number. Never write, ask, or imply a CFP snub; there is nothing yet " +
+            "to be left out of"
+        : mediaRank != null
+          ? `UNRANKED in the CFP rankings (#${mediaRank} in the AP poll)`
+          : "UNRANKED in both the CFP rankings and the AP poll";
 
   if (inPlayoffGame) {
     lines.push(
@@ -233,6 +254,7 @@ export function postseasonOutlook(input: PostseasonInput): PostseasonOutlook | n
     winsToBowl: bowlEligible ? null : 6 - wins,
     cfpRank,
     mediaRank,
+    cfpReleased,
     standing,
     inNonPlayoffBowl,
     inPlayoffGame,

@@ -6,13 +6,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mem = new Map<string, unknown>();
+// Clone on the way in and out, the way a real store does — it serializes to a file, so a
+// caller never holds a live reference to what is on disk. Without this a lost-update race
+// would be invisible here: two writers would be mutating the same object and both would
+// appear to survive.
+const clone = <T,>(v: T): T => (v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T));
 vi.mock("@tauri-apps/plugin-store", () => ({
   LazyStore: class {
     async get<T>(k: string): Promise<T | null> {
-      return (mem.get(k) as T) ?? null;
+      return mem.has(k) ? clone(mem.get(k) as T) : null;
     }
     async set(k: string, v: unknown) {
-      mem.set(k, v);
+      mem.set(k, clone(v));
     }
     async delete(k: string) {
       mem.delete(k);
@@ -85,5 +90,33 @@ describe("tabs orphaned mid-write", () => {
 
   it("returns null for a week that was never written", async () => {
     expect(await loadIssueLive(issueKey("d1", 2029, 99))).toBeNull();
+  });
+});
+
+// ── Two sections writing at once ───────────────────────────────────────────────
+// The weekly pass used to write one section at a time, so a write being load-modify-persist
+// over the WHOLE issue record was harmless. It runs several at once now: both writers read
+// the same issue, and the second save would put its tab over a copy that never saw the first.
+// The symptom would be a section that silently never appears.
+
+describe("concurrent tab writes", () => {
+  it("keeps every tab when several are written at the same time", async () => {
+    const key = issueKey("d1", 2029, 12);
+    const kinds = ["recap", "social", "shows", "national", "rankings", "presser"];
+    await Promise.all(kinds.map((k) => writeTab(key, k, ready({ k }), META)));
+    const issue = await loadIssue(key);
+    expect(Object.keys(issue?.tabs ?? {}).sort()).toEqual([...kinds].sort());
+  });
+
+  it("does not lose a tab to a seed written in parallel", async () => {
+    const key = issueKey("d1", 2029, 12);
+    await Promise.all([
+      writeTab(key, "recap", ready({ n: 1 }), META),
+      writeTab(key, "social", generating, META),
+      writeTab(key, "shows", ready({ n: 3 }), META),
+    ]);
+    expect((await readTab(key, "recap"))?.status).toBe("ready");
+    expect((await readTab(key, "social"))?.status).toBe("generating");
+    expect((await readTab(key, "shows"))?.status).toBe("ready");
   });
 });

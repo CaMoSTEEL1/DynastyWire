@@ -171,3 +171,46 @@ describe("outlook is null when there is nothing to compute from", () => {
     expect(postseasonBlock(null)).toBeNull();
   });
 });
+
+// ── Before the committee has said anything ─────────────────────────────────────
+// From a tester: "the press continually ask variants of 'how do you feel being snubbed by
+// not being in the CFP top 25', when the CFP rankings haven't yet been released that season."
+// He was right — every team's rankCFP is null until the first release, and the outlook was
+// reporting that absence as UNRANKED. Absent is not omitted.
+
+const preRelease = (t: Partial<TeamInfo>) =>
+  postseasonOutlook({
+    team: team(t),
+    games: SCHEDULE,
+    userRow: 1,
+    calendar: REGULAR,
+    week: 6,
+    inPostseason: false,
+    cfpReleased: false,
+  })!;
+
+describe("the CFP rankings before they exist", () => {
+  it("never calls a team unranked in a poll that has not come out", () => {
+    const text = preRelease({ wins: 5, losses: 1, rankMedia: 18 }).lines.join(" ");
+    expect(text).not.toMatch(/UNRANKED in the CFP/);
+    expect(text).toMatch(/HAVE NOT BEEN RELEASED YET/);
+  });
+
+  it("forbids the snub question outright", () => {
+    for (const t of [{ wins: 5, losses: 1, rankMedia: 18 }, { wins: 2, losses: 4 }]) {
+      expect(preRelease(t).lines.join(" ")).toMatch(/Never write, ask, or imply/);
+    }
+  });
+
+  it("uses the AP poll as the field while it is the only poll there is", () => {
+    expect(preRelease({ wins: 6, losses: 0, rankMedia: 4 }).standing).toBe("in-field");
+    expect(preRelease({ wins: 4, losses: 2, rankMedia: 22 }).standing).toBe("longshot");
+    expect(preRelease({ wins: 2, losses: 4 }).standing).toBe("out");
+  });
+
+  it("goes back to the CFP poll the moment it is released", () => {
+    const after = outlook({ wins: 6, losses: 0, rankMedia: 4, rankCFP: null });
+    expect(after.cfpReleased).toBe(true);
+    expect(after.lines.join(" ")).toMatch(/UNRANKED in the CFP rankings/);
+  });
+});

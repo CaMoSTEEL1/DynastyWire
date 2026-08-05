@@ -444,6 +444,11 @@ const FACES: Record<string, { units: string[]; label: string }> = {
   P: { units: [], label: "the operation" },
 };
 
+/** Offense or defense, for deciding which of the opponent's two schemes he actually faces. */
+const OFFENSIVE_POSITIONS = new Set([
+  "QB", "HB", "RB", "FB", "WR", "TE", "LT", "LG", "C", "RG", "RT", "OL",
+]);
+
 export interface Opponent {
   name: string;
   position: string | null;
@@ -461,6 +466,8 @@ export interface Gameplan {
   opponent: string | null;
   /** The men he will personally line up across from, best first. */
   faces: Opponent[];
+  /** What the opponent lines up in, from the save. Null when the save doesn't say. */
+  scheme: string | null;
   /** Positions deliberately withheld, so the block can say so out loud. */
   withheld: boolean;
 }
@@ -470,7 +477,9 @@ export function gameplan(
   oppRoster: RosterPlayer[] | undefined,
   opponent: string | null,
   gradeWord: (o: number | null | undefined) => string,
-  limit = 5
+  limit = 5,
+  /** The opponent's row, so his prep can name the front or the offense he'll see. */
+  oppTeam?: { offScheme?: string | null; defScheme?: string | null } | null
 ): Gameplan | null {
   const pos = (player?.position ?? "").toUpperCase();
   const spec = FACES[pos];
@@ -498,7 +507,10 @@ export function gameplan(
         line: bits.length ? bits.join(", ") : null,
       };
     });
-  return { position: pos, focus: spec.label, opponent, faces, withheld: true };
+  // A defender preps against their offense; a man on offense preps against their front.
+  const offensive = OFFENSIVE_POSITIONS.has(pos);
+  const scheme = (offensive ? oppTeam?.defScheme : oppTeam?.offScheme) ?? null;
+  return { position: pos, focus: spec.label, opponent, faces, scheme, withheld: true };
 }
 
 export function gameplanBlock(g: Gameplan | null): string | null {
@@ -507,6 +519,9 @@ export function gameplanBlock(g: Gameplan | null): string | null {
     `=== HIS GAMEPLAN — ${g.position} vs ${g.opponent ?? "the opponent"} ===`,
     `  His week is about ONE THING: ${g.focus}.`,
   ];
+  if (g.scheme) {
+    lines.push(`  What they line up in against him: ${g.scheme} (from the save — do not invent a different system).`);
+  }
   if (g.faces.length) {
     lines.push("  THE MEN HE LINES UP ACROSS FROM (real, from the save):");
     for (const f of g.faces) {

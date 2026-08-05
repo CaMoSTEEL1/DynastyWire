@@ -808,6 +808,82 @@ export function depthDropOff(roster: RosterPlayer[], limit = 3): DropOff[] {
   return out.sort((a, b) => b.gap - a.gap).slice(0, limit);
 }
 
+// ── What they line up in ───────────────────────────────────────────────────────
+// The save carries each program's actual system (CurrentOffensiveScheme /
+// CurrentDefensiveScheme), and nothing was reading it — so a report could describe a triple-
+// option team purely through its yardage. Naming the system is free, and pairing it against
+// what they've ACTUALLY called is the useful part: a team in the Air Raid running it 55% of
+// the time is a different opponent than the label suggests.
+
+export interface SchemeRead {
+  yourOffense: string | null;
+  yourDefense: string | null;
+  theirOffense: string | null;
+  theirDefense: string | null;
+  /** Defenders in their base box, from the front in the scheme name. null when unreadable. */
+  theirBox: number | null;
+  /** One line a coach can act on. Empty when the save gives us nothing. */
+  notes: string[];
+}
+
+/** "4-2-5" -> 6, "Base 3-4" -> 7, "3-3-5 Tite" -> 6. The first two numbers ARE the front. */
+export function boxCount(defScheme: string | null | undefined): number | null {
+  const nums = (defScheme ?? "").match(/\d+/g);
+  if (!nums || nums.length < 2) return null;
+  const box = Number(nums[0]) + Number(nums[1]);
+  return box >= 5 && box <= 9 ? box : null;
+}
+
+/** Names both systems and says where the label and the play-calling disagree. */
+export function schemeRead(
+  mineTeam: TeamInfo | null | undefined,
+  theirsTeam: TeamInfo | null | undefined,
+  theirTendencies: Tendencies
+): SchemeRead {
+  const theirOffense = theirsTeam?.offScheme ?? null;
+  const theirDefense = theirsTeam?.defScheme ?? null;
+  const box = boxCount(theirDefense);
+  const notes: string[] = [];
+
+  if (theirOffense) {
+    const rate = theirTendencies.passRate;
+    if (rate == null) {
+      notes.push(`They run the ${theirOffense}. No snaps on tape yet this season to check it against.`);
+    } else {
+      // The label is what they installed; the rate is what they've actually called.
+      const passFirst = /air raid|run and shoot|spread|veer/i.test(theirOffense) && !/option/i.test(theirOffense);
+      const runFirst = /option|power|pistol|pro|smash/i.test(theirOffense);
+      const matches = (passFirst && rate >= 52) || (runFirst && rate <= 48) || (!passFirst && !runFirst);
+      notes.push(
+        matches
+          ? `They run the ${theirOffense} and the tape backs it up — ${rate}% of their plays are passes.`
+          : `They're listed in the ${theirOffense}, but they've thrown it on only ${rate}% of their plays. ` +
+              "Prepare for what they've called, not what they're supposed to be."
+      );
+    }
+  }
+
+  if (theirDefense) {
+    notes.push(
+      box == null
+        ? `They play a ${theirDefense}.`
+        : box <= 6
+          ? `They play a ${theirDefense} — ${box} in the box. Light front: the run is there if your line holds up, ` +
+            "and they're built to take away the pass."
+          : `They play a ${theirDefense} — ${box} in the box. Heavy front: they'll crowd the run and dare you to throw.`
+    );
+  }
+
+  return {
+    yourOffense: mineTeam?.offScheme ?? null,
+    yourDefense: mineTeam?.defScheme ?? null,
+    theirOffense,
+    theirDefense,
+    theirBox: box,
+    notes,
+  };
+}
+
 /** Schedule context — the half of the report that needs no ratings at all. */
 export interface ScheduleContext {
   form: RecentForm;
@@ -827,6 +903,9 @@ export interface ScoutingMath {
   specialTeams: SpecialTeams;
   experience: ExperienceProfile;
   dropOffs: DropOff[];
+  /** What both teams line up in. Present only when the caller supplies the schedule (which
+   * is where the TeamInfo rows carrying the schemes come from). */
+  schemes: SchemeRead | null;
   /** Present only when the caller supplies the schedule. */
   schedule: ScheduleContext | null;
   /** Internal only: overall on-field gap, user's perspective. Never render. */
@@ -854,6 +933,7 @@ export function scoutingMath(
   const edges = unitEdges(mine, theirs);
   const diffs = edges.map((e) => e.diff).filter((d): d is number => d != null);
   const overallGap = diffs.length ? Math.round(diffs.reduce((s, d) => s + d, 0) / diffs.length) : null;
+  const theirTendencies = tendencies(theirs);
   return {
     edges,
     matchups: phaseMatchups(mine, theirs),
@@ -861,10 +941,17 @@ export function scoutingMath(
     weakLinks: weakLinks(theirs),
     threats: topThreats(theirs),
     injuries: injuries(theirs),
-    tendencies: tendencies(theirs),
+    tendencies: theirTendencies,
     specialTeams: specialTeams(theirs),
     experience: experienceProfile(theirs),
     dropOffs: depthDropOff(theirs),
+    schemes: schedule
+      ? schemeRead(
+          schedule.myRow != null ? schedule.teams[String(schedule.myRow)] : null,
+          schedule.theirRow != null ? schedule.teams[String(schedule.theirRow)] : null,
+          theirTendencies
+        )
+      : null,
     schedule: schedule
       ? {
           form: recentForm(schedule.games, schedule.teams, schedule.theirRow),

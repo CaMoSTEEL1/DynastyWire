@@ -12,6 +12,7 @@ import {
   EDGE_LABEL,
   SEVERITY_LABEL,
   bestMismatches,
+  boxCount,
   classAbbrev,
   commonOpponents,
   depthDropOff,
@@ -23,6 +24,7 @@ import {
   projectedStarters,
   quarterProfile,
   recentForm,
+  schemeRead,
   scoutingMath,
   seriesHistory,
   specialTeams,
@@ -570,5 +572,64 @@ describe("scoutingMath — the aggregate the prompt and the UI both read", () =>
     ];
     expect(() => scoutingMath(junk, junk)).not.toThrow();
     expect(projectedStarters(junk)).toEqual([]);
+  });
+});
+
+// ── What they line up in ────────────────────────────────────────────────────────
+// The save has carried each program's actual system all along (CurrentOffensiveScheme /
+// CurrentDefensiveScheme) and nothing read it, so the report inferred a scheme from yardage.
+// Naming it is free; the judgement is in pairing the label against what they've actually run.
+
+describe("boxCount", () => {
+  it("reads the front out of the name", () => {
+    expect(boxCount("4-2-5")).toBe(6);
+    expect(boxCount("3-3-5 Tite")).toBe(6);
+    expect(boxCount("Base 3-4")).toBe(7);
+    expect(boxCount("3-4 Multiple")).toBe(7);
+  });
+
+  it("declines rather than guessing", () => {
+    expect(boxCount(null)).toBeNull();
+    expect(boxCount("Multiple")).toBeNull();
+    expect(boxCount("46")).toBeNull(); // one number is not a front
+  });
+});
+
+describe("schemeRead", () => {
+  const tend = (passRate: number | null) =>
+    ({ ...tendencies([]), passRate }) as ReturnType<typeof tendencies>;
+  const t = (over: Partial<TeamInfo>): TeamInfo =>
+    ({ row: 1, teamIndex: 1, name: "X", nickname: null, city: null, wins: 0, losses: 0,
+       confWins: null, confLosses: null, rankMedia: null, rankCoaches: null, rankCFP: null,
+       prestige: null, ratingOVR: null, ...over }) as TeamInfo;
+
+  it("names the system and says the tape agrees", () => {
+    const r = schemeRead(null, t({ offScheme: "Air Raid" }), tend(64));
+    expect(r.notes.join(" ")).toMatch(/Air Raid and the tape backs it up/);
+  });
+
+  it("flags a team that does not play like its label", () => {
+    const r = schemeRead(null, t({ offScheme: "Air Raid" }), tend(38));
+    expect(r.notes.join(" ")).toMatch(/listed in the Air Raid, but they've thrown it on only 38%/);
+    expect(r.notes.join(" ")).toMatch(/what they've called, not what they're supposed to be/);
+  });
+
+  it("turns the front into a box count a coach can use", () => {
+    const light = schemeRead(null, t({ defScheme: "4-2-5" }), tend(50));
+    expect(light.theirBox).toBe(6);
+    expect(light.notes.join(" ")).toMatch(/Light front/);
+    const heavy = schemeRead(null, t({ defScheme: "Base 3-4" }), tend(50));
+    expect(heavy.theirBox).toBe(7);
+    expect(heavy.notes.join(" ")).toMatch(/Heavy front/);
+  });
+
+  it("says nothing at all when the save gives it nothing", () => {
+    expect(schemeRead(null, t({}), tend(50)).notes).toHaveLength(0);
+    expect(schemeRead(null, null, tend(50)).notes).toHaveLength(0);
+  });
+
+  it("does not claim the tape agrees before there is any tape", () => {
+    const r = schemeRead(null, t({ offScheme: "Option" }), tend(null));
+    expect(r.notes.join(" ")).toMatch(/No snaps on tape yet/);
   });
 });

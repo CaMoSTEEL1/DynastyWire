@@ -481,6 +481,37 @@ function ScoutingReport() {
               <p className="font-sans text-[10px] text-ink3">off the save · film grades, no AI</p>
             </div>
 
+            {/* What both teams line up in — straight from the save, no inference. */}
+            {math.schemes && math.schemes.notes.length > 0 && (
+              <Block label="What they line up in">
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  {math.schemes.theirOffense && (
+                    <span className="font-sans text-[11px] uppercase tracking-wider text-ink">
+                      Offense <span className="text-dw-accent2">{math.schemes.theirOffense}</span>
+                    </span>
+                  )}
+                  {math.schemes.theirDefense && (
+                    <span className="font-sans text-[11px] uppercase tracking-wider text-ink">
+                      Defense <span className="text-dw-accent2">{math.schemes.theirDefense}</span>
+                      {math.schemes.theirBox != null && (
+                        <span className="text-ink3"> · {math.schemes.theirBox} in the box</span>
+                      )}
+                    </span>
+                  )}
+                </div>
+                <ul className="mt-1.5 space-y-1">
+                  {math.schemes.notes.map((n, i) => (
+                    <li key={i} className="font-serif text-[13px] leading-snug text-ink2">{n}</li>
+                  ))}
+                </ul>
+                {(math.schemes.yourOffense || math.schemes.yourDefense) && (
+                  <p className="mt-1.5 font-sans text-[10px] text-ink3">
+                    You run {math.schemes.yourOffense ?? "—"} / {math.schemes.yourDefense ?? "—"}
+                  </p>
+                )}
+              </Block>
+            )}
+
             {/* Form and common opponents — how a real report opens. */}
             {sched && (sched.form.games.length > 0 || sched.common.length > 0) && (
               <div className="grid gap-4 sm:grid-cols-2">

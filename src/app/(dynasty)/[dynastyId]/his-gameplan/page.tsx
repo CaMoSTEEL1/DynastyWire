@@ -16,6 +16,7 @@ import { useBrand } from "@/components/rtg/use-brand";
 import { useCharacter } from "@/components/rtg/use-character";
 import { gameplan } from "@/lib/dynasty/rtg";
 import { TIER_LABEL, tierFor } from "@/lib/dynasty/scouting";
+import { nextOpponent } from "@/lib/dynasty/week-state";
 
 interface Key { title: string; detail: string }
 interface Plan {
@@ -43,9 +44,11 @@ function GameplanInner() {
   }, [cached, plan]);
 
   const player = snapshot?.player ?? null;
+  // The opponent's own row is what carries the front (or the offense) he'll line up against.
+  const oppTeam = useMemo(() => nextOpponent(snapshot)?.opp ?? null, [snapshot]);
   const opponent = useMemo(
-    () => gameplan(player, oppRoster, null, (o) => TIER_LABEL[tierFor(o ?? null)]),
-    [player, oppRoster]
+    () => gameplan(player, oppRoster, null, (o) => TIER_LABEL[tierFor(o ?? null)], 5, oppTeam),
+    [player, oppRoster, oppTeam]
   );
 
   const run = useCallback(async () => {
@@ -138,6 +141,11 @@ function GameplanInner() {
         <div className="mt-6">
           <h3 className="mb-2 font-sans text-[10px] uppercase tracking-[0.3em] text-ink3">
             Who he lines up across from
+            {opponent.scheme && (
+              <span className="ml-2 normal-case tracking-normal text-dw-accent2">
+                · they run a {opponent.scheme}
+              </span>
+            )}
           </h3>
           <ul className="rounded border border-paper4 bg-paper2">
             {opponent.faces.map((f, i) => (

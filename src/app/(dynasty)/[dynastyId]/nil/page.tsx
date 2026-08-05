@@ -23,6 +23,7 @@ import { fakeGpa, GPA_COLOR } from "@/lib/dynasty/academics";
 import { loadSuspensions, isActive, type Suspension } from "@/lib/dynasty/suspensions";
 import { playerMarketValue } from "@/lib/dynasty/valuation";
 import { scaleStipend, signDeal } from "@/lib/dynasty/deals";
+import { commitWrites, loadLedger, pruneWritten, saveDrafts, setWritten as persistWritten } from "@/lib/dynasty/nil-ledger";
 
 // Depth-chart order: group by position, sort by OVR (top = starter).
 function byDepthChart(roster: RosterPlayer[]): { pos: string; players: RosterPlayer[] }[] {
@@ -223,8 +224,12 @@ function NILManager() {
     return () => { cancelled = true; };
   }, [dynastyId, year, week]);
 
-  // Draft NIL edits keyed by player name (only changed players are written).
+  // Draft NIL edits keyed by player name (only changed players are written), plus the
+  // overlay of what we've already written. Both are persisted — see nil-ledger.ts for why
+  // holding them in component state alone made the page look like it kept resetting.
   const [edits, setEdits] = useState<Record<string, number>>({});
+  const [written, setWritten] = useState<Record<string, number>>({});
+  const [ledgerReady, setLedgerReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ImpactResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -237,18 +242,58 @@ function NILManager() {
     return m;
   }, [roster]);
 
+  // What the save currently reports, by player — used to retire overlay entries the roster
+  // has caught up with.
+  const rosterValues = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of roster ?? []) m.set(p.name, p.nilComp ?? 0);
+    return m;
+  }, [roster]);
+
+  // Restore drafts and the written overlay. Without this a tab switch (which remounts the
+  // whole provider) wiped every edit that hadn't been pushed yet.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const l = await loadLedger(dynastyId).catch(() => null);
+      if (cancelled || !l) { if (!cancelled) setLedgerReady(true); return; }
+      const { pruned, changed } = pruneWritten(l.written, rosterValues, l.writtenAt, { year, week });
+      setWritten(pruned);
+      setEdits(l.drafts);
+      setLedgerReady(true);
+      if (changed) await persistWritten(dynastyId, pruned, l.writtenAt).catch(() => {});
+    })();
+    return () => { cancelled = true; };
+    // rosterValues is intentionally excluded: this restores once per dynasty, and pruning
+    // against a later roster happens on the next mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dynastyId, year, week]);
+
+  /** The value the save (or our last successful write) says this player is on. */
+  const currentOf = useCallback(
+    (p: RosterPlayer) => written[p.name] ?? p.nilComp ?? 0,
+    [written]
+  );
+
+  // Persist drafts as they're typed. Cheap — one small JSON file, and it is the difference
+  // between losing an afternoon's allotment and not.
+  useEffect(() => {
+    if (!ledgerReady) return;
+    void saveDrafts(dynastyId, edits).catch(() => {});
+  }, [edits, dynastyId, ledgerReady]);
+
   // The spendable pool. RemainingProgramPoints when the save exposes it, else the full budget.
   const pool = (team?.pointsRemaining && team.pointsRemaining > 0 ? team.pointsRemaining : team?.pointBudget) ?? 0;
 
   const changes = useMemo(() => {
     const out: { name: string; from: number; to: number }[] = [];
     for (const g of depth) for (const p of g.players) {
-      const cur = p.nilComp ?? 0;
+      const cur = currentOf(p);
       const next = edits[p.name];
       if (next != null && next !== cur) out.push({ name: p.name, from: cur, to: next });
     }
     return out;
-  }, [edits, depth]);
+  }, [edits, depth, currentOf]);
 
   const netK = changes.reduce((s, c) => s + (c.to - c.from), 0); // total NIL added ($K)
   const pointCost = Math.max(0, netK) * POINTS_PER_K;
@@ -268,6 +313,12 @@ function NILManager() {
       if (!res.ok) { setErr(res.detail || "The save refused the write. Close the game and try again."); return; }
       setResult(res);
       const dealsForWire = changes.map((c) => ({ name: c.name, position: posOf.get(c.name) ?? undefined, from: c.from, to: c.to }));
+      // Hold what we just wrote. The roster in memory still carries the OLD figures until the
+      // next ingest, so without this overlay every row visibly snapped back the moment the
+      // write succeeded — the "it constantly resets" report.
+      const applied = Object.fromEntries(changes.map((c) => [c.name, c.to]));
+      const next = await commitWrites(dynastyId, applied, { year, week }).catch(() => null);
+      setWritten(next ? next.written : (w) => ({ ...w, ...applied }));
       setEdits({});
       // The wire reacts — big deals get big reactions, small deals barely register.
       setReactions(null);
@@ -332,7 +383,7 @@ function NILManager() {
               <p className="font-sans text-[10px] uppercase tracking-widest text-ink3">{g.pos}</p>
               <div className="mt-1 space-y-1">
                 {g.players.map((p, i) => {
-                  const cur = p.nilComp ?? 0;
+                  const cur = currentOf(p);
                   const val = edits[p.name] ?? cur;
                   return (
                     <div key={p.name} className="flex items-center gap-3 border-b border-dw-border/40 py-1.5 last:border-0">

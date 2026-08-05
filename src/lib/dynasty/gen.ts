@@ -917,6 +917,10 @@ export function buildMediaContext(
     calendar: after.calendar,
     week: d.weekPlayed,
     inPostseason: weekShape(after.calendar, d.weekPlayed).inPostseason,
+    // The CFP poll doesn't exist until the committee's first release. Before that NOBODY
+    // carries a CFP rank, and calling the user "unranked in the CFP rankings" produced weeks
+    // of press asking how it felt to be snubbed by a poll that hadn't come out.
+    cfpReleased: Object.values(after.teams ?? {}).some((t) => t.rankCFP != null),
   });
   const phase = computePhase(after.calendar, d.weekPlayed, outlook);
   const weekDesc =
@@ -1575,7 +1579,10 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
      */
     case "rtg-gameplan": {
       const p = ctx.snapshot.player ?? null;
-      const plan = gameplan(p, ctx.oppRoster, ctx.opponent, gradeWord);
+      // The opponent's row carries the scheme he'll actually see across the ball.
+      const oppTeamRow =
+        Object.values(ctx.snapshot.teams ?? {}).find((t) => t.name === ctx.opponent) ?? null;
+      const plan = gameplan(p, ctx.oppRoster, ctx.opponent, gradeWord, 5, oppTeamRow);
       const ch = (extra.character ?? null) as RtgCharacter | null;
       return {
         maxTokens: 2000,
@@ -2040,6 +2047,11 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
                   ctx.outlook && ctx.outlook.standing === "out"
                     ? `${ctx.school} is UNRANKED and NOT in the playoff race. Do NOT write a playoff/committee/bubble/New Year's Six take — none of it applies. Analyze what is actually live for them: the bowl math (see the stakes block in the context — do not restate it wrongly), the conference race, and whether this team is trending up or down. 'movement' is a short phrase like 'Bowl eligible', 'Two from a bowl', 'Playing spoiler', 'Trending up'.`
                     : `Analyze ${ctx.school}'s ranking picture after Week ${ctx.week}, in line with the stakes stated in the context. Never invent a poll number.`,
+                  // Reported by a tester: weeks of "how does it feel to be snubbed by the CFP
+                  // top 25" before the committee had released anything at all.
+                  ctx.outlook && !ctx.outlook.cfpReleased
+                    ? "THE CFP RANKINGS HAVE NOT BEEN RELEASED YET this season — the AP poll is the only poll that exists right now. Do NOT reference a CFP ranking, a CFP top 25, being left out of one, or a committee decision. There is nothing to be left out of yet. Write off the AP poll and the résumé."
+                    : null,
                   "movement is a short phrase like 'On the bubble', 'Knocking on the door', 'Holds at #8', 'Up 3 spots', 'Drops out'.",
                   "Write in the voice of a TV studio analyst.",
                 ].join("\n"),
@@ -3249,7 +3261,7 @@ function buildScoutingSpec(ctx: MediaContext, extra: Extra): PromptSpec {
       summary: "string (2-3 sentence read: who they are and how dangerous)",
       offense: {
         identity: "run-heavy|pass-heavy|balanced",
-        scheme: "string (short, inferred from their production — e.g. 'spread RPO', 'pro-style under center', 'gap-scheme power')",
+        scheme: "string (the offense they run — use the EXACT system named in WHAT THEY LINE UP IN below when it is given; only infer from production if it is not)",
         tendency: "string (1-2 sentences on HOW they call a game, quoting the real split/efficiency numbers given below)",
         keyPlayers: [{ name: "string (with his jersey number)", note: "string (WHAT HE IS and why that hurts — his archetype and trait read, plus a real stat)", assignment: "string (who on our side handles him and how — 'bracket him with the nickel and the free safety')" }],
         howToStop: "string (2-3 sentences of plan)",
@@ -3257,7 +3269,7 @@ function buildScoutingSpec(ctx: MediaContext, extra: Extra): PromptSpec {
       },
       defense: {
         identity: "string (short, inferred)",
-        scheme: "string (short, inferred — front and coverage tendency)",
+        scheme: "string (their defensive front — use the EXACT front named in WHAT THEY LINE UP IN below when it is given; only infer if it is not)",
         keyPlayers: [{ name: "string (with his jersey number)", note: "string (real stat)", assignment: "string (how we block/avoid him)" }],
         howToAttack: "string (2-3 sentences of plan)",
         calls: ["3-4 CONCRETE offensive concepts to call against them — formations, run/pass concepts, tempo, who to isolate. Each 8-16 words, usable as-is."],
@@ -3317,6 +3329,14 @@ function buildScoutingSpec(ctx: MediaContext, extra: Extra): PromptSpec {
     t.games != null ? `Games played so far: ${t.games}` : null,
     `Experience: ${m.experience.read}`,
     "",
+    // The save says what both teams line up in, so the report states it instead of inferring
+    // a scheme from yardage. `scheme` in the schema above is now a lookup, not a guess.
+    m.schemes?.notes.length ? "=== WHAT THEY LINE UP IN (from the save — FACT, do not infer a different system) ===" : null,
+    ...(m.schemes?.notes ?? []).map((n) => `  ${n}`),
+    m.schemes?.yourOffense || m.schemes?.yourDefense
+      ? `  For your side: you run the ${m.schemes.yourOffense ?? "—"} on offense and a ${m.schemes.yourDefense ?? "—"} on defense.`
+      : null,
+    m.schemes?.notes.length ? "" : null,
     sc && sc.form.games.length ? "=== THEIR RECENT FORM (real results, most recent first) ===" : null,
     ...formLines,
     sc && sc.form.streak

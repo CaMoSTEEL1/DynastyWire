@@ -728,20 +728,27 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       // the list stay lazy — generated only when the user actually opens that tab. This is
       // the single biggest lever on the per-week API spend that was blowing through budgets.
       const eager = eagerTabs(settings);
-      for (const tab of eager) {
+      // Sections are independent — each one reads the same snapshot and writes its own tab —
+      // so the pass no longer waits for one request to land before starting the next. A whole
+      // issue used to take as long as the sum of every section; now it takes about as long as
+      // the slowest few. Kept deliberately small: this is one user's API key, and a wide fan-
+      // out would trade a rate-limit error for the time it saves.
+      const LANES = 3;
+      let cursor = 0;
+      let held = false;
+
+      const runOne = async (tab: (typeof eager)[number]) => {
         // Checked before every section, not just at the start: the update prompt lands a
         // few seconds after launch, by which time this loop is usually already running.
         // Stopping at a section boundary — before seeding, never mid-request — means the
         // work done so far is kept and nothing is billed for a section that a restart
         // would throw away. The pass resumes when the prompt is answered.
         if (isUpdateHeld()) {
-          const paused = await loadIssue(currentIssueKey);
-          setIssue(paused ? { ...paused } : null);
-          setIssueStatus(computeStatus(paused, eager));
+          held = true;
           return;
         }
         const existing = await readTab(currentIssueKey, tab.kind);
-        if (!force && existing?.status === "ready") continue;
+        if (!force && existing?.status === "ready") return;
         const seeded = await writeTab(
           currentIssueKey,
           tab.kind,
@@ -786,6 +793,26 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
         }
         const cur = await loadIssue(currentIssueKey);
         if (cur) setIssue({ ...cur });
+      };
+
+      // One worker per lane, each pulling the next section off a shared cursor. Sections
+      // still start in order, so the front page is written first and the reader has
+      // something to look at while the rest fill in behind it.
+      const lane = async () => {
+        for (;;) {
+          if (held) return;
+          const i = cursor++;
+          if (i >= eager.length) return;
+          await runOne(eager[i]);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(LANES, eager.length) }, lane));
+
+      if (held) {
+        const paused = await loadIssue(currentIssueKey);
+        setIssue(paused ? { ...paused } : null);
+        setIssueStatus(computeStatus(paused, eager));
+        return;
       }
       const final = await loadIssue(currentIssueKey);
       setIssue(final ? { ...final } : null);
