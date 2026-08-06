@@ -792,7 +792,19 @@ export interface DynastyProfile {
   label: string; // display name, e.g. "SKISWORLD — Kansas State"
   saveFile: string; // exact path to the dynasty save file
   userTeam: string | null;
+  /** A name the user typed. Only used when `coachSource` is "custom" — see below. */
   coachName: string | null;
+  /**
+   * Where the coach's name comes from.
+   *
+   * "save" (the default, and the behaviour when this is absent) follows whoever the save
+   * flags as user-controlled, so retiring a coach and starting a new one just works.
+   * "custom" pins `coachName` instead, for saves that expose no usable coach.
+   *
+   * This used to have no answer: the stored name won unconditionally, so once one was saved
+   * the app could never follow the save again and there was no way to switch.
+   */
+  coachSource?: "save" | "custom";
   /** Which world this career belongs to. Detected from the save when it is added — a dynasty
    * save flags a COACH as user-controlled, a Road to Glory save flags a PLAYER. Absent on
    * profiles added before RTG existed; those are treated as dynasties and corrected the first
@@ -835,6 +847,14 @@ export interface DynastySettings {
    * run: the app still runs the drama and moves your hot seat, it just never touches your
    * players' money or your program points. */
   nilWriteToSave: boolean | null;
+  /** Where the forum lives. Overridable so the app can point at a local worker in
+   * development, or so a user who does not trust the default host can run their own. */
+  forumUrl: string | null;
+  /** The name a published dynasty appears under. Never the OS account. */
+  forumHandle: string | null;
+  /** Mirrors DynastyProfile.coachSource for the active dynasty — "save" (default) follows
+   * whoever the save flags as user-controlled, "custom" pins the typed name. */
+  coachSource: "save" | "custom" | null;
   /** Dress the UI in the user's program colours, read from the save. null = on. Only the
    * accents move — the paper and the type stay as they are. Off returns the house crimson. */
   teamColors: boolean | null;
@@ -875,6 +895,9 @@ export async function loadSettings(): Promise<DynastySettings> {
     hideRecruitOverall: (await store.get<boolean>("hideRecruitOverall")) ?? null,
     consequenceSync: (await store.get<boolean>("consequenceSync")) ?? null,
     nilWriteToSave: (await store.get<boolean>("nilWriteToSave")) ?? null,
+    forumUrl: (await store.get<string>("forumUrl")) ?? null,
+    forumHandle: (await store.get<string>("forumHandle")) ?? null,
+    coachSource: (await store.get<"save" | "custom">("coachSource")) ?? null,
     teamColors: (await store.get<boolean>("teamColors")) ?? null,
     podcastAudio: (await store.get<boolean>("podcastAudio")) ?? null,
     presserTakeover: (await store.get<boolean>("presserTakeover")) ?? null,

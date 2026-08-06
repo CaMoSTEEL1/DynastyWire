@@ -20,6 +20,7 @@ import {
   Coins,
   Archive,
   ListOrdered,
+  Globe2,
 } from "lucide-react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { useSettings } from "@/components/settings/settings-context";
@@ -45,6 +46,7 @@ const navItems = [
   { label: "The Book", slug: "betting", icon: Coins },
   { label: "Archive", slug: "archive", icon: Archive },
   { label: "Trophy Room", slug: "trophy-room", icon: Award },
+  { label: "The Forum", slug: "forum", icon: Globe2 },
 ] as const;
 
 // ROAD TO GLORY gets its own front door (DESIGN-rtg-mode.md, decision 9). None of the dynasty
@@ -62,6 +64,7 @@ const rtgNavItems = [
   { label: "Recruitment", slug: "recruitment", icon: Trophy },
   { label: "The Slate", slug: "scoreboard", icon: ListOrdered },
   { label: "Archive", slug: "archive", icon: Archive },
+  { label: "The Forum", slug: "forum", icon: Globe2 },
 ] as const;
 
 export default function Navbar({ dynastyId }: NavbarProps) {

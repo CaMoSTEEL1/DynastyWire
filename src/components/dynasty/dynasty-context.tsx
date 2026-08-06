@@ -100,6 +100,9 @@ interface DynastyContextValue {
   // ---- Multi-dynasty ----
   dynasties: DynastyProfile[];
   activeDynastyId: string | null;
+  /** The active dynasty's stored profile. Already supplied by the provider; declared here so
+   * consumers can actually reach it. */
+  activeProfile: DynastyProfile | null;
   /** Add a dynasty from a picked save FILE and switch to it. Returns the new profile id. */
   addDynasty: (saveFile: string, opts?: { userTeam?: string; coachName?: string }) => Promise<string>;
   switchDynasty: (id: string) => Promise<void>;
@@ -149,6 +152,9 @@ const EMPTY_SETTINGS: DynastySettings = {
   hideRecruitOverall: null,
   consequenceSync: null,
   nilWriteToSave: null,
+  forumUrl: null,
+  forumHandle: null,
+  coachSource: null,
   teamColors: null,
   podcastAudio: null,
   presserTakeover: null,
@@ -244,7 +250,15 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
 
   const saveFile = activeProfile?.saveFile ?? null;
   const effTeam = activeProfile?.userTeam ?? settings.userTeam ?? null;
-  const effCoach = activeProfile?.coachName ?? settings.coachName ?? null;
+  // Who is coaching, resolved AFTER the save has been read — see DynastyProfile.coachSource.
+  // The stored name used to win unconditionally, so retiring a coach left every screen
+  // showing the retired man with no way to switch. The save leads now; a typed name is an
+  // explicit override, and it still covers saves that expose no coach at all.
+  const effCoach = useMemo(() => {
+    const custom = activeProfile?.coachName ?? settings.coachName ?? null;
+    if (activeProfile?.coachSource === "custom") return custom || snapshot?.coachName || null;
+    return snapshot?.coachName ?? custom;
+  }, [activeProfile?.coachSource, activeProfile?.coachName, settings.coachName, snapshot?.coachName]);
 
   // Resolve the LLM transport from settings: Anthropic by default, or any OpenAI-compatible
   // endpoint (base URL + key + model) when the user picked that provider.
@@ -519,7 +533,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
     setSettings((prev) => {
       const merged = { ...prev, ...patch };
       let updatedDynasties = false;
-      if (patch.userTeam !== undefined || patch.coachName !== undefined) {
+      if (patch.userTeam !== undefined || patch.coachName !== undefined || patch.coachSource !== undefined) {
         if (merged.activeDynastyId && merged.dynasties) {
           merged.dynasties = merged.dynasties.map(d => {
             if (d.id === merged.activeDynastyId) {
@@ -527,7 +541,8 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
               return { 
                 ...d, 
                 userTeam: patch.userTeam !== undefined ? (patch.userTeam || null) : d.userTeam,
-                coachName: patch.coachName !== undefined ? (patch.coachName || null) : d.coachName
+                coachName: patch.coachName !== undefined ? (patch.coachName || null) : d.coachName,
+                coachSource: patch.coachSource !== undefined ? (patch.coachSource || "save") : d.coachSource,
               };
             }
             return d;
@@ -665,7 +680,9 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
         // In-app generation: no sidecar spawn. Built from the already-parsed snapshot/delta.
         const data = await generateInApp<T>(kind, llm, snapshot, delta, {
           team: settings.userTeam ?? undefined,
-          coach: settings.coachName ?? undefined,
+          // The resolved coach, not the raw setting — otherwise generation still writes about
+          // the retired one while every other surface shows the new one.
+          coach: effCoach ?? undefined,
           extra: extraWithRosters,
           roster,
           oppRoster,
@@ -709,7 +726,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       week,
       llm,
       settings.userTeam,
-      settings.coachName,
+      effCoach,
     ]
   );
 
@@ -884,6 +901,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       currentIssueKey,
       dynasties: settings.dynasties ?? [],
       activeDynastyId: activeProfile?.id ?? settings.activeDynastyId ?? null,
+      activeProfile,
       addDynasty,
       switchDynasty,
       removeDynasty,

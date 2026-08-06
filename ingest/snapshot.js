@@ -753,6 +753,9 @@ async function buildSnapshot(pathOrFile, opts = {}) {
     t: opts.userTeamName || null,
     r: opts.userTeamRow ?? null,
     c: opts.coachName || null,
+    // The mode changes which name wins, so it has to change the cache key too — otherwise
+    // switching back to the save's coach just serves the previous parse.
+    cm: opts.coachNameMode || null,
   });
   // v7: coach résumé (career record, national/conference titles, record at THIS school).
   // v8: live job security (CurrentJobSecurityStatus/Percentage) instead of the stale
@@ -761,7 +764,7 @@ async function buildSnapshot(pathOrFile, opts = {}) {
   // v10: depth entries returned as a LIST (which row is the user's is still unverified).
   // v13: postseason rows carry a score before kickoff — the record decides what was played.
   // v14: team schemes and team colours.
-  const cf = isPath ? cacheFile(pathOrFile, `snap|v14|${optKey}`) : null;
+  const cf = isPath ? cacheFile(pathOrFile, `snap|v15|${optKey}`) : null;
   if (cf) {
     const cached = readCache(cf);
     if (cached) return cached;
@@ -829,7 +832,16 @@ async function buildSnapshot(pathOrFile, opts = {}) {
   // Last resort heuristic: most program points
   if (userTeamRow == null) userTeamRow = detectUserTeam(teams);
   
-  const coachName = opts.coachName || (userCoach ? userCoach.coachName : null);
+  // WHO IS ACTUALLY COACHING. The stored name used to win unconditionally, which meant that
+  // once a name was saved the app could never follow the save again: retire a coach, start a
+  // new one, and every screen kept showing the retired man with no way to change it.
+  //
+  // The save is the source of truth, so it leads. A stored name is an OVERRIDE now, applied
+  // only when the user has explicitly asked for one (coachNameMode === 'custom') or when the
+  // save has no user coach to offer — which is the case a custom name existed for.
+  const coachFromSave = userCoach ? userCoach.coachName : null;
+  const wantsCustom = opts.coachNameMode === 'custom' && !!opts.coachName;
+  const coachName = wantsCustom ? opts.coachName : coachFromSave || opts.coachName || null;
 
   // Week + dynasty year from the real SeasonInfo fields.
   const si = seasonInfo && seasonInfo.records[0];
@@ -882,6 +894,8 @@ async function buildSnapshot(pathOrFile, opts = {}) {
     dynastyYear: si ? num(si, 'CurrentYear') : null,
     calendar,
     coachName,
+    /** What the SAVE says, regardless of any override — so the UI can offer the real one. */
+    coachNameFromSave: coachFromSave,
     coach: userCoach,
     // "dynasty" | "rtg" — detected, never asked. See detectUserPlayer().
     mode,

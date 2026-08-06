@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getVersion } from "@tauri-apps/api/app";
-import { ChevronDown, ChevronUp, School, FolderOpen, KeyRound, RefreshCw, Newspaper, Plus, Trash2, AlertTriangle, ShieldCheck } from "lucide-react";
+import { ChevronDown, ChevronUp, School, FolderOpen, KeyRound, RefreshCw, Newspaper, Plus, Trash2, AlertTriangle, ShieldCheck, Globe2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSettings } from "./settings-context";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
@@ -18,6 +18,8 @@ import { clearAllIssues } from "@/lib/dynasty/issue-cache";
 import { clearAllSagas } from "@/lib/dynasty/saga-store";
 import { clearBaseline, formatBaseline, loadBaseline, summarizeBaseline, type BaselineSummary } from "@/lib/dynasty/baseline";
 import { teamTheme } from "@/lib/dynasty/team-theme";
+import { PublishPanel } from "@/components/share/publish-panel";
+import { DEFAULT_FORUM_URL } from "@/lib/share/api";
 
 /** Destructive action with an inline two-step confirm (no browser dialogs in the webview),
  * which reloads afterward so every screen re-reads the now-empty stores. */
@@ -231,6 +233,108 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
  * on this page so the app takes their maize instead — and a user who reads "uses your team's
  * colours" and then sees gold is owed the explanation up front, not a bug report later.
  */
+/**
+ * Who the app thinks is coaching, and how to change it.
+ *
+ * Reported: "I retired one coach and it's still showing that one and not my default." There
+ * was no way to switch, because a stored name beat the save unconditionally — so the first
+ * name ever saved was the last one the app would ever use.
+ *
+ * The save leads now, and this makes that visible: it shows who the save actually flags as
+ * user-controlled, and keeps the typed name available for saves that expose no coach.
+ */
+/** Handle, forum address, and the publish control itself. */
+function SharingSettings() {
+  const { settings, updateSettings } = useDynasty();
+  const [handle, setHandle] = useState(settings.forumHandle ?? "");
+  const [url, setUrl] = useState(settings.forumUrl ?? "");
+
+  return (
+    <div className="space-y-4">
+      <PublishPanel />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Your handle on the forum">
+          <input
+            className={inputCls}
+            value={handle}
+            onChange={(e) => setHandle(e.target.value)}
+            onBlur={() => void updateSettings({ forumHandle: handle.trim() || null })}
+            placeholder="skisworld"
+          />
+        </Field>
+        <Field label="Forum address">
+          <input
+            className={inputCls}
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onBlur={() => void updateSettings({ forumUrl: url.trim() || null })}
+            placeholder={DEFAULT_FORUM_URL}
+          />
+        </Field>
+      </div>
+      <p className="text-[11px] leading-relaxed text-ink3">
+        Leave the address blank to use the default. Point it somewhere else to run your own.
+      </p>
+    </div>
+  );
+}
+
+function CoachSwitcher({ coach, setCoach }: { coach: string; setCoach: (v: string) => void }) {
+  const { snapshot, settings, updateSettings } = useDynasty();
+  const fromSave = snapshot?.coachName ?? null;
+  const custom = settings.coachSource === "custom";
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => void updateSettings({ coachSource: "save" })}
+          className={cn(
+            "rounded border px-3 py-1.5 font-sans text-[11px] uppercase tracking-wider transition-colors",
+            !custom ? "border-dw-crimson bg-dw-crimson/15 text-dw-crimson" : "border-dw-border text-ink3 hover:text-ink"
+          )}
+        >
+          From my save
+        </button>
+        <button
+          type="button"
+          onClick={() => void updateSettings({ coachSource: "custom" })}
+          className={cn(
+            "rounded border px-3 py-1.5 font-sans text-[11px] uppercase tracking-wider transition-colors",
+            custom ? "border-dw-crimson bg-dw-crimson/15 text-dw-crimson" : "border-dw-border text-ink3 hover:text-ink"
+          )}
+        >
+          Use a custom name
+        </button>
+      </div>
+
+      {custom ? (
+        <input
+          className={inputCls}
+          value={coach}
+          onChange={(e) => setCoach(e.target.value)}
+          placeholder="Coach Prime"
+        />
+      ) : (
+        <p className="font-serif text-xs text-ink3">
+          {fromSave ? (
+            <>
+              Your save says <span className="text-ink">{fromSave}</span>. Retire him and start
+              someone new and this follows automatically.
+            </>
+          ) : (
+            <>
+              This save doesn&apos;t name a coach yet — open a dynasty and it will fill in. Until
+              then, switch to a custom name if you want one used.
+            </>
+          )}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function TeamColorsSetting() {
   const { settings, updateSettings, snapshot } = useDynasty();
   const on = settings.teamColors !== false;
@@ -401,6 +505,10 @@ export default function SettingsPanel() {
 
   return (
     <div>
+      <Section icon={Globe2} title="Sharing">
+        <SharingSettings />
+      </Section>
+
       <Section icon={School} title="Immersion">
         <TeamColorsSetting />
         <Toggle
@@ -471,8 +579,8 @@ export default function SettingsPanel() {
         <Field label="Your team">
           <input className={inputCls} value={team} onChange={(e) => setTeam(e.target.value)} placeholder="Kansas State" />
         </Field>
-        <Field label="Coach name">
-          <input className={inputCls} value={coach} onChange={(e) => setCoach(e.target.value)} placeholder="Coach Prime" />
+        <Field label="Head coach">
+          <CoachSwitcher coach={coach} setCoach={setCoach} />
         </Field>
       </Section>
 
