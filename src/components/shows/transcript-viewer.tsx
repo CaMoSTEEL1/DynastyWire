@@ -3,6 +3,7 @@
 import { cn } from "@/lib/utils";
 import type { ShowTranscript, ShowType } from "@/lib/shows/types";
 import { PodcastPlayer } from "./podcast-player";
+import { isStageDirection } from "@/lib/shows/dialogue";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 
@@ -86,9 +87,12 @@ export function TranscriptViewer({
         </p>
 
         {/* Opt-in podcast audio — auto-plays when a show opens for opted-in users. */}
+        {/* The stored flag is reconciled with the text here as well as at generation time,
+            so transcripts already written with the bad flag start reading correctly instead
+            of staying broken until the week is regenerated. */}
         <PodcastPlayer
           lines={(transcript.dialogue ?? [])
-            .filter((l) => !l.isStageDirection)
+            .filter((l) => !isStageDirection(l.text, l.isStageDirection))
             .map((l) => ({ speaker: l.speaker || "Host", text: l.text }))}
           weekSeed={transcript.week || 0}
           resetKey={`${transcript.title}::${transcript.week}`}
@@ -119,6 +123,7 @@ export function TranscriptViewer({
       <div className="space-y-3">
         {(transcript.dialogue ?? []).map((line, i) => {
           const speakerColor = getSpeakerColor(line.speaker);
+          const direction = isStageDirection(line.text, line.isStageDirection);
 
           return (
             <motion.div
@@ -127,7 +132,7 @@ export function TranscriptViewer({
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.04, duration: 0.3 }}
             >
-              {line.isStageDirection ? (
+              {direction ? (
                 <p className="py-1 font-serif text-sm italic text-ink3">
                   {line.speaker && (
                     <span className={cn("not-italic font-medium", speakerColor)}>

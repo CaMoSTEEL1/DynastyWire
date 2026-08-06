@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { voiceForPersonaAsync, synthLine } from "@/lib/dynasty/tts";
+import { spokenText } from "@/lib/shows/dialogue";
 import { Play, Pause, Square, Loader2 } from "lucide-react";
 
 export interface SpokenLine {
@@ -47,7 +48,13 @@ export function PodcastPlayer({
   // Line index → synth promise (object URL). Prefetched ahead of playback, kept for replay.
   const clips = useRef<Map<number, Promise<string>>>(new Map());
 
-  const lines = rawLines.filter((l) => l.text.trim()).slice(0, 32);
+  // Stage directions are cues for the reader, not words: left in, ElevenLabs says "pause"
+  // out loud mid-sentence. Strip them, then drop anything that was nothing but direction
+  // rather than paying for a clip of silence.
+  const lines = rawLines
+    .map((l) => ({ ...l, text: spokenText(l.text) }))
+    .filter((l) => l.text.trim())
+    .slice(0, 32);
 
   const fetchClip = useCallback((i: number): Promise<string> | null => {
     if (!hasKey || i < 0 || i >= lines.length) return null;

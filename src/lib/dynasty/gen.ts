@@ -24,6 +24,7 @@ import { lockedBlock, recapBrief, recapFacts } from "./recap";
 import { nationalBrief, nationalFacts } from "./national";
 import { coachResumeBlock, jobSecurityLine, priorSeasons, priorSeasonsBlock } from "./history";
 import { postseasonBlock, postseasonOutlook, weekShape, type PostseasonOutlook } from "./postseason";
+import { isStageDirection } from "../shows/dialogue";
 import { gameplan, gameplanBlock, positionRoom, roomBlock, rtgBrief, rtgFacts, type PlayerWeekState } from "./rtg";
 import { characterBlock, type RtgCharacter } from "./rtg-character";
 import { worldBlock } from "./world";
@@ -3690,12 +3691,18 @@ function normalize(
     const requested = String(extra.showType ?? "gameday");
     const showType = SHOW_PERSONAS[requested] ? requested : "gameday";
     const dialogue = Array.isArray(parsed?.dialogue)
-      ? (parsed!.dialogue as Record<string, unknown>[]).map((l) => ({
-          speaker: String(l?.speaker ?? ""),
-          role: String(l?.role ?? ""),
-          text: String(l?.text ?? ""),
-          isStageDirection: Boolean(l?.isStageDirection),
-        }))
+      ? (parsed!.dialogue as Record<string, unknown>[]).map((l) => {
+          const text = String(l?.text ?? "");
+          return {
+            speaker: String(l?.speaker ?? ""),
+            role: String(l?.role ?? ""),
+            text,
+            // Reconciled with the text rather than taken on trust: the model flags a line
+            // that merely OPENS with "[pause]" as a direction, which silently dropped real
+            // speaking turns out of the podcast audio. See lib/shows/dialogue.ts.
+            isStageDirection: isStageDirection(text, Boolean(l?.isStageDirection)),
+          };
+        })
       : [];
     return {
       showType,
