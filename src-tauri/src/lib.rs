@@ -1067,8 +1067,107 @@ fn start_watch(app: tauri::AppHandle, folder: String) -> Result<(), String> {
     Ok(())
 }
 
+
+/// Recover from a WebView2 runtime that is installed but not resolvable.
+///
+/// Reported from a real machine: the app opened to "Could not find the WebView2 Runtime …
+/// You may have it installed on another user account, but it is not available for this one."
+/// It was installed, machine-wide, and it ran — 777 files, the engine DLL present under
+/// EBWebView\x64, and `pv` in the EdgeUpdate registry reading 151.0.4129.59. Launching the
+/// app with WEBVIEW2_BROWSER_EXECUTABLE_FOLDER pointed at that exact folder worked first try.
+///
+/// What broke was the lookup, not the runtime. MicrosoftEdgeUpdate.exe had crashed mid-update
+/// hours earlier (Windows Error Reporting logged it), leaving the files intact and the
+/// registration in a state the loader rejects. Nothing the user did causes this and nothing
+/// they can do inside the app fixes it, so the app dies at launch with a dialog that blames
+/// a missing runtime that is sitting right there on disk.
+///
+/// So: ask the loader first. If it can find a runtime, change nothing — the normal path stays
+/// the normal path, and a working machine is never redirected. Only when the loader comes up
+/// empty do we look on disk ourselves and, if we find a genuinely complete runtime, point the
+/// loader at it through the environment variable it already honours.
+///
+/// Must run before any window is created, which is why it is the first thing in `run()`.
+#[cfg(windows)]
+fn ensure_webview2_runtime() {
+    use std::path::{Path, PathBuf};
+
+    // Respect an explicit choice — if someone set this deliberately, it is not ours to override.
+    if std::env::var_os("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER").is_some() {
+        return;
+    }
+
+    // The authoritative question, asked of the same loader the webview will use. Anything
+    // other than a non-empty version string means it could not resolve one.
+    let mut version: windows_core::PWSTR = windows_core::PWSTR::null();
+    let resolvable = unsafe {
+        webview2_com::Microsoft::Web::WebView2::Win32::GetAvailableCoreWebView2BrowserVersionString(
+            windows_core::PCWSTR::null(),
+            &mut version,
+        )
+    }
+    .is_ok()
+        && !version.is_null();
+    if !version.is_null() {
+        // The loader allocates this with CoTaskMemAlloc; taking it frees it.
+        let _ = webview2_com::take_pwstr(version);
+    }
+    if resolvable {
+        return;
+    }
+
+    // A folder only counts if it can actually host a webview: the host process, and the
+    // engine for THIS architecture. A half-removed version directory must not be chosen.
+    let arch = if cfg!(target_arch = "x86_64") { "x64" } else { "x86" };
+    let complete = |dir: &Path| -> bool {
+        dir.join("msedgewebview2.exe").is_file()
+            && dir.join("EBWebView").join(arch).join("EmbeddedBrowserWebView.dll").is_file()
+    };
+
+    // Where the Evergreen runtime installs, machine-wide then per-user.
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for var in ["ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"] {
+        if let Some(base) = std::env::var_os(var) {
+            roots.push(Path::new(&base).join("Microsoft").join("EdgeWebView").join("Application"));
+        }
+    }
+
+    // Highest version wins, compared numerically per segment so 151.0.4129.59 beats
+    // 99.0.9999.99 — a lexical sort gets that backwards.
+    let mut best: Option<(Vec<u64>, PathBuf)> = None;
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(&root) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() || !complete(&path) {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            let parts: Vec<u64> = name.split('.').filter_map(|p| p.parse().ok()).collect();
+            if parts.is_empty() {
+                continue;
+            }
+            if best.as_ref().is_none_or(|(bv, _)| parts > *bv) {
+                best = Some((parts, path));
+            }
+        }
+    }
+
+    if let Some((_, dir)) = best {
+        // SAFETY-ADJACENT NOTE: single-threaded startup, before any window exists.
+        unsafe { std::env::set_var("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", &dir) };
+        eprintln!("WebView2 was not resolvable; using {}", dir.display());
+    }
+}
+
+#[cfg(not(windows))]
+fn ensure_webview2_runtime() {}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before anything can draw: a runtime that is present but unresolvable is otherwise a
+    // dead app at launch. See ensure_webview2_runtime().
+    ensure_webview2_runtime();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())

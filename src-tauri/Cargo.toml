@@ -23,3 +23,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 base64 = "0.22.1"
 tauri-plugin-process = "2.3.1"
 minisign-verify = "0.2.5"
+
+# Already in the tree via Tauri; named here so the WebView2 recovery in lib.rs can ask the
+# loader directly whether it can find a runtime, instead of guessing from the registry.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows-core = "0.61"
