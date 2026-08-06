@@ -2928,6 +2928,13 @@ function recruitLine(r: Record<string, unknown>): string {
     r.nationalRank != null ? `#${r.nationalRank} nat'l` : null,
     r.positionRank != null ? `#${r.positionRank} at position` : null,
     r.stateRank != null ? `#${r.stateRank} in state` : null,
+    // Where he is really from, read from the save. Before this the dossier was told to
+    // invent a hometown, so it produced one — and it was wrong every time by construction.
+    r.homeTown && r.homeState
+      ? `from ${r.homeTown}, ${r.homeState}`
+      : r.homeState
+        ? `from ${r.homeState}`
+        : null,
     r.class ? `class of ${r.class}` : null,
     r.stage ? `stage: ${r.stage}` : null,
     r.commitScore != null ? `commit score ${r.commitScore}` : null,
@@ -2963,9 +2970,14 @@ function buildRecruitDossierSpec(ctx: MediaContext, extra: Extra): PromptSpec {
     "Rules:",
     "- 3-4 social posts in the voice of a real 17-18 year old recruit (commit hype, visit photos, faith/family, grind posts).",
     "- Ground his interest in the real season context — a winning, ranked program sells differently than a struggling one.",
-    "- This is a prospect, not a rostered player. Invent a believable BACKGROUND (hometown, high",
-    "  school, family, path) consistent with his rating and rankings below. Everything the data",
-    "  below states is FIXED FACT and must not be re-imagined.",
+    "- This is a prospect, not a rostered player. Invent a believable BACKGROUND (high school,",
+    "  family, path) consistent with his rating and rankings below. Everything the data below",
+    "  states is FIXED FACT and must not be re-imagined.",
+    typeof r.homeTown === "string" || typeof r.homeState === "string"
+      ? "- HIS HOMETOWN IS IN THE DATA BELOW AND IS FIXED FACT. Use that town and that state " +
+        "exactly. Do NOT move him to another town or another state, and do not put his high " +
+        "school anywhere else — invent the SCHOOL's name if you need one, never the place."
+      : "- The save does not say where he is from. Keep his hometown vague rather than picking one.",
     "- No real living recruits.",
     posLong
       ? `- POSITION IS LOCKED: he is a ${posLong.toUpperCase()} (${posCode}). Every mention — the film ` +

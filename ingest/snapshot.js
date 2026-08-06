@@ -137,6 +137,17 @@ function schemeLabel(raw) {
 }
 
 /** Three 0-255 channel fields -> "#rrggbb". Null when the save has no colour there. */
+/**
+ * The save writes states as CamelCase enum names — "NewJersey", "NorthCarolina". Split them
+ * back into how anyone would write them, without touching a single-word state.
+ */
+function stateName(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!s || /^none$/i.test(s)) return null;
+  return s.replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+
 function rgbHex(rec, rField, gField, bField) {
   const ch = (f) => {
     const v = num(rec, f);
@@ -494,7 +505,8 @@ function detectUserPlayer(playerTable) {
       // same thing as his current ability.
       prospectStars: str(r, 'ProspectStarRating'),
       redshirt: str(r, 'RedshirtStatus'),
-      homeState: str(r, 'PLYR_HOME_STATE'),
+      homeTown: str(r, 'PLYR_HOME_TOWN') || null,
+      homeState: stateName(str(r, 'PLYR_HOME_STATE')),
       // Ability is carried for the app's own math only. It is NEVER shown to a generator —
       // see gradeWord() in gen.ts and SYSTEM_PROMPT rule 6.
       overall: num(r, 'OverallRating'),
@@ -895,7 +907,7 @@ async function buildSnapshot(pathOrFile, opts = {}) {
 // with their scholarship + NIL state. Verified field map against a real CFB27 save.
 async function buildRecruits(pathOrFile, cap = 5000) {
   const isPath = typeof pathOrFile === 'string';
-  const cf = isPath ? cacheFile(pathOrFile, `recruits|v3|${cap}`) : null;
+  const cf = isPath ? cacheFile(pathOrFile, `recruits|v4|${cap}`) : null;
   if (cf) {
     const cached = readCache(cf);
     if (cached) return cached;
@@ -938,6 +950,8 @@ async function buildRecruits(pathOrFile, cap = 5000) {
     let position = null;
     let overall = null;
     let stars = num(r, 'ProspectStarRating'); // sometimes on Recruit
+    let homeTown = null;
+    let homeState = null;
     if (playerRow != null && playerT.records[playerRow]) {
       const p = playerT.records[playerRow];
       name = [str(p, 'FirstName'), str(p, 'LastName')].filter(Boolean).join(' ') || null;
@@ -945,6 +959,13 @@ async function buildRecruits(pathOrFile, cap = 5000) {
       overall = num(p, 'OverallRating');
       if (overall == null) overall = num(p, 'PlayerOverallRating');
       if (stars == null) stars = num(p, 'ProspectStarRating'); // usually on the Player
+      // Where he is actually from. Reported: the dossier "never gets their hometown or state
+      // correct and it's always completely different than what it really is" — because
+      // nothing read it and the prompt told the model to invent one. PLYR_HOME_TOWN is a
+      // plain string on the Player row ("Fort Collins", "Oakland", "Camden"); the coach
+      // table's HomeTown is the reference blob, which is what that comment was about.
+      homeTown = str(p, 'PLYR_HOME_TOWN') || null;
+      homeState = stateName(str(p, 'PLYR_HOME_STATE'));
     }
     if (!name) continue; // skip placeholder rows
     const bi = board.get(r.index) || null;
@@ -963,6 +984,8 @@ async function buildRecruits(pathOrFile, cap = 5000) {
       nationalRank: num(r, 'NationalRank'),
       positionRank: num(r, 'PositionRank'),
       stateRank: num(r, 'StateRank'),
+      homeTown,
+      homeState,
       class: str(r, 'Class'),
       stage,
       // User recruiting-board state (null when the prospect isn't on your board).

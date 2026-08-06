@@ -138,6 +138,7 @@ export interface RtgPlayer {
   /** What he was rated coming OUT OF HIGH SCHOOL — not his current ability. The arc. */
   prospectStars: string | null;
   redshirt: string | null;
+  homeTown?: string | null;
   homeState: string | null;
   overall: number | null;
   confidence: number | null;
@@ -239,6 +240,9 @@ export interface Recruit {
   nationalRank: number | null;
   positionRank: number | null;
   stateRank: number | null;
+  /** Where he is actually from, read from the save's Player row. */
+  homeTown?: string | null;
+  homeState?: string | null;
   class: string | null;
   stage: string | null;
   // User recruiting-board state (from UserRecruitTarget). onBoard = you're recruiting him;
