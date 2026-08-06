@@ -17,6 +17,7 @@ import { ISSUE_TABS, eagerTabs } from "@/lib/dynasty/issue";
 import { clearAllIssues } from "@/lib/dynasty/issue-cache";
 import { clearAllSagas } from "@/lib/dynasty/saga-store";
 import { clearBaseline, formatBaseline, loadBaseline, summarizeBaseline, type BaselineSummary } from "@/lib/dynasty/baseline";
+import { teamTheme } from "@/lib/dynasty/team-theme";
 
 /** Destructive action with an inline two-step confirm (no browser dialogs in the webview),
  * which reloads afterward so every screen re-reads the now-empty stores. */
@@ -223,6 +224,54 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+/**
+ * Team colours, with the result shown rather than described.
+ *
+ * The swatches matter: the accents are DERIVED, not copied — Michigan's navy cannot be read
+ * on this page so the app takes their maize instead — and a user who reads "uses your team's
+ * colours" and then sees gold is owed the explanation up front, not a bug report later.
+ */
+function TeamColorsSetting() {
+  const { settings, updateSettings, snapshot } = useDynasty();
+  const on = settings.teamColors !== false;
+  const team = snapshot?.userTeam ?? null;
+  const theme = team ? teamTheme(team.colorPrimary, team.colorSecondary) : null;
+
+  return (
+    <>
+      <Toggle
+        checked={on}
+        onChange={(v) => void updateSettings({ teamColors: v })}
+        label="Wear your program's colours"
+      />
+      <p className="text-[11px] leading-relaxed text-ink3">
+        Accents only — labels, rules, the ticker and buttons. The paper and the type stay put.
+        {theme && team ? (
+          <>
+            {" "}
+            {team.name} resolves to{" "}
+            <span className="inline-flex items-center gap-1 align-middle">
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-sm border border-dw-border"
+                style={{ background: theme.accent }}
+              />
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-sm border border-dw-border"
+                style={{ background: theme.accent2 }}
+              />
+            </span>
+            {theme.source.primary && theme.accent.toLowerCase() !== theme.source.primary.toLowerCase()
+              ? " — lifted off their save colours so it can be read on a near-black page."
+              : "."}
+          </>
+        ) : team ? (
+          <> {team.name}&apos;s colours are all black, white or silver, so the house crimson stays.</>
+        ) : null}
+      </p>
+    </>
+  );
+}
+
 function Toggle({
   checked,
   onChange,
@@ -353,6 +402,7 @@ export default function SettingsPanel() {
   return (
     <div>
       <Section icon={School} title="Immersion">
+        <TeamColorsSetting />
         <Toggle
           checked={settings.hideRecruitOverall === true}
           onChange={(v) => void updateSettings({ hideRecruitOverall: v })}

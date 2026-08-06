@@ -27,6 +27,10 @@ export interface TeamInfo {
   offScheme?: string | null;
   /** "4-2-5", "3-3-5 Tite", "Base 3-4" … */
   defScheme?: string | null;
+  /** The program's real colours, "#rrggbb". The UI derives its accents from these — see
+   * team-theme.ts, which decides what is actually legible on the page. */
+  colorPrimary?: string | null;
+  colorSecondary?: string | null;
   // Dynasty "points" economy (user team only).
   pointBudget?: number | null;
   pointsRemaining?: number | null;
@@ -827,6 +831,9 @@ export interface DynastySettings {
    * run: the app still runs the drama and moves your hot seat, it just never touches your
    * players' money or your program points. */
   nilWriteToSave: boolean | null;
+  /** Dress the UI in the user's program colours, read from the save. null = on. Only the
+   * accents move — the paper and the type stay as they are. Off returns the house crimson. */
+  teamColors: boolean | null;
   /** Podcast audio: read shows aloud via ElevenLabs (needs the ElevenLabs key). Opt-in. */
   podcastAudio: boolean | null;
   /** The podium takeover: when a new game week lands, the press conference takes over the
@@ -864,6 +871,7 @@ export async function loadSettings(): Promise<DynastySettings> {
     hideRecruitOverall: (await store.get<boolean>("hideRecruitOverall")) ?? null,
     consequenceSync: (await store.get<boolean>("consequenceSync")) ?? null,
     nilWriteToSave: (await store.get<boolean>("nilWriteToSave")) ?? null,
+    teamColors: (await store.get<boolean>("teamColors")) ?? null,
     podcastAudio: (await store.get<boolean>("podcastAudio")) ?? null,
     presserTakeover: (await store.get<boolean>("presserTakeover")) ?? null,
     budgetMode: (await store.get<boolean>("budgetMode")) ?? null,

@@ -17,9 +17,16 @@
   --ink2: #b8b4ac;
   --ink3: #7a776f;
 
-  /* Accent */
+  /* Accent. These two are the only tokens the team-colour theme moves — see
+     src/lib/dynasty/team-theme.ts. Everything below that wants "the accent colour" must
+     point at them rather than hardcode a hex, or it will stay crimson on a maize page. */
   --dw-accent: #b5202a;
   --dw-accent2: #d4943a;
+  /* `dw-crimson` is used in 37 places across the components and was never defined, so every
+     one of them — the settings toggles, the primary buttons, the RTG rules — was painting
+     with an unresolved variable and rendering transparent. It is an alias for the accent,
+     which is what those call sites always meant. */
+  --dw-crimson: var(--dw-accent);
 
   /* Functional */
   --dw-green: #22c55e;
@@ -75,6 +82,7 @@
   --color-ink3: var(--ink3);
   --color-dw-accent: var(--dw-accent);
   --color-dw-accent2: var(--dw-accent2);
+  --color-dw-crimson: var(--dw-crimson);
   --color-dw-green: var(--dw-green);
   --color-dw-red: var(--dw-red);
   --color-dw-yellow: var(--dw-yellow);

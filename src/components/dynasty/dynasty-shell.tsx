@@ -20,6 +20,7 @@ import PresserOverlay from "@/components/press-conference/presser-overlay";
 import UpdateGate from "@/components/dynasty/update-gate";
 import { TutorialProvider } from "@/components/tutorial/tutorial-context";
 import TutorialWizard from "@/components/tutorial/tutorial-wizard";
+import { useTeamTheme } from "./use-team-theme";
 
 const UNIVERSE_ITEMS = [
   "SOURCES: Three Power Four programs quietly pursuing the same 5-star QB prospect.",
@@ -59,7 +60,10 @@ interface WireItem {
 }
 
 function ShellInner({ children }: { children: React.ReactNode }) {
-  const { ready, needsOnboarding, snapshot, loading, error, generate, hasApiKey } = useDynasty();
+  const { ready, needsOnboarding, snapshot, loading, error, generate, hasApiKey, settings } = useDynasty();
+  // The app wears the user's program. On by default; Settings -> Immersion turns it off, and
+  // a team whose only colours are neutrals keeps the house crimson.
+  useTeamTheme(snapshot, settings.teamColors !== false);
   // This week's around-the-league items (written by the weekly issue pass) drive the
   // breaking ticker so the whole country feels alive — falls back to evergreen lines
   // until the national desk files.
@@ -370,7 +374,7 @@ function Onboarding() {
         <button
           disabled={!canFinish}
           onClick={finish}
-          className="w-full py-2.5 rounded bg-[#b5202a] disabled:opacity-40 font-medium"
+          className="w-full py-2.5 rounded bg-dw-crimson disabled:opacity-40 font-medium"
         >
           Enter the Wire
         </button>

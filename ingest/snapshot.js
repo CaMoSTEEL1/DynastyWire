@@ -136,6 +136,19 @@ function schemeLabel(raw) {
   return out.join(' ').trim() || null;
 }
 
+/** Three 0-255 channel fields -> "#rrggbb". Null when the save has no colour there. */
+function rgbHex(rec, rField, gField, bField) {
+  const ch = (f) => {
+    const v = num(rec, f);
+    return v == null ? null : Math.max(0, Math.min(255, Math.round(v)));
+  };
+  const r = ch(rField);
+  const g = ch(gField);
+  const b = ch(bField);
+  if (r == null || g == null || b == null) return null;
+  return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
 function buildTeams(teamTable) {
   const teams = {};
   for (const r of teamTable.records) {
@@ -170,6 +183,13 @@ function buildTeams(teamTable) {
       // opponent runs instead of inferring one from their yardage.
       offScheme: schemeLabel(str(r, 'CurrentOffensiveScheme')),
       defScheme: schemeLabel(str(r, 'CurrentDefensiveScheme')),
+      // The program's real colours. Stored as separate 0-255 channels; verified against a
+      // save (Alabama #b30839, Michigan navy + maize, Oregon green + yellow). The UI derives
+      // its accents from these — see team-theme.ts, which does the readability work.
+      colorPrimary: rgbHex(r, 'TEAM_BACKGROUNDCOLORR', 'TEAM_BACKGROUNDCOLORG', 'TEAM_BACKGROUNDCOLORB'),
+      colorSecondary: safeBool(r, 'TEAM_HAS_SECONDARY_COLOR')
+        ? rgbHex(r, 'TEAM_BACKGROUNDCOLORR2', 'TEAM_BACKGROUNDCOLORG2', 'TEAM_BACKGROUNDCOLORB2')
+        : null,
       confStanding: num(r, 'CurSeasonConfStanding'),
       // User-only dynasty resources — CPU teams leave these at 0. Used to detect the
       // human's team (verified: unique to the controlled team, e.g. Kansas State).
@@ -728,7 +748,8 @@ async function buildSnapshot(pathOrFile, opts = {}) {
   // v9: RTG — mode detection, the user player, school interest, depth position.
   // v10: depth entries returned as a LIST (which row is the user's is still unverified).
   // v13: postseason rows carry a score before kickoff — the record decides what was played.
-  const cf = isPath ? cacheFile(pathOrFile, `snap|v13|${optKey}`) : null;
+  // v14: team schemes and team colours.
+  const cf = isPath ? cacheFile(pathOrFile, `snap|v14|${optKey}`) : null;
   if (cf) {
     const cached = readCache(cf);
     if (cached) return cached;

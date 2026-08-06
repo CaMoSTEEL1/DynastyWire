@@ -149,6 +149,7 @@ const EMPTY_SETTINGS: DynastySettings = {
   hideRecruitOverall: null,
   consequenceSync: null,
   nilWriteToSave: null,
+  teamColors: null,
   podcastAudio: null,
   presserTakeover: null,
   budgetMode: null,
