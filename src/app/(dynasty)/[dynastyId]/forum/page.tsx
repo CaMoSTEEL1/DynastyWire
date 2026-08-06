@@ -253,6 +253,17 @@ export default function ForumPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Deep link into one dynasty: /forum/#open=<id>. A hash rather than a query string because
+  // this is a static export served over Tauri's asset protocol, where the hash is the part
+  // that reliably survives. It is how "See how it looks" gets you to your own page — reading
+  // happens in the app, so there is no browser link to send anyone.
+  useEffect(() => {
+    const id = window.location.hash.replace(/^#open=/, "");
+    if (id && id !== window.location.hash) void openOne(id);
+    // openOne is stable for a given forum URL; re-running on every render would refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forumUrl]);
+
   const openOne = useCallback(
     async (id: string) => {
       setLoading(true);
@@ -276,7 +287,18 @@ export default function ForumPage() {
     };
   }, [items]);
 
-  if (open) return <Spectating bundle={open} onBack={() => setOpen(null)} />;
+  if (open) {
+    return (
+      <Spectating
+        bundle={open}
+        onBack={() => {
+          // Drop the deep link too, or the effect above reopens it on the next render.
+          if (window.location.hash) history.replaceState(null, "", window.location.pathname);
+          setOpen(null);
+        }}
+      />
+    );
+  }
 
   return (
     <div>

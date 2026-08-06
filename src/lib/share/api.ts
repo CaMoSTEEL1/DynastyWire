@@ -36,8 +36,8 @@ export interface ForumListing {
 }
 
 export interface PublishResult {
+  /** The id a spectator opens, inside the app. There is no web page to link to. */
   id: string;
-  url: string;
 }
 
 const jsonHeaders = { "content-type": "application/json" };

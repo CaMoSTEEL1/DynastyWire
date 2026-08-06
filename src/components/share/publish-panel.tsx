@@ -17,7 +17,7 @@ import { PUBLIC_KINDS, buildBundle, kindOf } from "@/lib/share/bundle";
 import { usernameFromPath } from "@/lib/share/redact";
 import { DEFAULT_FORUM_URL, publishDynasty, unpublishDynasty } from "@/lib/share/api";
 import { allTokens, loadPublishState, savePublishState, type PublishState } from "@/lib/share/publish-store";
-import { Globe, Lock, Loader2, ExternalLink } from "lucide-react";
+import { Globe, Lock, Loader2, Eye } from "lucide-react";
 
 const SECTIONS_PUBLIC = ["Front page", "Around the league", "National desk", "Social", "Rankings", "Shows", "Trophy room"];
 const SECTIONS_PRIVATE = ["Press conference answers", "Private messages & your phone", "NIL and the money", "Gameplans & the recruiting board", "Situation room"];
@@ -196,13 +196,14 @@ export function PublishPanel() {
         </button>
         {isPublic && (
           <>
+            {/* Reading happens IN the app, not in a browser. The service is a JSON API with
+                no pages on it, so an external link would have been a dead one — and the
+                spectator view is a DynastyWire surface, not a web page. */}
             <a
-              href={`${forumUrl.replace(/\/+$/, "")}/d/${state.id}`}
-              target="_blank"
-              rel="noreferrer"
+              href={`/${dynastyId}/forum/#open=${state.id}`}
               className="inline-flex items-center gap-1.5 rounded border border-dw-border px-3 py-2 font-sans text-xs text-ink2 hover:text-ink"
             >
-              <ExternalLink className="h-3.5 w-3.5" /> View the page
+              <Eye className="h-3.5 w-3.5" /> See how it looks
             </a>
             <button
               type="button"

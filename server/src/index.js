@@ -205,7 +205,9 @@ export default {
       items.push(listingFrom(id, bundle, updatedAt));
       await writeIndex(env, items);
 
-      return json({ id, url: `${url.origin}/d/${id}` });
+      // Just the id. Spectating happens inside DynastyWire, so there is no page here to link
+      // to — returning a URL that 404s would only invite somebody to share it.
+      return json({ id });
     }
 
     // ── read one, and take one down ───────────────────────────────────────────
