@@ -10,8 +10,13 @@
 
 import { parseBundle, type DynastyBundle } from "./bundle";
 
-/** Where the forum lives. Overridable in Settings. */
-export const DEFAULT_FORUM_URL = "https://forum.dynastywire.app";
+/**
+ * Where the forum lives. Baked in on purpose: nobody should have to be told a URL and paste
+ * it into a settings field before the tab does anything. Still overridable — point it at a
+ * local `wrangler dev` while developing, or at your own worker if you'd rather not use this
+ * one.
+ */
+export const DEFAULT_FORUM_URL = "https://forum.dynastywire.workers.dev";
 
 export interface ForumListing {
   /** Stable id for the published dynasty — what a spectator opens. */

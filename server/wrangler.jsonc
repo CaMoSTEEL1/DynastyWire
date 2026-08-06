@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "forum",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-01",
+
+  // The forum's whole storage layer. R2 rather than a database because a bundle is read
+  // whole (~300 KB for a multi-season dynasty), and because R2 has no egress fee — one
+  // popular dynasty being read a thousand times is what would otherwise cost money.
+  "r2_buckets": [
+    {
+      "binding": "BUNDLES",
+      "bucket_name": "dynastywire-forum",
+      "preview_bucket_name": "dynastywire-forum-preview"
+    }
+  ],
+
+  // So the app's default address is a real, stable URL and nobody has to paste one in.
+  "workers_dev": true,
+
+  "observability": {
+    "enabled": true
+  }
+}
