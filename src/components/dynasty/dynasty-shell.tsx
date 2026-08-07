@@ -59,6 +59,64 @@ interface WireItem {
   blurb?: string;
 }
 
+/**
+ * "Which of these is you?" — shown only when the save gives us no user marker.
+ *
+ * The parse succeeded; the whole league is in hand. So this is a one-click fix rather than a
+ * support thread, and the answer is remembered as an explicit override for this dynasty.
+ */
+function PickYourTeam() {
+  const { snapshot, updateSettings, refresh } = useDynasty();
+  const [picked, setPicked] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const teams = Object.values(snapshot?.teams ?? {})
+    .map((t) => t.name)
+    .filter((n): n is string => !!n)
+    .sort((a, b) => a.localeCompare(b));
+
+  const save = async () => {
+    if (!picked || busy) return;
+    setBusy(true);
+    await updateSettings({ userTeam: picked });
+    await refresh();
+    setBusy(false);
+  };
+
+  return (
+    <FullScreen>
+      <div className="mx-auto max-w-md text-left">
+        <h2 className="font-headline text-xl uppercase tracking-wide text-ink">Which team is yours?</h2>
+        <p className="mt-2 font-serif text-sm leading-relaxed text-ink2">
+          This save doesn&apos;t say which program you&apos;re running, so rather than guess —
+          and cover somebody else&apos;s season — pick it here. It&apos;s remembered.
+        </p>
+        <select
+          value={picked}
+          onChange={(e) => setPicked(e.target.value)}
+          className="mt-4 w-full rounded border border-dw-border bg-paper2 px-3 py-2 font-sans text-sm text-ink outline-none focus:border-dw-crimson"
+        >
+          <option value="">Select your team…</option>
+          {teams.map((n) => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={!picked || busy}
+          className="mt-3 w-full rounded border border-dw-crimson bg-dw-crimson px-4 py-2 font-sans text-xs uppercase tracking-wider text-paper disabled:opacity-40"
+        >
+          {busy ? "Loading your dynasty…" : "That's my team"}
+        </button>
+        <p className="mt-3 font-sans text-[11px] text-ink3">
+          {teams.length} teams read from your save. You can change this later in Settings.
+        </p>
+      </div>
+    </FullScreen>
+  );
+}
+
 function ShellInner({ children }: { children: React.ReactNode }) {
   const { ready, needsOnboarding, snapshot, loading, error, generate, hasApiKey, settings } = useDynasty();
   // The app wears the user's program. On by default; Settings -> Immersion turns it off, and
@@ -90,6 +148,11 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   if (needsOnboarding) return <Onboarding />;
   if (loading && !snapshot) return <FullScreen>Reading your dynasty…</FullScreen>;
   if (error && !snapshot) return <FullScreen>Couldn&apos;t read the save: {error}</FullScreen>;
+  // The save parsed but we could not tell WHICH team is the user's. That used to be a dead
+  // end reading "No dynasty data yet" — and before that it was worse: the app guessed the
+  // program with the most points and confidently covered Ohio State or Alabama instead.
+  // Every team in the league is right here, so ask.
+  if (snapshot && !snapshot.userTeam) return <PickYourTeam />;
   if (!snapshot?.userTeam) return <FullScreen>No dynasty data yet. {error ?? ""}</FullScreen>;
 
   const u = snapshot.userTeam;

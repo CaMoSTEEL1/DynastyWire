@@ -202,8 +202,9 @@ function buildTeams(teamTable) {
         ? rgbHex(r, 'TEAM_BACKGROUNDCOLORR2', 'TEAM_BACKGROUNDCOLORG2', 'TEAM_BACKGROUNDCOLORB2')
         : null,
       confStanding: num(r, 'CurSeasonConfStanding'),
-      // User-only dynasty resources — CPU teams leave these at 0. Used to detect the
-      // human's team (verified: unique to the controlled team, e.g. Kansas State).
+      // NOT user-only, despite what this comment used to claim: 138 of 143 teams carry these,
+      // scaling with prestige. They are kept for the NIL economy; they must never be used to
+      // work out whose team this is. See detectUserTeamByCharacter.
       programPoints:
         (num(r, 'RemainingProgramPoints') || 0) + (num(r, 'ProgramPointBudget') || 0),
       contractGoalPoints: num(r, 'CoachContractGoalsProgramPoints') || 0,
@@ -305,18 +306,28 @@ function safeBool(rec, field) {
 
 // The user's team is the one managing program points (a user-only dynasty resource).
 // This is reliable where the IsSimmed game heuristic was not.
-function detectUserTeam(teams) {
-  let best = null,
-    bestPts = 0;
-  for (const row of Object.keys(teams)) {
-    const t = teams[row];
-    const pts = (t.programPoints || 0) + (t.contractGoalPoints || 0);
-    if (pts > bestPts) {
-      bestPts = pts;
-      best = Number(row);
+/**
+ * WHOSE TEAM IS THIS. `Team.UserCharacter` is a reference that exactly one team carries — the
+ * one the human is playing — and it is set whether that human is a coach or a Road to Glory
+ * player. Verified on a real save: 1 of 143 teams had it, and it was the right one.
+ *
+ * This is the signal that should always have been first. Everything else is inference.
+ */
+function detectUserTeamByCharacter(teamTable) {
+  const found = [];
+  for (const r of teamTable.records) {
+    if (r.isEmpty) continue;
+    let link = null;
+    try {
+      link = r.fields['UserCharacter'].referenceData;
+    } catch (e) {
+      continue;
     }
+    if (link && (link.tableId || link.rowNumber)) found.push(r.index);
   }
-  return best;
+  // More than one means the save has co-op users and we cannot tell which is THIS user, so
+  // say nothing rather than pick. Exactly one is the answer.
+  return found.length === 1 ? found[0] : null;
 }
 
 // Resolve the user's team. Auto-detection has proven unreliable (IsSimmed and
@@ -764,7 +775,7 @@ async function buildSnapshot(pathOrFile, opts = {}) {
   // v10: depth entries returned as a LIST (which row is the user's is still unverified).
   // v13: postseason rows carry a score before kickoff — the record decides what was played.
   // v14: team schemes and team colours.
-  const cf = isPath ? cacheFile(pathOrFile, `snap|v15|${optKey}`) : null;
+  const cf = isPath ? cacheFile(pathOrFile, `snap|v16|${optKey}`) : null;
   if (cf) {
     const cached = readCache(cf);
     if (cached) return cached;
@@ -829,8 +840,21 @@ async function buildSnapshot(pathOrFile, opts = {}) {
       .find((row) => teams[row].teamIndex === userCoach.teamIndex);
     if (match !== undefined) userTeamRow = match;
   }
-  // Last resort heuristic: most program points
-  if (userTeamRow == null) userTeamRow = detectUserTeam(teams);
+  // The strongest signal, tried LAST only because everything above is an explicit override
+  // (a team the user named, an RTG player, a user coach). If any of those spoke, respect them.
+  if (userTeamRow == null) userTeamRow = detectUserTeamByCharacter(teamTable);
+
+  // And that is where the guessing stops.
+  //
+  // There used to be a "last resort heuristic: most program points" here, on the belief that
+  // "CPU teams leave these at 0". They do not — 138 of 143 teams carry program points, and
+  // they scale with prestige, so the heuristic did not find the user's team, it found the
+  // best program in the country. Three users reported it in one afternoon: one was handed
+  // Ohio State, and two separate people, playing ULM and Pitt, were both handed Alabama.
+  // Resetting local data could not help, because nothing local was wrong.
+  //
+  // A wrong team is worse than no team: every article, every recap and every press conference
+  // is then confidently about somebody else's program. Null means the app can ask.
   
   // WHO IS ACTUALLY COACHING. The stored name used to win unconditionally, which meant that
   // once a name was saved the app could never follow the save again: retire a coach, start a
@@ -1588,4 +1612,4 @@ async function buildCommitments(pathOrFile, opts = {}) {
   return result;
 }
 
-module.exports = { openSave, pickTable, readRecords, buildSnapshot, buildRecruits, buildRoster, buildPortal, buildCommitments, unplayFutureGames, schemeLabel };
+module.exports = { openSave, pickTable, readRecords, buildSnapshot, buildRecruits, buildRoster, buildPortal, buildCommitments, unplayFutureGames, schemeLabel, detectUserTeamByCharacter };

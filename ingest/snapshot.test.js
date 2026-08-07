@@ -85,3 +85,56 @@ describe("schemeLabel", () => {
     expect(schemeLabel("OFF_")).toBeNull();
   });
 });
+
+// Three users reported this within one afternoon: the app read them as the wrong school.
+// One was handed Ohio State; two others, playing ULM and Pitt, were both handed ALABAMA.
+// Resetting local data did nothing, because nothing local was wrong — the parser was falling
+// back to "the team with the most program points", on the belief that CPU teams have none.
+// They do: 138 of 143 teams carry them, scaling with prestige. So the fallback never found
+// the user's team, it found the best program in the country.
+//
+// Team.UserCharacter is the real marker — exactly one team carries it, coach or RTG player.
+
+import { detectUserTeamByCharacter } from "./snapshot.js";
+
+const table = (rows) => ({
+  records: rows.map((fields, index) => ({
+    index,
+    isEmpty: fields === null,
+    fields: fields ?? {},
+  })),
+});
+
+const withUser = (rowNumber) => ({ UserCharacter: { referenceData: { tableId: 4176, rowNumber } } });
+const noUser = () => ({ UserCharacter: { referenceData: { tableId: 0, rowNumber: 0 } } });
+
+describe("detectUserTeamByCharacter", () => {
+  it("finds the one team the human is playing", () => {
+    expect(detectUserTeamByCharacter(table([noUser(), noUser(), withUser(497), noUser()]))).toBe(2);
+  });
+
+  it("says nothing when no team carries the marker", () => {
+    // Better a null the app can ask about than a confident wrong answer — every article and
+    // press conference downstream would otherwise be about somebody else's program.
+    expect(detectUserTeamByCharacter(table([noUser(), noUser()]))).toBeNull();
+  });
+
+  it("says nothing rather than guess between two humans", () => {
+    // A co-op save has more than one. We cannot tell which is THIS user, so we do not pick.
+    expect(detectUserTeamByCharacter(table([withUser(1), noUser(), withUser(2)]))).toBeNull();
+  });
+
+  it("ignores empty rows and rows with no such field", () => {
+    expect(detectUserTeamByCharacter(table([null, {}, withUser(9)]))).toBe(2);
+  });
+
+  it("survives a field that throws when read", () => {
+    const hostile = {
+      records: [
+        { index: 0, isEmpty: false, fields: { get UserCharacter() { throw new Error("nope"); } } },
+        { index: 1, isEmpty: false, fields: withUser(3) },
+      ],
+    };
+    expect(detectUserTeamByCharacter(hostile)).toBe(1);
+  });
+});
