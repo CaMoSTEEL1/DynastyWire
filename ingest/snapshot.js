@@ -1003,7 +1003,7 @@ async function buildSnapshot(pathOrFile, opts = {}) {
 // with their scholarship + NIL state. Verified field map against a real CFB27 save.
 async function buildRecruits(pathOrFile, cap = 5000) {
   const isPath = typeof pathOrFile === 'string';
-  const cf = isPath ? cacheFile(pathOrFile, `recruits|v4|${cap}`) : null;
+  const cf = isPath ? cacheFile(pathOrFile, `recruits|v5|${cap}`) : null;
   if (cf) {
     const cached = readCache(cf);
     if (cached) return cached;
@@ -1048,6 +1048,9 @@ async function buildRecruits(pathOrFile, cap = 5000) {
     let stars = num(r, 'ProspectStarRating'); // sometimes on Recruit
     let homeTown = null;
     let homeState = null;
+    let size = null;
+    let archetype = null;
+    let ratings = null;
     if (playerRow != null && playerT.records[playerRow]) {
       const p = playerT.records[playerRow];
       name = [str(p, 'FirstName'), str(p, 'LastName')].filter(Boolean).join(' ') || null;
@@ -1062,6 +1065,11 @@ async function buildRecruits(pathOrFile, cap = 5000) {
       // table's HomeTown is the reference blob, which is what that comment was about.
       homeTown = str(p, 'PLYR_HOME_TOWN') || null;
       homeState = stateName(str(p, 'PLYR_HOME_STATE'));
+      // Reported: dossier height/weight and strengths/needs-work were "just incorrect". They
+      // were invented, because none of this was ever read. It is all on the Player row.
+      size = playerSize(p);
+      archetype = str(p, 'PlayerType');
+      ratings = scoutRatings(p);
     }
     if (!name) continue; // skip placeholder rows
     const bi = board.get(r.index) || null;
@@ -1082,6 +1090,10 @@ async function buildRecruits(pathOrFile, cap = 5000) {
       stateRank: num(r, 'StateRank'),
       homeTown,
       homeState,
+      height: size ? size.height : null,
+      weight: size ? size.weight : null,
+      archetype,
+      ratings,
       class: str(r, 'Class'),
       stage,
       // User recruiting-board state (null when the prospect isn't on your board).
@@ -1456,6 +1468,26 @@ const SCOUT_RATING_FIELDS = {
   kickPower: 'KickPowerRating',
   kickAccuracy: 'KickAccuracyRating',
 };
+
+/**
+ * Size, in the units a scout uses.
+ *
+ * Height is plain inches. Weight is NOT pounds — it is stored as an offset from 160, which is
+ * why a real save lists a 6'0" running back at "5". Shipping that raw is how a dossier ends up
+ * describing a 5lb tailback, so it is decoded here and never passed through.
+ */
+function playerSize(p) {
+  const inches = num(p, 'Height');
+  const wOffset = num(p, 'Weight');
+  const heightText =
+    inches != null && inches > 0 ? `${Math.floor(inches / 12)}'${inches % 12}"` : null;
+  const pounds = wOffset != null ? wOffset + 160 : null;
+  return {
+    heightInches: inches ?? null,
+    height: heightText,
+    weight: pounds != null && pounds > 100 && pounds < 450 ? pounds : null,
+  };
+}
 
 function scoutRatings(p) {
   const out = {};

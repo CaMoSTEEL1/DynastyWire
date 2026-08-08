@@ -246,6 +246,14 @@ export interface Recruit {
   /** Where he is actually from, read from the save's Player row. */
   homeTown?: string | null;
   homeState?: string | null;
+  /** Real size from the save. Height as 6'2"; weight already decoded out of the +160 offset
+   * the file stores, so it is honest pounds rather than a 5lb tailback. */
+  height?: string | null;
+  weight?: number | null;
+  /** The save's own archetype ("OT_PassProtector") and trait ratings — what the film read
+   * has to agree with, instead of strengths invented from nothing. */
+  archetype?: string | null;
+  ratings?: RosterRatings | null;
   class: string | null;
   stage: string | null;
   // User recruiting-board state (from UserRecruitTarget). onBoard = you're recruiting him;

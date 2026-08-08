@@ -37,13 +37,14 @@ import {
   TIER_LABEL,
   formLine,
   playerLine,
+  recentForm,
   scoutingMath,
   starterLine,
   tierFor,
 } from "./scouting";
 import { STANDING_LABEL, playerStandings, pressureBoard, pressureLine } from "./pressure";
 import { weekStateOf } from "./week-state";
-import { attackLine, profileLine } from "./traits";
+import { archetypeLabel, attackLine, profileLine, threatTags, weaknessTags } from "./traits";
 
 export type { LlmConfig, RosterPlayer };
 
@@ -1251,6 +1252,30 @@ export function buildMediaContext(
   // same recurring cast (AD, booster, beat writer, rival) instead of inventing new ones.
   const backstory = opts.backstory ?? null;
   parts.push(...identityBlock(backstory));
+
+  // WHO THEY HAVE ACTUALLY PLAYED.
+  //
+  // Reported from a podcast: "they're 3-0 against who? We don't have the other two opponents
+  // on tape yet." The hosts were not being coy — nothing in the context had ever listed the
+  // user's own schedule. The opponent gets a recent-form block in the scouting report; the
+  // user's own season was never written down anywhere, so every generator knew the RECORD and
+  // not a single game inside it.
+  //
+  // It goes in the shared context rather than the shows prompt because the gap is shared: a
+  // recap, a column or a presser referring to "the win over" had the same nothing to work
+  // from. `recentForm` is the same helper the scouting report already trusts.
+  const myForm = recentForm(after.games ?? [], after.teams ?? {}, after.userTeamRow, 40);
+  if (myForm.games.length > 0) {
+    parts.push("=== THEIR SEASON SO FAR, GAME BY GAME (real, most recent first — this is the");
+    parts.push("whole résumé; never say who they have played is unknown) ===");
+    for (const g of myForm.games) parts.push(`  ${formLine(g)}`);
+    if (myForm.streak) {
+      parts.push(
+        `  Streak: ${myForm.streak} · scoring ${myForm.pointsForPerGame ?? "?"} per game, allowing ${myForm.pointsAgainstPerGame ?? "?"}`
+      );
+    }
+    parts.push("");
+  }
 
   return {
     systemPrompt: SYSTEM_PROMPT,
@@ -2938,11 +2963,43 @@ function recruitLine(r: Record<string, unknown>): string {
       : r.homeState
         ? `from ${r.homeState}`
         : null,
+    // Real measurables. Reported as "just incorrect" because they were invented — the save
+    // has carried both all along, weight behind a +160 offset that reads as a 5lb tailback.
+    r.height && r.weight ? `${r.height}, ${r.weight} lb` : r.height ? String(r.height) : null,
     r.class ? `class of ${r.class}` : null,
     r.stage ? `stage: ${r.stage}` : null,
     r.commitScore != null ? `commit score ${r.commitScore}` : null,
   ].filter(Boolean);
   return `${r.name} — ${bits.join(", ")}`;
+}
+
+/**
+ * The film read, grounded.
+ *
+ * Strengths and weaknesses were being invented alongside the measurables. The save carries
+ * the archetype and the full trait spread, and traits.ts already turns exactly that into
+ * scouting language for the opponent report — so the same translation runs here and the
+ * dossier has to agree with it instead of guessing what a tackle is good at.
+ */
+function recruitFilmFacts(r: Record<string, unknown>): string[] {
+  const asPlayer = {
+    name: String(r.name ?? ""),
+    position: (r.position as string) ?? null,
+    year: null,
+    overall: (r.overall as number) ?? null,
+    jersey: null,
+    archetype: (r.archetype as string) ?? null,
+    ratings: (r.ratings as RosterPlayer["ratings"]) ?? null,
+  } as RosterPlayer;
+
+  const out: string[] = [];
+  const arch = archetypeLabel(asPlayer.archetype, asPlayer.position);
+  if (arch) out.push(`  Archetype (from the save): ${arch}`);
+  const strengths = threatTags(asPlayer, 4);
+  if (strengths.length) out.push(`  What the ratings actually say he does well: ${strengths.join("; ")}`);
+  const holes = weaknessTags(asPlayer, 3);
+  if (holes.length) out.push(`  Where the ratings say he is behind: ${holes.join("; ")}`);
+  return out;
 }
 
 const POSITION_NAME: Record<string, string> = {
@@ -2992,8 +3049,15 @@ function buildRecruitDossierSpec(ctx: MediaContext, extra: Extra): PromptSpec {
     "- Do NOT state which school he committed to or signed with unless the data below names one.",
     "  If it doesn't, write about his recruitment WITHOUT naming a destination school.",
     "",
-    `=== THE PROSPECT ===`,
+    `=== THE PROSPECT (every line here is FIXED FACT from the save) ===`,
     recruitLine(r),
+    ...recruitFilmFacts(r),
+    "",
+    "- His listed height and weight above are REAL. Use them exactly; never state a different",
+    "  size, and never call him undersized or huge in a way those numbers contradict.",
+    "- The film read must AGREE with the archetype and the rating notes above. If the ratings",
+    "  say he is a pass protector who struggles in space, the report cannot make him a mauler",
+    "  who pulls. Where nothing is listed, write around it rather than inventing an attribute.",
     "",
     `=== YOUR PROGRAM ===`,
     ctx.userContext,
