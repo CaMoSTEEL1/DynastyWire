@@ -23,6 +23,9 @@ export interface TeamInfo {
   rankCFP: number | null;
   prestige: number | null;
   ratingOVR: number | null;
+  /** The conference they are ACTUALLY in this season, read from the save's own alignment —
+   * not the one the model remembers. Oregon and Washington are Big Ten here. */
+  conference?: string | null;
   /** What they run, read from the save: "Air Raid", "Option", "Multiple Offense" … */
   offScheme?: string | null;
   /** "4-2-5", "3-3-5 Tite", "Base 3-4" … */

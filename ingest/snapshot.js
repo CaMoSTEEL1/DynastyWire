@@ -635,6 +635,62 @@ async function buildSchoolInterest(f, teams) {
  * NOTE: the two history tables carry no year column. Rows appear to accumulate in order, so
  * they are returned oldest-first WITHOUT a year attached — a story must never date one.
  */
+/**
+ * Who is actually in which conference, this season, in this save.
+ *
+ * Reported: "Oregon and Washington was said to be a Pac-12 game." They have not been for
+ * years, and the model was reaching for the alignment it was trained on rather than the one
+ * in front of it. The save knows the truth — verified here: the Big Ten row lists Oregon,
+ * Washington, UCLA and USC, and the Pac-12 row is the rebuilt one (Boise State, Oregon State,
+ * Washington State, Colorado State…). Nothing had ever read it.
+ *
+ * Conference.TeamSlots points at a Team[] row whose fields are references. Unused slots read
+ * 0:0, which matters because team row 0 is Air Force — take rowNumber at face value and every
+ * empty slot in the league joins the Falcons to a dozen conferences at once.
+ */
+async function buildConferences(f, teams) {
+  const confTable = pickTable(f, 'Conference');
+  if (!confTable) return;
+  const conf = await readRecords(confTable);
+
+  for (const c of conf.records) {
+    if (c.isEmpty) continue;
+    const name = str(c, 'Name');
+    if (!name) continue;
+
+    let slotRef = null;
+    try {
+      slotRef = c.fields['TeamSlots'].referenceData;
+    } catch (e) {
+      continue;
+    }
+    if (!slotRef || !slotRef.tableId) continue;
+
+    const arrTable = f.tables.find((t) => t.header && t.header.tableId === slotRef.tableId);
+    if (!arrTable) continue;
+    try {
+      await arrTable.readRecords();
+    } catch (e) {
+      continue;
+    }
+    const row = arrTable.records[slotRef.rowNumber];
+    if (!row) continue;
+
+    for (const field of Object.keys(row.fields)) {
+      let link = null;
+      try {
+        link = row.fields[field].referenceData;
+      } catch (e) {
+        continue;
+      }
+      // 0:0 is an empty slot, NOT a reference to team row 0.
+      if (!link || !link.tableId) continue;
+      const t = teams[link.rowNumber];
+      if (t) t.conference = name;
+    }
+  }
+}
+
 async function buildWorld(f, teams, coachTable) {
   const nameOfTeamRow = (row) => (row != null && teams[row] ? teams[row].name : null);
 
@@ -775,7 +831,7 @@ async function buildSnapshot(pathOrFile, opts = {}) {
   // v10: depth entries returned as a LIST (which row is the user's is still unverified).
   // v13: postseason rows carry a score before kickoff — the record decides what was played.
   // v14: team schemes and team colours.
-  const cf = isPath ? cacheFile(pathOrFile, `snap|v16|${optKey}`) : null;
+  const cf = isPath ? cacheFile(pathOrFile, `snap|v17|${optKey}`) : null;
   if (cf) {
     const cached = readCache(cf);
     if (cached) return cached;
@@ -788,6 +844,8 @@ async function buildSnapshot(pathOrFile, opts = {}) {
   const coachTable = await readRecords(pickTable(f, 'Coach'));
 
   const teams = buildTeams(teamTable);
+  // Real, current alignment from the save — see buildConferences().
+  await buildConferences(f, teams);
   // Scores alone lie about the postseason — see unplayFutureGames().
   const games = unplayFutureGames(buildGames(sgTable), teams);
 

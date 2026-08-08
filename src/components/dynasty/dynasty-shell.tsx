@@ -118,7 +118,7 @@ function PickYourTeam() {
 }
 
 function ShellInner({ children }: { children: React.ReactNode }) {
-  const { ready, needsOnboarding, snapshot, loading, error, generate, hasApiKey, settings } = useDynasty();
+  const { ready, needsOnboarding, snapshot, loading, error, generate, hasApiKey, settings, coachName: resolvedCoach } = useDynasty();
   // The app wears the user's program. On by default; Settings -> Immersion turns it off, and
   // a team whose only colours are neutrals keeps the house crimson.
   useTeamTheme(snapshot, settings.teamColors !== false);
@@ -160,8 +160,11 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const dynastyInfo = {
     id: "current",
     school: u.name,
-    conference: "", // conference not yet mapped from the save
-    coachName: snapshot.coachName || "Head Coach",
+    conference: u.conference ?? "",
+    // The RESOLVED name, not the raw snapshot field. A save that names no coach was showing
+    // literally "Coach Head Coach" on the masthead and the coach page while the user's real
+    // name sat in Settings, unused.
+    coachName: resolvedCoach || snapshot.coachName || "Head Coach",
     prestige: u.prestige != null ? String(u.prestige) : "",
   };
   const seasonInfo = {

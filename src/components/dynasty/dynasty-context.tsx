@@ -103,6 +103,15 @@ interface DynastyContextValue {
   /** The active dynasty's stored profile. Already supplied by the provider; declared here so
    * consumers can actually reach it. */
   activeProfile: DynastyProfile | null;
+  /**
+   * The coach's name as RESOLVED — the save first, a typed override when the user asked for
+   * one, the stored name when the save has nothing.
+   *
+   * Consumers must use this rather than `snapshot.coachName`. The shell read the raw snapshot
+   * field, so a save that names no coach rendered the literal fallback — "Covering the Ball
+   * State dynasty under Coach Head Coach" — while the user's real name sat in Settings.
+   */
+  coachName: string | null;
   /** Add a dynasty from a picked save FILE and switch to it. Returns the new profile id. */
   addDynasty: (saveFile: string, opts?: { userTeam?: string; coachName?: string }) => Promise<string>;
   switchDynasty: (id: string) => Promise<void>;
@@ -902,6 +911,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       dynasties: settings.dynasties ?? [],
       activeDynastyId: activeProfile?.id ?? settings.activeDynastyId ?? null,
       activeProfile,
+      coachName: effCoach,
       addDynasty,
       switchDynasty,
       removeDynasty,
@@ -930,6 +940,9 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       week,
       currentIssueKey,
       activeProfile,
+      // Without this the exposed coach name goes stale the moment it changes in Settings —
+      // which is the exact failure this whole change is fixing.
+      effCoach,
       addDynasty,
       switchDynasty,
       removeDynasty,

@@ -3535,6 +3535,8 @@ function buildNationalWireSpec(ctx: MediaContext, extra: Extra = {}): PromptSpec
     slate.upcoming.length ? "UPCOMING (NOT played — preview only, NO scores):" : "UPCOMING: (none)",
     ...slate.upcoming.map((s) => `  ${s}`),
     "",
+    conferenceBlock(ctx),
+    "",
     "=== AP TOP 25 (real, from the save) ===",
     ...ranked,
     "",
@@ -3550,6 +3552,40 @@ function buildNationalWireSpec(ctx: MediaContext, extra: Extra = {}): PromptSpec
 // Build the REAL national slate for this week from the save's game rows — split into games
 // that were actually PLAYED (have a score) and games that are still UPCOMING (no score yet).
 // This is what stops the National Desk inventing results for games that haven't been simmed.
+/**
+ * The league's ACTUAL alignment this season.
+ *
+ * Reported: "Oregon and Washington was said to be a Pac-12 game." They have not been for
+ * years — but the model's training says otherwise, and until now nothing in the prompt
+ * contradicted it. The save carries the real membership, so state it and the argument is
+ * over. Verified from a real save: the Big Ten holds Oregon, Washington, UCLA and USC, and
+ * the Pac-12 is the rebuilt eight (Boise State, Oregon State, Washington State…).
+ */
+function conferenceBlock(ctx: MediaContext): string | null {
+  const teams = Object.values(ctx.snapshot?.teams ?? {});
+  const byConf = new Map<string, string[]>();
+  for (const t of teams) {
+    if (!t.conference || !t.name) continue;
+    const list = byConf.get(t.conference);
+    if (list) list.push(t.name);
+    else byConf.set(t.conference, [t.name]);
+  }
+  if (byConf.size === 0) return null;
+
+  const lines = [...byConf.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([conf, names]) => `  ${conf}: ${names.sort().join(", ")}`);
+
+  return [
+    "=== CONFERENCES AS THEY ACTUALLY ARE IN THIS SAVE (realignment has happened — this",
+    "overrides anything you think you know about who plays where) ===",
+    ...lines,
+    "  RULE: never describe a matchup, a title race or a rivalry using a conference a team is",
+    "  NOT listed in above. If two teams are in different conferences, it is a non-conference",
+    "  game, whatever it used to be.",
+  ].join("\n");
+}
+
 function nationalSlate(ctx: MediaContext): { played: string[]; upcoming: string[] } {
   const snap = ctx.snapshot;
   const wk = ctx.week;
@@ -3650,6 +3686,8 @@ function buildNationalDeskSpec(ctx: MediaContext): PromptSpec {
     ...slate.played.map((s) => `  ${s}`),
     slate.upcoming.length ? "UPCOMING (NOT played — preview only, NO scores):" : "UPCOMING: (none)",
     ...slate.upcoming.map((s) => `  ${s}`),
+    "",
+    conferenceBlock(ctx),
     "",
     "=== AP TOP 25 (real, from the save) ===",
     ...ranked,
