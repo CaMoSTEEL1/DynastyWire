@@ -2138,6 +2138,9 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
     case "podium-answer":
       return buildPodiumAnswerSpec(ctx, extra);
 
+    case "podium-rebuttal":
+      return buildRebuttalSpec(ctx, extra);
+
     case "national-wire":
       return buildNationalWireSpec(ctx, extra);
 
@@ -3437,6 +3440,61 @@ function buildRecruitTextSpec(ctx: MediaContext, extra: Extra): PromptSpec {
   return { prompt, maxTokens: 500 };
 }
 
+/**
+ * The follow-up. A reporter who accepts every answer is furniture.
+ *
+ * The rule that makes this work is that it must engage with what the coach ACTUALLY said —
+ * a generic "can you expand on that" is worse than silence, because it proves nobody was
+ * listening. So the follow-up has to name the thing in the answer it is pressing on.
+ *
+ * It is also allowed to decline. `followUp: null` when the answer genuinely closed the
+ * subject, which is what keeps a room of eight questions from becoming a cross-examination
+ * and stops the beat feeling automated.
+ */
+function buildRebuttalSpec(ctx: MediaContext, extra: Extra): PromptSpec {
+  const q = (extra.question as Record<string, unknown>) ?? {};
+  const answer = String(extra.answer ?? "");
+  const prompt = [
+    "You are the reporter who just asked a question at a college-football post-game podium.",
+    `Coach ${ctx.coachName} of ${ctx.school} has answered. Decide whether you press him on it.`,
+    "",
+    "Return JSON:",
+    '{"followUp": "your follow-up question, or null if you let it go",',
+    ' "manner": "pressing"|"skeptical"|"curious"|"sympathetic",',
+    ' "replies": [{"label": "3-5 words", "text": "what the coach says, 1-2 sentences",',
+    '   "mediaDelta": int, "fanDelta": int, "lockerDelta": int}]}',
+    "",
+    "RULES:",
+    "- The follow-up MUST engage with what he ACTUALLY just said. Quote his phrase back at him,",
+    "  or press the specific thing he dodged, named, or claimed. A follow-up that would make",
+    "  sense before hearing his answer is a FAILURE — it proves you weren't listening.",
+    "- ONE question. Reporters at a podium do not deliver paragraphs.",
+    "- Stay in your own voice and your outlet's angle, and in the tone you asked with.",
+    "- LET IT GO when he actually answered — return followUp: null. A room where every answer",
+    "  draws a follow-up is a cross-examination, not a press conference. Roughly half should.",
+    "- If he was evasive, hostile, or blamed a player, that is exactly what you press.",
+    "- 3 replies: distinct ways to handle being pressed (double down, concede ground, deflect,",
+    "  turn it back on the room). Deltas are integers about -10..+10, and mediaHeat NEGATIVE",
+    "  calms the room.",
+    "- Invent NO facts. No scores, stats, or injuries that are not in the context below.",
+    "- NAMES ARE THE EASIEST THING TO GET WRONG HERE. A follow-up about a player is natural,",
+    "  and inventing one is a lie the coach cannot correct. Use a player's name ONLY if it",
+    "  appears in the context below, verbatim. Otherwise say the ROLE — \"your quarterback\",",
+    "  \"the freshman back\", \"the guy who fumbled\" — which is how reporters talk anyway.",
+    "",
+    "=== YOUR ORIGINAL QUESTION ===",
+    `${q.reporterName ?? "Reporter"}${q.outlet ? ` (${q.outlet})` : ""} — tone: ${q.tone ?? "neutral"}`,
+    `"${q.question ?? ""}"`,
+    "",
+    "=== WHAT HE JUST SAID (verbatim) ===",
+    `"${answer}"`,
+    "",
+    "Season context:",
+    ctx.userContext,
+  ].join("\n");
+  return { prompt, maxTokens: 800 };
+}
+
 function buildPodiumAnswerSpec(ctx: MediaContext, extra: Extra): PromptSpec {
   const q = (extra.question as Record<string, unknown>) ?? {};
   const answer = String(extra.answer ?? "");
@@ -3960,6 +4018,29 @@ function normalize(
       mediaDelta: typeof parsed.mediaDelta === "number" ? parsed.mediaDelta : 0,
       fanDelta: typeof parsed.fanDelta === "number" ? parsed.fanDelta : 0,
       lockerDelta: typeof parsed.lockerDelta === "number" ? parsed.lockerDelta : 0,
+    };
+  }
+
+  if (kind === "podium-rebuttal") {
+    // A missing or empty follow-up is a legitimate answer, not a failure: the reporter is
+    // allowed to let it go, and the UI simply moves on to the next question.
+    const followUp = typeof parsed?.followUp === "string" ? parsed.followUp.trim() : "";
+    if (!followUp) return { followUp: null, manner: null, replies: [] };
+    const replies = (Array.isArray(parsed?.replies) ? parsed!.replies : [])
+      .filter((r: unknown): r is Record<string, unknown> => !!r && typeof r === "object")
+      .filter((r) => typeof r.text === "string" && (r.text as string).trim())
+      .slice(0, 4)
+      .map((r) => ({
+        label: typeof r.label === "string" && r.label.trim() ? r.label : "Respond",
+        text: String(r.text),
+        mediaDelta: typeof r.mediaDelta === "number" ? r.mediaDelta : 0,
+        fanDelta: typeof r.fanDelta === "number" ? r.fanDelta : 0,
+        lockerDelta: typeof r.lockerDelta === "number" ? r.lockerDelta : 0,
+      }));
+    return {
+      followUp,
+      manner: typeof parsed?.manner === "string" ? parsed.manner : "pressing",
+      replies,
     };
   }
 

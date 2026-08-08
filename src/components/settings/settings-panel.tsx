@@ -544,6 +544,16 @@ export default function SettingsPanel() {
           money or your program points. Nothing about your save is changed while it&apos;s off.
         </p>
         <Toggle
+          checked={settings.presserRebuttals !== false}
+          onChange={(v) => void updateSettings({ presserRebuttals: v })}
+          label="Reporters follow up on your answers (on by default)"
+        />
+        <p className="text-[11px] leading-relaxed text-ink3">
+          A reporter who accepts every answer is furniture. With this on, they press you on what
+          you actually said — about half the time; the rest they let go. Costs one extra, small
+          call per question, so turn it off if you&apos;re watching spend.
+        </p>
+        <Toggle
           checked={settings.presserTakeover !== false}
           onChange={(v) => void updateSettings({ presserTakeover: v })}
           label="Podium takeover — the press conference interrupts you"

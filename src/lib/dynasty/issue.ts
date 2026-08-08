@@ -59,6 +59,9 @@ const NON_CACHEABLE = new Set<string>([
   "coach-backstory",
   "recruit-text",
   "podium-answer",
+  // The follow-up is a reaction to one specific answer, so caching it by week would serve
+  // the press pushing back on something the coach never said.
+  "podium-rebuttal",
 ]);
 
 export function isCacheable(kind: string): boolean {

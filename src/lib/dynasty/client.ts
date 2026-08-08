@@ -850,6 +850,10 @@ export interface DynastySettings {
    * run: the app still runs the drama and moves your hot seat, it just never touches your
    * players' money or your program points. */
   nilWriteToSave: boolean | null;
+  /** Reporters push back on what you actually said at the podium. null = on. Off makes the
+   * press conference one question, one answer, no follow-ups — and costs one fewer call per
+   * question for anyone watching their spend. */
+  presserRebuttals: boolean | null;
   /** Where the forum lives. Overridable so the app can point at a local worker in
    * development, or so a user who does not trust the default host can run their own. */
   forumUrl: string | null;
@@ -898,6 +902,7 @@ export async function loadSettings(): Promise<DynastySettings> {
     hideRecruitOverall: (await store.get<boolean>("hideRecruitOverall")) ?? null,
     consequenceSync: (await store.get<boolean>("consequenceSync")) ?? null,
     nilWriteToSave: (await store.get<boolean>("nilWriteToSave")) ?? null,
+    presserRebuttals: (await store.get<boolean>("presserRebuttals")) ?? null,
     forumUrl: (await store.get<string>("forumUrl")) ?? null,
     forumHandle: (await store.get<string>("forumHandle")) ?? null,
     coachSource: (await store.get<"save" | "custom">("coachSource")) ?? null,

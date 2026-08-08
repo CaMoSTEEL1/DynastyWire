@@ -161,6 +161,7 @@ const EMPTY_SETTINGS: DynastySettings = {
   hideRecruitOverall: null,
   consequenceSync: null,
   nilWriteToSave: null,
+  presserRebuttals: null,
   forumUrl: null,
   forumHandle: null,
   coachSource: null,

@@ -33,6 +33,21 @@ interface PCResult {
   questions: PCQuestion[];
   error?: boolean;
 }
+/** A reply the coach can give to a follow-up, generated alongside it. */
+interface RebuttalReply {
+  label: string;
+  text: string;
+  mediaDelta: number;
+  fanDelta: number;
+  lockerDelta: number;
+}
+interface Rebuttal {
+  /** null when the reporter let it go — a legitimate outcome, not a failure. */
+  followUp: string | null;
+  manner: string | null;
+  replies: RebuttalReply[];
+  error?: boolean;
+}
 interface AnswerRec {
   label: string;
   text: string;
@@ -42,6 +57,11 @@ interface AnswerRec {
   mediaDelta: number;
   fanDelta: number;
   lockerDelta: number;
+  /** The reporter's follow-up, and how the coach handled it. The grader has always read
+   * these two fields; nothing ever produced them until now. */
+  followUp?: string | null;
+  followUpManner?: string | null;
+  followUpAnswer?: string | null;
 }
 interface Grade {
   overall: string;
@@ -89,7 +109,11 @@ function DeltaRow({ rec }: { rec: AnswerRec }) {
 }
 
 export default function PressConferencePage() {
-  const { needsOnboarding, generate, dynastyId, year, week, currentIssueKey } = useDynasty();
+  const { needsOnboarding, generate, dynastyId, year, week, currentIssueKey, settings } = useDynasty();
+  const [pending, setPending] = useState<{ qi: number; rebuttal: Rebuttal } | null>(null);
+  const [pressing, setPressing] = useState(false);
+  const [followDraft, setFollowDraft] = useState("");
+
   const saga = useSaga();
 
   const [questions, setQuestions] = useState<PCQuestion[]>([]);
@@ -172,7 +196,9 @@ export default function PressConferencePage() {
 
   // When the room empties, have the media grade the performance (once).
   useEffect(() => {
-    if (!done || record.grade || grading) return;
+    // `pending` matters: all questions can be answered while a follow-up is still on the
+    // floor, and grading then would judge a transcript missing its last exchange.
+    if (!done || pending || pressing || record.grade || grading) return;
     setGrading(true);
     (async () => {
       try {
@@ -183,6 +209,8 @@ export default function PressConferencePage() {
             selectedTone: a?.label ?? "unanswered",
             responseMode: a?.custom ? "own words" : "choice",
             userAnswer: a?.text ?? "",
+            followUp: a?.followUp ?? null,
+            followUpAnswer: a?.followUpAnswer ?? null,
           };
         });
         const grade = await generate<Grade>("press-conference-grade", { exchanges }, { force: true });
@@ -194,7 +222,77 @@ export default function PressConferencePage() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [done, record.grade]);
+  }, [done, pending, pressing, record.grade]);
+
+  // The follow-up currently on the floor: which question it belongs to, and its content.
+  // Held in component state rather than persisted until it is RESOLVED, so a reload mid-
+  // follow-up drops it rather than resurrecting a question the coach never heard.
+
+  /**
+   * Ask the reporter whether he presses. Called after every answer.
+   *
+   * Failure is silent and so is a decline — both simply mean the room moves on, and neither
+   * is worth an error message at the podium.
+   */
+  const askFollowUp = useCallback(
+    async (qi: number, answerText: string) => {
+      const q = questions[qi];
+      if (!q || settings.presserRebuttals === false) return;
+      setPressing(true);
+      try {
+        const r = await generate<Rebuttal>(
+          "podium-rebuttal",
+          {
+            question: { reporterName: q.reporterName, outlet: q.outlet, question: q.question, tone: q.tone },
+            answer: answerText,
+          },
+          { force: true }
+        );
+        if (r && !r.error && r.followUp) setPending({ qi, rebuttal: r });
+      } catch {
+        /* the room lets it go */
+      } finally {
+        setPressing(false);
+      }
+    },
+    [questions, generate, settings.presserRebuttals]
+  );
+
+  /** Record how he handled being pressed, and clear the floor. */
+  const resolveFollowUp = useCallback(
+    async (text: string | null, deltas?: { mediaDelta: number; fanDelta: number; lockerDelta: number }) => {
+      if (!pending) return;
+      const { qi, rebuttal } = pending;
+      const prev = record.answers[qi];
+      setPending(null);
+      setFollowDraft("");
+      if (!prev) return;
+      if (deltas) {
+        await saga.adjustMeters({
+          mediaHeat: deltas.mediaDelta,
+          fanTrust: deltas.fanDelta,
+          lockerRoom: deltas.lockerDelta,
+        });
+      }
+      await persistRecord({
+        ...record,
+        answers: {
+          ...record.answers,
+          [qi]: {
+            ...prev,
+            followUp: rebuttal.followUp,
+            followUpManner: rebuttal.manner,
+            // Saying nothing IS an answer at a podium, and the grader should see it as one.
+            followUpAnswer: text,
+            mediaDelta: prev.mediaDelta + (deltas?.mediaDelta ?? 0),
+            fanDelta: prev.fanDelta + (deltas?.fanDelta ?? 0),
+            lockerDelta: prev.lockerDelta + (deltas?.lockerDelta ?? 0),
+          },
+        },
+      });
+    },
+    [pending, record, persistRecord, saga]
+  );
 
   const answerScripted = useCallback(
     async (qi: number, a: PCAnswer) => {
@@ -209,11 +307,12 @@ export default function PressConferencePage() {
             [qi]: { label: a.label, text: a.text, custom: false, mediaDelta: a.mediaDelta, fanDelta: a.fanDelta, lockerDelta: a.lockerDelta },
           },
         });
+        void askFollowUp(qi, a.text);
       } finally {
         setAnswering(false);
       }
     },
-    [record, answering, saga, persistRecord]
+    [record, answering, saga, persistRecord, askFollowUp]
   );
 
   const answerCustom = useCallback(
@@ -243,13 +342,14 @@ export default function PressConferencePage() {
             };
         await saga.adjustMeters({ mediaHeat: rec.mediaDelta, fanTrust: rec.fanDelta, lockerRoom: rec.lockerDelta });
         await persistRecord({ ...record, answers: { ...record.answers, [qi]: rec } });
+        void askFollowUp(qi, text);
       } catch (e) {
         setError(e instanceof Error ? e.message : "The room didn't hear you — try again.");
       } finally {
         setAnswering(false);
       }
     },
-    [draft, record, answering, questions, generate, saga, persistRecord]
+    [draft, record, answering, questions, generate, saga, persistRecord, askFollowUp]
   );
 
   const answeredCount = Object.keys(record.answers).length;
@@ -323,13 +423,93 @@ export default function PressConferencePage() {
                           Tomorrow&apos;s headline: <span className="text-ink2">{rec.headline}</span>
                         </p>
                       )}
+                      {rec.followUp && (
+                        <div className="mt-3 border-l-2 border-dw-yellow/50 pl-3">
+                          <span className="font-sans text-[10px] uppercase tracking-wider text-dw-yellow">
+                            {q.reporterName} presses{rec.followUpManner ? ` · ${rec.followUpManner}` : ""}
+                          </span>
+                          <p className="mt-1 font-serif text-sm leading-snug text-ink2">&ldquo;{rec.followUp}&rdquo;</p>
+                          <p className="mt-1.5 font-serif text-sm leading-snug text-ink">
+                            {rec.followUpAnswer
+                              ? `“${rec.followUpAnswer}”`
+                              : "He steps back from the mic."}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
               })}
 
+              {/* He is being pressed. This holds the floor: the next question does not come
+                  up until he has handled the follow-up, because that is how a podium works. */}
+              {pending && (() => {
+                const q = questions[pending.qi];
+                const r = pending.rebuttal;
+                return (
+                  <div className="rounded border border-dw-yellow/50 bg-paper2 p-5 shadow-lg">
+                    <div className="flex items-center justify-between">
+                      <span className="font-sans text-xs text-ink3">
+                        {q?.reporterName ?? "Reporter"} follows up
+                      </span>
+                      {r.manner && (
+                        <span className="rounded border border-dw-yellow/40 px-2 py-0.5 font-sans text-[10px] uppercase tracking-wider text-dw-yellow">
+                          {r.manner}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-3 font-serif text-lg leading-relaxed text-ink">&ldquo;{r.followUp}&rdquo;</p>
+
+                    <div className="mt-4 space-y-2">
+                      {r.replies.map((reply, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => void resolveFollowUp(reply.text, reply)}
+                          className="w-full rounded border border-dw-border bg-paper px-4 py-3 text-left transition-colors hover:border-dw-accent"
+                        >
+                          <span className="font-sans text-[10px] uppercase tracking-wider text-dw-accent">{reply.label}</span>
+                          <p className="mt-1 font-serif text-sm leading-snug text-ink2">&ldquo;{reply.text}&rdquo;</p>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="mt-3">
+                      <textarea
+                        value={followDraft}
+                        onChange={(e) => setFollowDraft(e.target.value)}
+                        rows={2}
+                        placeholder="Or answer him in your own words…"
+                        className="w-full rounded border border-dw-border bg-paper px-3 py-2 font-serif text-sm text-ink outline-none focus:border-dw-accent"
+                      />
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={!followDraft.trim()}
+                          onClick={() => void resolveFollowUp(followDraft.trim())}
+                          className="rounded border border-dw-crimson bg-dw-crimson px-4 py-2 font-sans text-xs uppercase tracking-wider text-paper disabled:opacity-40"
+                        >
+                          Answer him
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void resolveFollowUp(null)}
+                          className="rounded border border-dw-border px-3 py-2 font-sans text-xs uppercase tracking-wider text-ink3 hover:text-ink"
+                        >
+                          Say nothing, next question
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {pressing && !pending && (
+                <p className="font-serif text-sm italic text-ink3">A hand goes back up…</p>
+              )}
+
               {/* The live question */}
-              {!done && currentIndex >= 0 && (() => {
+              {!done && !pending && currentIndex >= 0 && (() => {
                 const q = questions[currentIndex];
                 return (
                   <div className="rounded border border-dw-accent/50 bg-paper2 p-5 shadow-lg">
