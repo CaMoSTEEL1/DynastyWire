@@ -578,6 +578,78 @@ describe("what the booth may say while the game is on", () => {
   it("asks for a call and three posts, not an article", () => {
     const p = live();
     expect(p).toContain('"call"');
-    expect(p).toContain("exactly 3 short posts");
+    expect(p).toContain("posts: exactly 3");
+  });
+
+  it("rotates who is talking, so eleven calls are not eleven of the same call", () => {
+    // Three fixed archetypes reacting to the same scoreboard produce the same three
+    // sentences all night, which a live feed makes painfully obvious.
+    const first = gen.buildSpec("live-call", gen.buildMediaContext(DELTA, SNAPSHOT, opts), {
+      moment: ["m"], board: "State 21, Rival 14", said: [],
+    }).prompt;
+    const later = gen.buildSpec("live-call", gen.buildMediaContext(DELTA, SNAPSHOT, opts), {
+      moment: ["m"], board: "State 21, Rival 14", said: ["a", "b", "c"],
+    }).prompt;
+    const voiceOf = (p: string) => p.match(/in the voice of ([^.]+)\./)?.[1];
+    expect(voiceOf(first)).toBeTruthy();
+    expect(voiceOf(later)).not.toBe(voiceOf(first));
+  });
+
+  it("hands the booth its own transcript so it stops repeating itself", () => {
+    const p = gen.buildSpec("live-call", gen.buildMediaContext(DELTA, SNAPSHOT, opts), {
+      moment: ["m"], board: "State 21, Rival 14",
+      said: ["That is the third time tonight they have answered."],
+    }).prompt;
+    expect(p).toContain("ALREADY SAID ON THIS BROADCAST TONIGHT");
+    expect(p).toContain("third time tonight they have answered");
+  });
+
+  it("reads the scoreboard for tone — a blowout is not a one-score game", () => {
+    const tight = gen.buildSpec("live-call", gen.buildMediaContext(DELTA, SNAPSHOT, opts), {
+      moment: ["m"], board: "State 21, Rival 20", clock: "0:48",
+    }).prompt;
+    const gone = gen.buildSpec("live-call", gen.buildMediaContext(DELTA, SNAPSHOT, opts), {
+      moment: ["m"], board: "State 49, Rival 3", clock: "9:12",
+    }).prompt;
+    expect(tight).toContain("loudest the broadcast gets");
+    expect(gone).toContain("out of hand");
+  });
+});
+
+// ── STORYLINES+ ───────────────────────────────────────────────────────────────
+
+describe("the season's own storylines reach every desk", () => {
+  const ARC = {
+    kind: "two-way" as const,
+    player: "Cam Rivers",
+    position: "WR",
+    classYear: "SO",
+    claim: "Cam Rivers is playing both ways — and producing on both.",
+    evidence: ["Offense: 44 catches for 620 yds, 6 TD", "Defense: 31 tackles, 4 INT"],
+    weight: 160,
+    advancesIf: "the snaps hold on both sides",
+    collapsesIf: "one side of the ball starts eating the other",
+    chapter: "proof" as const,
+    angle: "It has held.",
+    weeksHeld: 4,
+  };
+
+  it("puts the arc in the SHARED context, not on one tab", () => {
+    // A story only the recap knows is a feature. A story the fans, the podium and the
+    // national desk all know is a season.
+    const ctx = gen.buildMediaContext(DELTA, SNAPSHOT, { ...opts, arcs: [ARC] });
+    expect(ctx.userContext).toContain("THE STORIES OF THIS SEASON");
+    expect(ctx.userContext).toContain("[The Proof]");
+    expect(ctx.userContext).toContain("44 catches for 620 yds");
+    expect(ctx.userContext).toContain("held for 4 weeks");
+  });
+
+  it("forbids inventing a rival protagonist", () => {
+    const ctx = gen.buildMediaContext(DELTA, SNAPSHOT, { ...opts, arcs: [ARC] });
+    expect(ctx.userContext).toContain("he is not one of the season's stories");
+  });
+
+  it("says nothing when the season has no story in it", () => {
+    expect(gen.buildMediaContext(DELTA, SNAPSHOT, opts).userContext).not.toContain("THE STORIES OF THIS SEASON");
   });
 });

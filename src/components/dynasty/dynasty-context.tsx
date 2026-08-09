@@ -60,6 +60,8 @@ import {
   type Issue,
 } from "@/lib/dynasty/issue-cache";
 import { playsForResult, type LiveLog } from "@/lib/dynasty/live";
+import { advanceArcs, detectArcs, liveArcs, type LiveArc } from "@/lib/dynasty/arcs";
+import { loadArcMemory, saveArcMemory } from "@/lib/dynasty/arc-store";
 import { isUpdateHeld, useUpdateHold } from "@/lib/dynasty/update-hold";
 
 export type IssueStatus =
@@ -656,6 +658,37 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
     return hit ? { plays: hit.feed.plays, watchedAt: hit.watchedAt } : { plays: [], watchedAt: 0 };
   }, [dynastyId, year, week, delta, snapshot]);
 
+  /**
+   * STORYLINES+ — this season's player arcs, and how long each has held.
+   *
+   * Detected fresh from the roster and the archive every time, then folded into what we
+   * already knew so a story that has survived six weeks reads differently from one that
+   * turned up on Saturday. The memory is written here rather than in a background pass
+   * because this is the moment we know the week is real: something is being generated for it.
+   */
+  const seasonArcs = useCallback(async (): Promise<LiveArc[]> => {
+    if (!snapshot?.userTeam) return [];
+    try {
+      const archive = await loadArchive(dynastyId).catch(() => []);
+      const found = detectArcs({
+        roster,
+        archive,
+        awards: snapshot.world?.awards ?? [],
+        team: snapshot.userTeam.name,
+      });
+      const prior = await loadArcMemory(dynastyId).catch(() => []);
+      const memory = advanceArcs(prior, found, { year, week });
+      // Fire and forget: a failed write costs the chapter numbers, never the story.
+      void saveArcMemory(dynastyId, memory).catch(() => {});
+      return liveArcs(found, memory, {
+        ranked: snapshot.userTeam.rankMedia != null,
+        seasonOver: week >= 18,
+      });
+    } catch {
+      return [];
+    }
+  }, [snapshot, roster, dynastyId, year, week]);
+
   const generate = useCallback(
     async <T,>(
       kind: string,
@@ -715,6 +748,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
         // rides into every generator the same way suspensions do, as locked fact. The
         // current season is filtered out downstream, in history.ts.
         const priorSeasons = await loadArchive(dynastyId).catch(() => []);
+        const arcs = await seasonArcs();
         // The national desk names players on OTHER programs, so it needs their rosters —
         // and each one is a full re-parse of a ~10MB save, far too slow to load eagerly for
         // every team. Fetch only the handful the desk will actually cover, only when it
@@ -747,6 +781,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
           backstory,
           suspensions,
           priorSeasons,
+          arcs,
         });
         // Don't cache a generator's own error payload — let the next visit retry.
         const isErr = !!(
@@ -786,6 +821,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       settings.userTeam,
       effCoach,
       watchedPlays,
+      seasonArcs,
     ]
   );
 

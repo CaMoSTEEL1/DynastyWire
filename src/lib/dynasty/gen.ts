@@ -21,6 +21,7 @@ import {
 import { recordBaseline, rowFromReport } from "./baseline";
 import { buildGroundTruth, validateGeneration } from "./validator";
 import { lockedBlock, recapBrief, recapFacts } from "./recap";
+import { arcsBlock, type LiveArc } from "./arcs";
 import { nationalBrief, nationalFacts } from "./national";
 import { coachResumeBlock, jobSecurityLine, priorSeasons, priorSeasonsBlock } from "./history";
 import { postseasonBlock, postseasonOutlook, weekShape, type PostseasonOutlook } from "./postseason";
@@ -248,6 +249,9 @@ export interface GenerateOpts {
    * the archive checkpoints it continuously and feeding it back would let this week's own
    * result be written as history. */
   priorSeasons?: SeasonRecord[];
+  /** STORYLINES+ — the season's detected player arcs, with the chapter each is in. See
+   * arcs.ts. Shared context, so every desk tells the same story about the same man. */
+  arcs?: LiveArc[];
 }
 
 export interface ActiveSuspension {
@@ -952,6 +956,19 @@ export function buildMediaContext(
   const stakesBlock = postseasonBlock(outlook);
   if (stakesBlock) {
     parts.push(stakesBlock);
+    parts.push("");
+  }
+
+  // STORYLINES+ — the one or two players this season is actually ABOUT, detected from the
+  // roster and the archive rather than imagined. It goes in the SHARED context because that
+  // is what makes it a storyline instead of an article: the recap leads with him, the fans
+  // argue about him, the press conference asks about him, and the national desk decides
+  // whether he is their business yet. A story that only exists on one tab is a feature; a
+  // story every desk knows is a season.
+  const arcs = Array.isArray(opts.arcs) ? (opts.arcs as LiveArc[]) : [];
+  const arcBlock = arcsBlock(arcs);
+  if (arcBlock) {
+    parts.push(arcBlock);
     parts.push("");
   }
 
@@ -2045,8 +2062,43 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
       const board = typeof extra.board === "string" ? extra.board : "";
       const clock = typeof extra.clock === "string" ? extra.clock : "";
       const opponent = ctx.opponent ?? "the opponent";
+
+      // What the booth has ALREADY said tonight. Without this every call is generated blind,
+      // and a model asked the same question eleven times answers it eleven similar ways —
+      // which is exactly what a live feed makes obvious. It is also how a broadcast actually
+      // works: the second touchdown is interesting BECAUSE of the first one.
+      const said = Array.isArray(extra.said)
+        ? (extra.said as unknown[]).filter((x): x is string => typeof x === "string").slice(-6)
+        : [];
+
+      // Who is on the mic and who is posting, rotated per call. Three fixed archetypes for a
+      // whole game is the other half of the sameness: the same three voices reacting to the
+      // same scoreboard produce the same three sentences.
+      const VOICES = [
+        "the play-by-play man — clean, urgent, the score and the situation",
+        "the colour analyst — an ex-coach who explains what it costs the other side",
+        "the sideline reporter — what the bench just did, what the crowd just did",
+        "the studio host cutting in — this game against the rest of the day",
+        "the veteran radio voice — plainer, drier, older, unimpressed by most things",
+      ];
+      const CROWD = [
+        { who: "a fan with no composure left", note: "all caps, superstitious, personally aggrieved" },
+        { who: "a rival fan watching the scorebug", note: "scoreboard talk, enjoying it, condescending" },
+        { who: "an analyst account", note: "one number and what it means, no adjectives" },
+        { who: "a burner account for a fan of a THIRD team", note: "here for the playoff implications only" },
+        { who: "a beat writer live-posting", note: "flat, factual, a detail nobody else noticed" },
+        { who: "a fan who has already been wrong tonight", note: "walking back an earlier take" },
+        { who: "an alum in a group chat register", note: "gallows humour, references the program's history of this" },
+        { who: "a bettor", note: "cares about the margin, not the win" },
+      ];
+      // Deterministic per call rather than random: the same moment always reads the same way,
+      // and the rotation still moves every time because the count does.
+      const turn = said.length;
+      const voice = VOICES[turn % VOICES.length];
+      const crowd = [0, 1, 2].map((i) => CROWD[(turn * 3 + i) % CROWD.length]);
+
       return {
-        maxTokens: 700,
+        maxTokens: 800,
         prompt: [
           "You are on the air. This game is being played RIGHT NOW and you are watching the",
           "scoreboard, not a replay. Respond as JSON with this exact schema:",
@@ -2058,13 +2110,22 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
           "WHAT JUST HAPPENED:",
           ...moment.map((m) => `  ${m}`),
           "",
-          "- call: one or two sentences of booth commentary on THIS moment. What it does to the",
-          "  game — the lead, the margin, the momentum, the pressure, what has to happen next.",
-          "  Live and specific to the scoreboard in front of you. Not a summary of the season.",
-          "- posts: exactly 3 short posts as this is happening — one fan, one rival, one analyst.",
-          "  Fans are watching the same scoreboard you are: raw, in the moment, ALL CAPS when it",
-          "  earns it. Rivals talk scoreboard. The analyst says something about what the number",
-          "  means, not what the film showed.",
+          said.length ? "ALREADY SAID ON THIS BROADCAST TONIGHT — do not repeat any of it, and do" : "",
+          said.length ? "not re-explain a situation you have already explained. BUILD on it:" : "",
+          ...said.map((line) => `  - ${line}`),
+          said.length ? "" : "",
+          `- call: ONE or two sentences, in the voice of ${voice}.`,
+          "  React to THIS moment and what it does to the game — the lead, the margin, who is in",
+          "  trouble now, what has to happen next. Never open the same way twice in a night: no",
+          "  stock \"and there it is\" / \"how about that\" openers, no restating the score as a",
+          "  sentence when it is already on the screen beside you.",
+          "- posts: exactly 3, each from a DIFFERENT one of these people, in this order:",
+          ...crowd.map((c, i) => `    ${i + 1}. ${c.who} — ${c.note}`),
+          "  Write how people actually post: fragments, no capital letters or all of them, a",
+          "  reply to nobody, a stat with no sentence around it. Length should vary — one of the",
+          "  three should be under six words.",
+          "",
+          gameStateNote(board, clock, ctx),
           "",
           "WHAT YOU CANNOT SEE — this is a hard limit, not a style note:",
           "- You saw a SCOREBOARD change. You did NOT see the play. Never say who scored, how",
@@ -2790,6 +2851,37 @@ function buildGradeSpec(ctx: MediaContext, extra: Extra): PromptSpec {
     '{"overall": "B+", "composure": 78, "authenticity": 82, "deflectionSkill": 65, "headlineManagement": 71, "summary": "...", "bestMoment": "...", "worstMoment": "..."}',
   ].join("\n");
   return { prompt, maxTokens: 1024 };
+}
+
+/**
+ * What KIND of game this is right now, which is the difference between a booth that sounds
+ * alive and one that reads the same at 35-0 as at 21-20.
+ *
+ * Derived from the live scoreboard rather than the save, because the save is a week behind
+ * during a game. Deliberately coarse: the model is good at tone once it is told the stakes,
+ * and a precise instruction here would flatten it back out.
+ */
+function gameStateNote(board: string, clock: string, ctx: MediaContext): string {
+  const nums = board.match(/\d+/g)?.map(Number) ?? [];
+  if (nums.length < 2) return "";
+  const margin = Math.abs(nums[0] - nums[1]);
+  const late = /^[0-4]:/.test(clock);
+  if (margin === 0) return "TONE: tied. Everything matters and nobody is in control. Do not pick a winner.";
+  if (margin <= 8 && late) {
+    return (
+      "TONE: one score, and the clock is nearly gone. This is the loudest the broadcast gets " +
+      "all night — short sentences, present tense, no perspective-taking about the season."
+    );
+  }
+  if (margin <= 8) return "TONE: a one-score game. Tense, not decided. Nobody is safe.";
+  if (margin >= 25) {
+    return (
+      `TONE: it is out of hand. The interest is no longer who wins — it is what this means for ` +
+      `${ctx.school}, who is still in the game and why, and how the losing side is handling it. ` +
+      "Do not manufacture drama that is not on the field."
+    );
+  }
+  return "TONE: two scores. Live but not frantic — the game has a shape now, so talk about the shape.";
 }
 
 function buildStorylinesSpec(ctx: MediaContext, extra: Extra): PromptSpec {

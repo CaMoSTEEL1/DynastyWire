@@ -145,6 +145,9 @@ export default function LivePage() {
       setBlind(0);
       gate.current = freshConfirmer();
       pending.current = [];
+      spokenLines.current = [];
+      spoken.current = 0;
+      setSpokenCount(0);
       setNote(reason);
       try {
         await writeTab(
@@ -171,6 +174,9 @@ export default function LivePage() {
   const pending = useRef<LiveEvent[]>([]);
   const lastCall = useRef(0);
   const spoken = useRef(0);
+  // The night's transcript, for the booth's own memory. Trimmed at the call site rather than
+  // here so a long game keeps its history for the feed while the prompt stays short.
+  const spokenLines = useRef<string[]>([]);
   const [spokenCount, setSpokenCount] = useState(0);
   // The polling loop closes over `tick`, so anything `tick` reads from STATE rebuilds the
   // loop every time it changes. "Is the booth busy" changes twice per call, which would tear
@@ -186,9 +192,13 @@ export default function LivePage() {
       talkingRef.current = true;
       setTalking(true);
       try {
+        // Everything the booth has already said tonight goes back in. Generated blind, the
+        // same question eleven times gets eleven similar answers — which a live feed makes
+        // painfully obvious — and a broadcast is supposed to build on itself anyway.
+        const said = spokenLines.current.slice(-6);
         const res = await generate<{ call?: string; posts?: LiveCall["posts"] }>(
           "live-call",
-          { moment, board, clock },
+          { moment, board, clock, said },
           { force: true }
         );
         const call = typeof res?.call === "string" ? res.call.trim() : "";
@@ -196,6 +206,7 @@ export default function LivePage() {
         if (!call && !posts.length) return;
         spoken.current += 1;
         setSpokenCount(spoken.current);
+        if (call) spokenLines.current.push(call);
         setCalls((c) => [{ call, posts, at: clock || null, quarter: null, seen: Date.now() }, ...c].slice(0, 30));
       } catch (e) {
         // A failed call is not a failed game. The feed keeps reading either way.

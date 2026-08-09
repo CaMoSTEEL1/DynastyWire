@@ -9,7 +9,7 @@
 // saved. Pure helpers + a LazyStore; no React.
 
 import { LazyStore } from "@tauri-apps/plugin-store";
-import type { DynastySnapshot, RosterPlayer, RosterStats } from "./client";
+import type { DynastySnapshot, LeagueAward, RosterPlayer, RosterStats } from "./client";
 import type { LedgerEntry } from "./saga";
 
 const store = new LazyStore("dynastywire.archive.json");
@@ -65,6 +65,13 @@ export interface SeasonRecord {
   /** Who won the national title that year (winner of the last postseason game), if known. */
   champion: string | null;
   leaders: SeasonLeader[];
+  /**
+   * Who won what, league-wide, that season. Archived because it is the ONLY way to see a
+   * player win the same award twice — the save holds this year's winners and forgets last
+   * year's, so without keeping them here "back-to-back" is unknowable. Undefined on records
+   * written before this field existed; every reader must treat it as optional.
+   */
+  awards?: LeagueAward[];
   roster: SeasonPlayerLine[];
   games: SeasonGame[];
   ledger: { headline: string; decision: string; outcome: string; week: number }[];
@@ -156,6 +163,9 @@ export function buildSeasonRecord(
   if (gamesPlayed === 0) return null; // nothing to archive yet
 
   const lines = roster.map(playerLine);
+  // League-wide, not just ours: a repeat winner elsewhere is still a story the national desk
+  // should know, and filtering here would make it unrecoverable later.
+  const awards = snapshot.world?.awards ?? [];
 
   // User's games this year, with opponent names resolved through the teams map.
   const row = snapshot.userTeamRow;
@@ -206,6 +216,7 @@ export function buildSeasonRecord(
     result,
     champion,
     leaders: computeLeaders(lines),
+    awards,
     roster: lines,
     games,
     ledger: ledger
