@@ -397,6 +397,58 @@ export function playsForResult(
   return { plays: lines, complete };
 }
 
+// ── When the booth speaks ──────────────────────────────────────────────────────
+
+/** A call and the reaction to it, as shown in the feed. */
+export interface LiveCall {
+  call: string;
+  posts: { handle: string; displayName: string; type: string; body: string }[];
+  at: string | null;
+  quarter: string | null;
+  seen: number;
+}
+
+/**
+ * How long the booth stays quiet after speaking.
+ *
+ * Not a rate limit for its own sake — a broadcast one. Scores arrive in bursts (a touchdown,
+ * then its extra point, then the kickoff, sometimes inside ten seconds) and a booth that
+ * files a fresh take on each of them talks over itself. One call covering the burst reads the
+ * way a real one sounds, and costs a third as much.
+ */
+export const CALL_COOLDOWN_MS = 25_000;
+
+/** Bounded so a long game cannot quietly run up a bill while the user is looking at the TV. */
+export const CALLS_PER_GAME = 40;
+
+/**
+ * Which events are worth interrupting for.
+ *
+ * Scores and quarters. NOT downs — a booth that says something on every first down is the
+ * reason nobody leaves live commentary on, and it is also where the money goes: downs are an
+ * order of magnitude more frequent than scores.
+ */
+export function worthCalling(events: LiveEvent[]): boolean {
+  return events.some((e) => SCORING.has(e.kind) || e.kind === "quarter");
+}
+
+/** The moment, as the booth is told about it: what changed, newest last. */
+export function momentLines(events: LiveEvent[]): string[] {
+  return events
+    .filter((e) => SCORING.has(e.kind) || e.kind === "quarter" || e.kind === "situation")
+    .sort((a, b) => a.seen - b.seen)
+    .map((e) => {
+      const when = [e.quarter, e.at].filter(Boolean).join(" ");
+      return when ? `${when} — ${e.text}` : e.text;
+    });
+}
+
+/** The scoreboard as a sentence, for a prompt that must not be handed a data structure. */
+export function boardLine(state: LiveState | null): string {
+  if (!state || state.scores.length < 2) return "";
+  return state.scores.map(([t, v]) => `${t} ${v}`).join(", ");
+}
+
 // ── The bridge ─────────────────────────────────────────────────────────────────
 
 export interface CropRegion {

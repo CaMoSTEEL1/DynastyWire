@@ -164,6 +164,7 @@ const EMPTY_SETTINGS: DynastySettings = {
   consequenceSync: null,
   nilWriteToSave: null,
   liveCrop: null,
+  liveCommentary: null,
   presserRebuttals: null,
   forumUrl: null,
   forumHandle: null,

@@ -2025,6 +2025,65 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
       };
     }
 
+    // The booth, talking while the game is still on.
+    //
+    // Every other surface writes about a game that is OVER, from a save that knows the box
+    // score. This one writes from a scoreboard, mid-play, and that changes what may be said
+    // more than it changes the voice. What the app can see is: the score, the quarter, the
+    // clock, the down. It cannot see who did anything.
+    //
+    // That gap is the whole design problem. A radio call naming the back who scored is the
+    // single most natural sentence in football and it would be invented every time, so the
+    // rule here is narrow and absolute: a player may be named for what he has done THIS
+    // SEASON or what you expect him to do next, never as the man who did the thing that just
+    // happened. Fans, conveniently, react to scoreboards rather than film — which is why the
+    // posts carry most of the life in this surface.
+    case "live-call": {
+      const moment = Array.isArray(extra.moment)
+        ? (extra.moment as unknown[]).filter((m): m is string => typeof m === "string")
+        : [];
+      const board = typeof extra.board === "string" ? extra.board : "";
+      const clock = typeof extra.clock === "string" ? extra.clock : "";
+      const opponent = ctx.opponent ?? "the opponent";
+      return {
+        maxTokens: 700,
+        prompt: [
+          "You are on the air. This game is being played RIGHT NOW and you are watching the",
+          "scoreboard, not a replay. Respond as JSON with this exact schema:",
+          '{"call": "string", "posts": [{"handle": "string", "displayName": "string", "type": "fan"|"rival"|"analyst", "body": "string"}]}',
+          "",
+          `GAME: ${ctx.school} vs ${opponent}.`,
+          board ? `SCOREBOARD RIGHT NOW: ${board}${clock ? ` · ${clock}` : ""}` : "",
+          "",
+          "WHAT JUST HAPPENED:",
+          ...moment.map((m) => `  ${m}`),
+          "",
+          "- call: one or two sentences of booth commentary on THIS moment. What it does to the",
+          "  game — the lead, the margin, the momentum, the pressure, what has to happen next.",
+          "  Live and specific to the scoreboard in front of you. Not a summary of the season.",
+          "- posts: exactly 3 short posts as this is happening — one fan, one rival, one analyst.",
+          "  Fans are watching the same scoreboard you are: raw, in the moment, ALL CAPS when it",
+          "  earns it. Rivals talk scoreboard. The analyst says something about what the number",
+          "  means, not what the film showed.",
+          "",
+          "WHAT YOU CANNOT SEE — this is a hard limit, not a style note:",
+          "- You saw a SCOREBOARD change. You did NOT see the play. Never say who scored, how",
+          "  far it went, what kind of play it was, or who made the stop. No 'found the end zone',",
+          "  no 'broke free', no '40-yard strike'. There is no film here to describe.",
+          "- A player may be named ONLY for what he has done this SEASON, or for what you EXPECT",
+          "  of him next. Never as the man who did the thing that just happened.",
+          "- Do not invent a drive, a penalty, an injury, a turnover, or a crowd moment.",
+          "- Do not state a final score or call the game over unless the clock says it is.",
+          "- NO HTML entities. Plain text only.",
+          "",
+          "Context (season background — use it sparingly, the game is what matters):",
+          ctx.userContext,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      };
+    }
+
     case "social": {
       const sits = Array.isArray(extra.situations) ? (extra.situations as Record<string, unknown>[]) : [];
       const sitBlock = sits.length
@@ -3871,6 +3930,24 @@ function normalize(
       : [];
     return { highlights: hl, error: parsed == null };
   }
+  if (kind === "live-call") {
+    // Rendered live, next to a scoreboard the user is watching. A post missing its handle
+    // renders as "@undefined" over the top of a touchdown, so the shape is settled here
+    // rather than defended at four call sites in the view.
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    const posts = (Array.isArray(parsed?.posts) ? (parsed!.posts as Record<string, unknown>[]) : [])
+      .filter((p) => p && str(p.body))
+      .map((p) => ({
+        handle: str(p.handle) || "fan",
+        displayName: str(p.displayName) || "A fan",
+        type: str(p.type) || "fan",
+        body: str(p.body),
+      }))
+      .slice(0, 4);
+    const call = str(parsed?.call);
+    return call || posts.length ? { call, posts } : { error: true };
+  }
+
   if (kind === "social") {
     const posts = Array.isArray(parsed?.posts) ? (parsed!.posts as Record<string, unknown>[]) : [];
     const normalized = posts

@@ -15,7 +15,10 @@ import { cn } from "@/lib/utils";
 import { SectionHeader } from "@/components/ui/section-header";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
 import {
+  CALLS_PER_GAME,
+  CALL_COOLDOWN_MS,
   DEFAULT_CROP,
+  boardLine,
   calibrate,
   confirm,
   deriveEvents,
@@ -23,16 +26,19 @@ import {
   gameRunning,
   guessCrop,
   mergeLog,
+  momentLines,
   readBar,
   scoringPlays,
+  worthCalling,
   type Confirmer,
   type CropRegion,
+  type LiveCall,
   type LiveEvent,
   type LiveLog,
   type LiveState,
 } from "@/lib/dynasty/live";
 import { issueKey, readTab, writeTab } from "@/lib/dynasty/issue-cache";
-import { Radio, Crosshair, Loader2, Play, Square } from "lucide-react";
+import { Radio, Crosshair, Loader2, Mic, Play, Square } from "lucide-react";
 
 const KIND_STYLE: Record<string, string> = {
   touchdown: "border-dw-green/50 text-dw-green",
@@ -47,7 +53,7 @@ const KIND_STYLE: Record<string, string> = {
 };
 
 export default function LivePage() {
-  const { snapshot, settings, updateSettings, dynastyId, year, week } = useDynasty();
+  const { snapshot, settings, updateSettings, dynastyId, year, week, generate, hasApiKey } = useDynasty();
 
   const [running, setRunning] = useState<boolean | null>(null);
   const [watching, setWatching] = useState(false);
@@ -60,7 +66,6 @@ export default function LivePage() {
   // The gate lives in a ref: it must survive re-renders without causing them, and a stale
   // closure here would mean confirming against a state from two seconds ago.
   const gate = useRef<Confirmer>(freshConfirmer());
-  const stop = useRef(false);
 
   const crop: CropRegion = useMemo(() => {
     const s = settings.liveCrop;
@@ -121,6 +126,54 @@ export default function LivePage() {
     [weekKey, dynastyId, year, week]
   );
 
+  // ── The booth's voice ────────────────────────────────────────────────────────
+  // Off unless asked for. Every other surface in the app spends once a week, on a click the
+  // user made; this one spends while they are looking at the television.
+  const commentaryOn = settings.liveCommentary === true;
+  const [calls, setCalls] = useState<LiveCall[]>([]);
+  const [talking, setTalking] = useState(false);
+  // Moments that happened during the cooldown, waiting to go in with the next call rather
+  // than being lost — a touchdown and its extra point are one thing to talk about.
+  const pending = useRef<LiveEvent[]>([]);
+  const lastCall = useRef(0);
+  const spoken = useRef(0);
+  const [spokenCount, setSpokenCount] = useState(0);
+  // The polling loop closes over `tick`, so anything `tick` reads from STATE rebuilds the
+  // loop every time it changes. "Is the booth busy" changes twice per call, which would tear
+  // the loop down and stand it back up mid-game — so the loop reads it from a ref and the
+  // state copy exists only to move the spinner.
+  const talkingRef = useRef(false);
+
+  const speak = useCallback(
+    async (board: string, clock: string) => {
+      const moment = momentLines(pending.current);
+      pending.current = [];
+      if (!moment.length) return;
+      talkingRef.current = true;
+      setTalking(true);
+      try {
+        const res = await generate<{ call?: string; posts?: LiveCall["posts"] }>(
+          "live-call",
+          { moment, board, clock },
+          { force: true }
+        );
+        const call = typeof res?.call === "string" ? res.call.trim() : "";
+        const posts = Array.isArray(res?.posts) ? res.posts.filter((p) => p?.body) : [];
+        if (!call && !posts.length) return;
+        spoken.current += 1;
+        setSpokenCount(spoken.current);
+        setCalls((c) => [{ call, posts, at: clock || null, quarter: null, seen: Date.now() }, ...c].slice(0, 30));
+      } catch (e) {
+        // A failed call is not a failed game. The feed keeps reading either way.
+        setErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        talkingRef.current = false;
+        setTalking(false);
+      }
+    },
+    [generate]
+  );
+
   const tick = useCallback(async () => {
     try {
       const read = await readBar(crop, teams);
@@ -135,24 +188,41 @@ export default function LivePage() {
         if (fresh.length) {
           setEvents((e) => [...fresh, ...e].slice(0, 80));
           if (fresh.some((f) => f.total != null)) void record(fresh, settled.scores);
+          if (commentaryOn && hasApiKey && worthCalling(fresh)) pending.current.push(...fresh);
         }
+      }
+      // Checked every tick rather than at the moment of the score, so a burst that lands
+      // inside the cooldown still gets covered once the booth is free.
+      const now = Date.now();
+      if (
+        pending.current.length &&
+        !talkingRef.current &&
+        spoken.current < CALLS_PER_GAME &&
+        now - lastCall.current >= CALL_COOLDOWN_MS
+      ) {
+        lastCall.current = now;
+        void speak(boardLine(settled), settled.clock ?? "");
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
-  }, [crop, teams, record]);
+  }, [crop, teams, record, commentaryOn, hasApiKey, speak]);
 
   useEffect(() => {
     if (!watching) return;
-    stop.current = false;
+    // Per-run, deliberately not a ref shared across runs. `tick` is rebuilt whenever the crop
+    // or the team list changes, and a shared flag gets set true by the cleanup and false again
+    // by the next run — so a tick still in flight from the OLD run wakes up, sees "not
+    // stopped", and schedules its own timer. Two loops, double the reads, forever.
+    let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const loop = async () => {
-      if (stop.current) return;
+      if (cancelled) return;
       await tick();
-      if (!stop.current) timer = setTimeout(() => void loop(), 1000);
+      if (!cancelled) timer = setTimeout(() => void loop(), 1000);
     };
     void loop();
-    return () => { stop.current = true; clearTimeout(timer!); };
+    return () => { cancelled = true; clearTimeout(timer!); };
   }, [watching, tick]);
 
   const findBar = useCallback(async () => {
@@ -174,6 +244,13 @@ export default function LivePage() {
   }, [updateSettings]);
 
   const scores = state?.scores ?? [];
+
+  // One feed, newest first. The booth's call belongs next to the score it is about, not in a
+  // second column the user has to watch separately.
+  const feed = useMemo(
+    () => [...calls, ...events].sort((a, b) => b.seen - a.seen),
+    [calls, events]
+  );
 
   return (
     <div>
@@ -214,7 +291,35 @@ export default function LivePage() {
           {calibrating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Crosshair className="h-3.5 w-3.5" />}
           Find the score bar
         </button>
+
+        <button
+          type="button"
+          onClick={() => void updateSettings({ liveCommentary: !commentaryOn })}
+          disabled={!hasApiKey}
+          className={cn(
+            "inline-flex items-center gap-2 rounded border px-3 py-2 font-sans text-xs uppercase tracking-wider disabled:opacity-40",
+            commentaryOn
+              ? "border-dw-accent2/50 text-dw-accent2"
+              : "border-dw-border text-ink3 hover:text-ink"
+          )}
+          title={hasApiKey ? undefined : "Needs an API key — the booth is written, not canned."}
+        >
+          {talking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mic className="h-3.5 w-3.5" />}
+          Commentary {commentaryOn ? "on" : "off"}
+          {commentaryOn && spokenCount > 0 && (
+            <span className="normal-case tracking-normal opacity-60">· {spokenCount}</span>
+          )}
+        </button>
       </div>
+
+      {commentaryOn && (
+        <p className="mt-3 font-sans text-[11px] leading-relaxed text-ink3">
+          The booth talks on scores and quarter changes only — never on downs — and waits{" "}
+          {Math.round(CALL_COOLDOWN_MS / 1000)}s between calls, so a touchdown and its extra point
+          are one thought. Capped at {CALLS_PER_GAME} a game. It writes from the scoreboard, which
+          means it never knows who scored, and is not allowed to guess.
+        </p>
+      )}
 
       {err && (
         <p className="mt-4 rounded border border-dw-red/30 bg-dw-red/10 px-4 py-3 font-serif text-sm text-dw-red">
@@ -266,24 +371,48 @@ export default function LivePage() {
         <p className="mb-2 font-sans text-[10px] uppercase tracking-[0.3em] text-ink3">
           The feed{blind > 0 && <span className="ml-2 normal-case tracking-normal">· {blind} frames between plays</span>}
         </p>
-        {events.length === 0 ? (
+        {feed.length === 0 ? (
           <p className="rounded border border-dw-border bg-paper2 px-4 py-6 text-center font-serif text-sm text-ink3">
             Nothing yet. Every event here has been read twice before it is believed, so a
             flickered frame never becomes a touchdown.
           </p>
         ) : (
           <ul className="space-y-1.5">
-            {events.map((e, i) => (
-              <li
-                key={`${e.seen}-${i}`}
-                className={cn("rounded border bg-paper2 px-4 py-2", KIND_STYLE[e.kind] ?? "border-dw-border text-ink2")}
-              >
-                <span className="font-sans text-[10px] uppercase tracking-wider opacity-70">
-                  {e.quarter ?? ""} {e.at ?? ""}
-                </span>
-                <p className="font-serif text-[15px] text-ink">{e.text}</p>
-              </li>
-            ))}
+            {feed.map((item, i) =>
+              "call" in item ? (
+                <li
+                  key={`call-${item.seen}-${i}`}
+                  className="rounded border border-dw-accent2/40 bg-paper2 px-4 py-3"
+                >
+                  <span className="font-sans text-[10px] uppercase tracking-[0.25em] text-dw-accent2">
+                    In the booth {item.at ? `· ${item.at}` : ""}
+                  </span>
+                  {item.call && <p className="mt-1 font-serif text-[17px] leading-snug text-ink">{item.call}</p>}
+                  {item.posts.length > 0 && (
+                    <ul className="mt-3 space-y-2 border-l border-dw-border pl-3">
+                      {item.posts.map((p, j) => (
+                        <li key={`${p.handle}-${j}`}>
+                          <span className="font-sans text-[10px] uppercase tracking-wider text-ink3">
+                            {p.displayName} <span className="normal-case tracking-normal">@{p.handle}</span>
+                          </span>
+                          <p className="font-serif text-[14px] leading-snug text-ink2">{p.body}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ) : (
+                <li
+                  key={`ev-${item.seen}-${i}`}
+                  className={cn("rounded border bg-paper2 px-4 py-2", KIND_STYLE[item.kind] ?? "border-dw-border text-ink2")}
+                >
+                  <span className="font-sans text-[10px] uppercase tracking-wider opacity-70">
+                    {item.quarter ?? ""} {item.at ?? ""}
+                  </span>
+                  <p className="font-serif text-[15px] text-ink">{item.text}</p>
+                </li>
+              )
+            )}
           </ul>
         )}
       </div>

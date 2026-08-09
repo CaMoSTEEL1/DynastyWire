@@ -543,3 +543,41 @@ describe("what a watched game gives the newsroom", () => {
     expect(p).toContain("62-yard touchdown run (Kellen Marsh)");
   });
 });
+
+// ── The booth, on the air ──────────────────────────────────────────────────────
+// Every other surface writes about a finished game from a save that knows the box score.
+// This one writes from a scoreboard, mid-play, and the gap between "the score changed" and
+// "here is what happened" is exactly where a model invents. These pin the boundary.
+
+describe("what the booth may say while the game is on", () => {
+  const live = () =>
+    gen.buildSpec("live-call", gen.buildMediaContext(DELTA, SNAPSHOT, opts), {
+      moment: ["2nd 8:42 — TOUCHDOWN, extra point good — State 21"],
+      board: "State 21, Rival 14",
+      clock: "8:42",
+    }).prompt;
+
+  it("is told what changed and what the scoreboard reads", () => {
+    const p = live();
+    expect(p).toContain("TOUCHDOWN, extra point good — State 21");
+    expect(p).toContain("State 21, Rival 14");
+  });
+
+  it("forbids describing a play it never saw", () => {
+    // A radio call naming the back who scored is the most natural sentence in football and
+    // would be invented every single time.
+    const p = live();
+    expect(p).toContain("You did NOT see the play");
+    expect(p).toContain("Never say who scored");
+  });
+
+  it("allows a player's season, never a player's touchdown", () => {
+    expect(live()).toContain("Never as the man who did the thing that just happened");
+  });
+
+  it("asks for a call and three posts, not an article", () => {
+    const p = live();
+    expect(p).toContain('"call"');
+    expect(p).toContain("exactly 3 short posts");
+  });
+});

@@ -12,10 +12,13 @@ import {
   freshConfirmer,
   deriveEvents,
   guessCrop,
+  boardLine,
   mergeLog,
+  momentLines,
   playsForResult,
   scoringPlays,
   stateKey,
+  worthCalling,
   type LiveEvent,
   type LiveLog,
   type LiveState,
@@ -387,5 +390,44 @@ describe("keeping the week's log", () => {
   it("keeps only scoring, not every down of the game", () => {
     const down: LiveEvent = { kind: "down", text: "3rd & 4", team: null, at: "8:00", quarter: "2nd", seen: 5 };
     expect(mergeLog(null, [down, play("Tennessee", 3, 6)], [], 0).events).toHaveLength(1);
+  });
+});
+
+describe("when the booth is worth interrupting for", () => {
+  const ev = (kind: LiveEvent["kind"], over: Partial<LiveEvent> = {}): LiveEvent => ({
+    kind,
+    text: kind,
+    team: null,
+    at: "8:42",
+    quarter: "2nd",
+    seen: 1,
+    ...over,
+  });
+
+  it("speaks on a score and on a new quarter", () => {
+    expect(worthCalling([ev("touchdown")])).toBe(true);
+    expect(worthCalling([ev("field-goal")])).toBe(true);
+    expect(worthCalling([ev("quarter")])).toBe(true);
+  });
+
+  it("stays quiet on downs", () => {
+    // A booth that talks on every first down is why nobody leaves live commentary on, and
+    // downs outnumber scores by an order of magnitude — this is the cost control too.
+    expect(worthCalling([ev("down"), ev("first-down"), ev("situation")])).toBe(false);
+  });
+
+  it("tells the booth what changed, oldest first, with the game clock on it", () => {
+    const lines = momentLines([
+      ev("quarter", { text: "Start of the 2nd", seen: 20 }),
+      ev("touchdown", { text: "TOUCHDOWN — State 7", seen: 10, quarter: "1st", at: "0:12" }),
+      ev("down", { text: "3rd & 4", seen: 15 }),
+    ]);
+    expect(lines).toEqual(["1st 0:12 — TOUCHDOWN — State 7", "2nd 8:42 — Start of the 2nd"]);
+  });
+
+  it("renders the scoreboard as a sentence, and refuses a half-read one", () => {
+    expect(boardLine(state({ scores: [["Utah", 7], ["Kansas State", 14]] }))).toBe("Utah 7, Kansas State 14");
+    expect(boardLine(state({ scores: [["Utah", 7]] }))).toBe("");
+    expect(boardLine(null)).toBe("");
   });
 });

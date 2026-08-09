@@ -444,6 +444,11 @@ export const KIND_CONFIG: Record<string, KindConfig> = {
   "press-conference": cfg(),
   shows: cfg(),
   social: cfg({}, { skipFields: ["likes", "reposts"] }),
+  // Called off a live scoreboard, mid-game. The score check compares against the SAVE, which
+  // during a game still holds last week — so it would flag every correct call as wrong. The
+  // live read is the authority here, and the parser already gates it far harder than prose
+  // validation could. Everything else is still checked.
+  "live-call": cfg({ scores: false, records: false, ranks: false }),
   rankings: cfg(),
 
   // Already deterministic — validated anyway, since a locked table can still be
