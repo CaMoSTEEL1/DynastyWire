@@ -319,44 +319,119 @@ fn snap_to_known(name: &str, known: &[String]) -> Option<String> {
     best.map(|(_, k)| k.clone())
 }
 
-/// Team names and scores, read as "[rank] TEAM [score]" pairs from the part of the bar before
-/// the quarter. The leading rank is why a naive "capitals then a number" match glued both
-/// teams into one name.
-fn find_scores(t: &str, known: &[String]) -> Vec<(String, i32)> {
-    let head = ORDINALS
+fn is_num(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
+}
+
+fn is_dash(s: &str) -> bool {
+    matches!(s, "-" | "\u{2013}" | "\u{2014}")
+}
+
+/// "13-2" — a team's record, which the bar prints under its name. Never a score.
+fn is_record(s: &str) -> bool {
+    let mut parts = s.split(|c: char| c == '-' || c == '\u{2013}' || c == '\u{2014}');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(a), Some(b), None) => is_num(a) && is_num(b),
+        _ => false,
+    }
+}
+
+enum Tok {
+    Name(String, i32),
+    Num(i32, i32),
+    Record,
+    Junk,
+}
+
+/// Team names and scores from the part of the bar left of the quarter box.
+///
+/// The bar reads `[rank] TEAM [record] SCORE` twice over, and every one of those four fields is
+/// a number or looks like one, so the whole job is deciding which number is the score:
+///
+/// - The RECORD is thrown away outright. It is the only field with a shape of its own ("13-2"),
+///   and it sits between the name and the score, so leaving it in made every team's record its
+///   score — a 14-14 game read as 13-15.
+/// - The RANK is only there for ranked teams, so it cannot be positionally assumed. What gives
+///   it away is that it hugs the name it belongs to: a rank badge sits a few pixels left of its
+///   team, while a score sits far right of its own team and far left of the next one. So a
+///   number is read as a rank only when the following name starts at less than half the
+///   distance back to the previous name. That is scale-free, which matters because the same
+///   rule has to hold at 1080p and 4K.
+///
+/// When every word arrives at the same x — the unit tests, and any caller without positions —
+/// the geometry test is skipped and the older "first number after a name" rule stands.
+fn find_scores(words: &[LiveWord], known: &[String]) -> Vec<(String, i32)> {
+    let head: Vec<LiveWord> = words
         .iter()
-        .filter_map(|o| t.find(o))
-        .min()
-        .map(|i| &t[..i])
-        .unwrap_or(t);
+        .map(|w| LiveWord { text: normalise(w.text.trim()), x: w.x, y: w.y })
+        .take_while(|w| !ORDINALS.iter().any(|o| w.text.starts_with(o)))
+        .collect();
+    let positional = head.iter().any(|w| w.x != head.first().map_or(0, |f| f.x));
+
+    let mut toks: Vec<Tok> = Vec::new();
+    let mut i = 0;
+    while i < head.len() {
+        let t = head[i].text.as_str();
+        let x = head[i].x;
+        // A record arrives as one token as often as three.
+        if is_num(t)
+            && i + 2 < head.len()
+            && is_dash(head[i + 1].text.trim())
+            && is_num(head[i + 2].text.trim())
+        {
+            toks.push(Tok::Record);
+            i += 3;
+            continue;
+        }
+        i += 1;
+        if is_record(t) {
+            toks.push(Tok::Record);
+        } else if is_num(t) {
+            toks.push(Tok::Num(t.parse().unwrap_or(0), x));
+        } else if !t.is_empty() && t.chars().all(|c| c.is_ascii_uppercase() || c == '\'' || c == '.') {
+            toks.push(Tok::Name(t.to_string(), x));
+        } else {
+            toks.push(Tok::Junk);
+        }
+    }
 
     let mut out: Vec<(String, i32)> = Vec::new();
     let mut name = String::new();
-    let mut num = String::new();
-    for c in head.chars().chain(std::iter::once(' ')) {
-        if c.is_ascii_digit() {
-            num.push(c);
-        } else {
-            if !num.is_empty() {
-                let trimmed = name.trim();
-                if trimmed.len() >= 3 {
-                    if let Ok(score) = num.parse::<i32>() {
-                        // An unknown name is still reported, so a save we could not match
-                        // does not silently lose its scoreboard.
-                        let resolved = snap_to_known(trimmed, known).unwrap_or_else(|| trimmed.to_string());
-                        out.push((resolved, score));
-                        name.clear();
-                    }
-                } else {
-                    // A number with no team before it is the rank badge; drop it.
-                    name.clear();
-                }
-                num.clear();
-            }
-            if c.is_ascii_uppercase() || c == ' ' || c == '.' || c == '\'' {
-                name.push(c);
-            } else {
+    let mut name_x: Option<i32> = None;
+    for (i, tok) in toks.iter().enumerate() {
+        match tok {
+            Tok::Record => {}
+            Tok::Junk => {
                 name.clear();
+                name_x = None;
+            }
+            Tok::Name(w, x) => {
+                if !name.is_empty() {
+                    name.push(' ');
+                }
+                name.push_str(w);
+                name_x = Some(*x);
+            }
+            Tok::Num(v, x) => {
+                let next_name_x = match toks.get(i + 1) {
+                    Some(Tok::Name(_, nx)) => Some(*nx),
+                    _ => None,
+                };
+                let rank = positional
+                    && match (next_name_x, name_x) {
+                        (Some(nx), Some(lx)) => (nx - x) * 2 < x - lx,
+                        (Some(_), None) => true,
+                        _ => false,
+                    };
+                if !rank && name.trim().len() >= 3 {
+                    // An unknown name is still reported, so a save we could not match does not
+                    // silently lose its scoreboard.
+                    let trimmed = name.trim();
+                    let resolved = snap_to_known(trimmed, known).unwrap_or_else(|| trimmed.to_string());
+                    out.push((resolved, *v));
+                }
+                name.clear();
+                name_x = None;
             }
         }
     }
@@ -375,7 +450,9 @@ fn find_situation(t: &str) -> Option<String> {
 pub fn parse(words: &[LiveWord], known_teams: &[String]) -> LiveState {
     let raw = words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
     let t = normalise(&raw);
-    let scores = find_scores(&t, known_teams);
+    // Scores are read from the WORDS, not the joined line: where a number sits is what tells a
+    // rank badge apart from a score, and joining throws that away.
+    let scores = find_scores(words, known_teams);
     let clock = find_clock(&t);
     let down = find_down(&t);
     // Nothing recognisable means no bar was on screen, which is the normal case between plays.
@@ -496,6 +573,55 @@ mod tests {
         assert!(!parse2(&words("KICKOFF CHOOSE NORMAL SQUIB")).on_screen);
     }
 
+    /// Words laid out the way the bar actually lays them out, so the geometry rules are under
+    /// test rather than skipped. Pixel figures are measured off a real 1080p capture.
+    fn placed(spans: &[(&str, i32)]) -> Vec<LiveWord> {
+        spans
+            .iter()
+            .flat_map(|(s, x0)| {
+                let mut x = *x0;
+                s.split_whitespace()
+                    .map(|t| {
+                        let w = LiveWord { text: t.to_string(), x, y: 950 };
+                        x += 24 * t.len() as i32;
+                        w
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_record_is_not_a_score() {
+        // 14-14 read as 13-15, for a whole quarter, because "13-2" and "15-0" sit between each
+        // team's name and its score. Verbatim from a live Tennessee/Kansas State game.
+        let s = parse2(&words("II UTAH 13-2 14 1 KANSAS STATE 15-0 21 2nd 6:15 4th"));
+        assert_eq!(s.scores, vec![("Utah".to_string(), 14), ("Kansas State".to_string(), 21)]);
+    }
+
+    #[test]
+    fn a_record_split_into_three_words_is_still_a_record() {
+        let s = parse2(&words("UTAH 13 - 2 14 1 KANSAS STATE 15 - 0 21 2nd 6:15"));
+        assert_eq!(s.scores, vec![("Utah".to_string(), 14), ("Kansas State".to_string(), 21)]);
+    }
+
+    #[test]
+    fn a_rank_badge_is_told_from_a_score_by_where_it_sits() {
+        // The nastiest read of the drive: Utah's own score was missed, leaving Kansas State's
+        // #1 badge as the next number after UTAH. Textually it is indistinguishable from a
+        // score; on screen it is nowhere near Utah and touching Kansas State.
+        let s = parse2(&placed(&[("UTAH", 100), ("13-2", 300), ("1", 655), ("KANSAS STATE", 680), ("15-0", 900), ("21", 1030)]));
+        assert_eq!(s.scores, vec![("Kansas State".to_string(), 21)]);
+    }
+
+    #[test]
+    fn two_unranked_teams_still_get_their_scores() {
+        // No rank badges at all, so a number before a team name IS that team's score. The
+        // geometry has to allow this or most of the country's matchups read as nil.
+        let s = parse2(&placed(&[("UTAH", 100), ("8-3", 300), ("14", 470), ("KANSAS STATE", 680), ("9-2", 900), ("21", 1030)]));
+        assert_eq!(s.scores, vec![("Utah".to_string(), 14), ("Kansas State".to_string(), 21)]);
+    }
+
     #[test]
     fn survives_outright_junk() {
         let s = parse2(&words("@ 4 UTAH O e I KANSAS STATE 14-0 1st 1 2:00 KICKOFF"));
@@ -511,15 +637,75 @@ mod tests {
 ///   cargo test --lib live_against_a_real_game -- --ignored --nocapture
 #[cfg(test)]
 mod live_check {
+    /// Dump the captured crop to a BMP so a human (or a model) can LOOK at what the OCR engine
+    /// was handed. Faster than reasoning about why a digit went missing.
+    ///
+    ///   cargo test --lib dump_the_crop -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dump_the_crop() {
+        let hwnd = super::game_window().expect("College Football 27 is not running");
+        let out = std::env::var("DW_CROP_OUT").unwrap_or_else(|_| "crop.bmp".into());
+        let rect: Vec<i32> = std::env::var("DW_CROP")
+            .unwrap_or_else(|_| "360,925,1450,70".into())
+            .split(',')
+            .map(|s| s.trim().parse().unwrap())
+            .collect();
+        let scale: i32 = std::env::var("DW_SCALE").ok().and_then(|s| s.parse().ok()).unwrap_or(3);
+        let f = super::capture(hwnd, (rect[0], rect[1], rect[2], rect[3]), scale).expect("capture");
+
+        // 32-bit BGRA, negative height = top-down, which is how capture() hands it over.
+        let mut bmp = Vec::with_capacity(54 + f.pixels.len());
+        let size = 54u32 + f.pixels.len() as u32;
+        bmp.extend_from_slice(b"BM");
+        bmp.extend_from_slice(&size.to_le_bytes());
+        bmp.extend_from_slice(&[0; 4]);
+        bmp.extend_from_slice(&54u32.to_le_bytes());
+        bmp.extend_from_slice(&40u32.to_le_bytes());
+        bmp.extend_from_slice(&f.width.to_le_bytes());
+        bmp.extend_from_slice(&(-f.height).to_le_bytes());
+        bmp.extend_from_slice(&1u16.to_le_bytes());
+        bmp.extend_from_slice(&32u16.to_le_bytes());
+        bmp.extend_from_slice(&[0; 24]);
+        bmp.extend_from_slice(&f.pixels);
+        std::fs::write(&out, &bmp).expect("write bmp");
+        println!("wrote {out} ({}x{})", f.width, f.height);
+    }
+
+    /// Every word on the screen with the pixel it sits at, for working out where the score
+    /// actually lives when a read comes back with team names but no numbers.
+    ///
+    ///   cargo test --lib dump_the_screen_words -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dump_the_screen_words() {
+        assert!(super::live_game_running(), "College Football 27 is not running");
+        for pass in 1..=3 {
+            match super::live_calibrate() {
+                Ok(words) => {
+                    println!("--- pass {pass} ---");
+                    let mut band: Vec<_> = words.iter().filter(|w| w.y > 700).collect();
+                    band.sort_by_key(|w| (w.y / 20, w.x));
+                    for w in band {
+                        println!("  ({:>5},{:>5})  {}", w.x, w.y, w.text);
+                    }
+                }
+                Err(e) => println!("pass {pass}: {e}"),
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+        }
+    }
+
     #[test]
     #[ignore]
     fn live_against_a_real_game() {
         assert!(super::live_game_running(), "College Football 27 is not running");
-        for i in 1..=6 {
-            let teams: Vec<String> = ["Utah", "Kansas State"].iter().map(|s| s.to_string()).collect();
-            // Wider than the prototype: the down-and-distance sits at the right edge and the
-            // narrower crop was cutting the distance off, reading "1st &" with no number.
-            match super::live_read(360, 925, 1450, 70, Some(teams)) {
+        for i in 1..=40 {
+            let teams: Vec<String> = ["Tennessee", "Kansas State"].iter().map(|s| s.to_string()).collect();
+            // Keep in step with DEFAULT_CROP in lib/dynasty/live.ts. Wider than the prototype
+            // because down-and-distance sits at the right edge, and TALLER because the score
+            // numerals are double-height and a clipped digit is dropped, not misread.
+            match super::live_read(350, 930, 1400, 90, Some(teams)) {
                 Ok(s) => println!(
                     "{i}: on_screen={} qtr={:?} clock={:?} down={:?} scores={:?}\n   raw: {}",
                     s.on_screen, s.quarter, s.clock, s.down, s.scores, s.raw

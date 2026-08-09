@@ -237,8 +237,16 @@ export interface CropRegion {
   h: number;
 }
 
-/** Sensible at 1920x1080. Anything else calibrates once and stores its own. */
-export const DEFAULT_CROP: CropRegion = { x: 360, y: 925, w: 1450, h: 70 };
+/**
+ * Sensible at 1920x1080. Anything else calibrates once and stores its own.
+ *
+ * The height matters more than it looks. The two team names are set in a modest font and the
+ * SCORES are set about twice as large, so a crop tall enough to read "KANSAS STATE" cleanly can
+ * still slice the bottom off "14" — and a half-height numeral is not misread, it is dropped
+ * entirely. That is exactly what a 70px window did: every read came back with both teams and
+ * no score at all, for a whole quarter, on a 14-14 game. Err tall.
+ */
+export const DEFAULT_CROP: CropRegion = { x: 350, y: 930, w: 1400, h: 90 };
 
 export function gameRunning(): Promise<boolean> {
   return invoke<boolean>("live_game_running").catch(() => false);
@@ -274,11 +282,15 @@ export function guessCrop(words: LiveWord[]): CropRegion | null {
   const xs = band.map((w) => w.x);
   const ys = band.map((w) => w.y);
   const left = Math.max(0, Math.min(...xs) - 40);
-  const top = Math.max(0, Math.min(...ys) - 20);
+  const top = Math.max(0, Math.min(...ys) - 25);
   return {
     x: left,
     y: top,
     w: Math.max(...xs) - left + 240,
-    h: Math.max(...ys) - top + 60,
+    // Generous at the bottom on purpose. The words we can see are the small ones — the clock,
+    // the down — and the scores are set roughly twice their size, so a box that just contains
+    // the words we found will clip the numerals we most need. A clipped digit is not misread,
+    // it is dropped, and a scoreboard read with no numbers on it is worse than none.
+    h: Math.max(...ys) - top + 85,
   };
 }

@@ -188,6 +188,9 @@ describe("finding the score bar", () => {
     expect(crop!.y).toBeLessThan(950);
     expect(crop!.x).toBeLessThan(420);
     expect(crop!.w).toBeGreaterThan(1000);
+    // Tall enough for the score numerals, which are about twice the height of the clock we
+    // located the bar by and are the reason a snug box reads a game as scoreless.
+    expect(crop!.h).toBeGreaterThanOrEqual(85);
   });
 
   it("declines rather than guessing when no clock is on screen", () => {
