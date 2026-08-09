@@ -974,6 +974,26 @@ export function buildMediaContext(
         `${usScore}-${oppScore} (${location}).`
     );
     parts.push(`Result: ${won ? "WIN" : "LOSS"} · Margin: ${Math.abs((usScore ?? 0) - (oppScore ?? 0))}`);
+
+    // The user WATCHED this game and the app read the scoreboard off the screen as it played.
+    // This is the only per-play knowledge that exists anywhere in the app: the save is written
+    // once per week advance, so it has the final score and the quarter totals and nothing
+    // about the order any of it happened in. It goes in the SHARED context so the social feed
+    // reacts to the actual go-ahead score and the press conference asks about the actual
+    // fourth-quarter collapse — not just the front page.
+    const watched = Array.isArray(opts.extra?.watchedPlays)
+      ? (opts.extra!.watchedPlays as unknown[]).filter((p): p is string => typeof p === "string")
+      : [];
+    if (watched.length) {
+      parts.push("");
+      parts.push("SCORING, AS IT HAPPENED (read live off the user's own screen — all of this is true):");
+      for (const line of watched) parts.push(`  ${line}`);
+      parts.push(
+        "Use it. Reference WHEN scores happened and in what order. Do not contradict it, and do " +
+          "not invent plays to fill the gaps between them — who scored, how far, and on what down " +
+          "are NOT known and must stay unstated or be written as unnamed action."
+      );
+    }
     parts.push("");
   }
 
@@ -1328,9 +1348,18 @@ function rosterLine(ctx: MediaContext): string {
 /** The deterministic recap core, assembled from the structured context. v2: code works out
  * how the game turned and who could have decided it; the model writes the story around it. */
 function recapFactsFor(ctx: MediaContext, extra: Extra) {
-  const highlights = Array.isArray(extra.highlights)
+  const attached = Array.isArray(extra.highlights)
     ? (extra.highlights as { text: string; player?: string | null }[])
     : [];
+  // A watched game and attached screenshots are two independent records of the same afternoon,
+  // and neither is a reason to discard the other. The watched scoring leads: it is a timeline
+  // and the screenshots are a bag of plays, so it reads first.
+  const watched = Array.isArray(extra.watchedPlays)
+    ? (extra.watchedPlays as unknown[])
+        .filter((p): p is string => typeof p === "string")
+        .map((text) => ({ text, player: null }))
+    : [];
+  const highlights = [...watched, ...attached];
   return recapFacts({
     result: ctx.delta?.userResult ?? null,
     userTeam: ctx.school,

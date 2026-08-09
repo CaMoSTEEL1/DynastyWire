@@ -12,7 +12,12 @@ import {
   freshConfirmer,
   deriveEvents,
   guessCrop,
+  mergeLog,
+  playsForResult,
+  scoringPlays,
   stateKey,
+  type LiveEvent,
+  type LiveLog,
   type LiveState,
   type LiveWord,
 } from "./live";
@@ -249,5 +254,138 @@ describe("the two bugs a real drive exposed", () => {
     // Real capture: "2nd & inches".
     const e = deriveEvents(state({ down: "1st & 10" }), state({ down: "2nd & inches" }));
     expect(e[0].text).toBe("2nd & inches");
+  });
+});
+
+// ── Handing a watched game to the newsroom ─────────────────────────────────────
+
+describe("what the newsroom is told about a watched game", () => {
+  const play = (over: Partial<LiveEvent>): LiveEvent => ({
+    kind: "touchdown",
+    text: "",
+    team: "Kansas State",
+    at: "8:42",
+    quarter: "2nd",
+    seen: 1000,
+    total: 7,
+    phrase: "touchdown, extra point good",
+    ...over,
+  });
+
+  const log = (events: LiveEvent[], final: [string, number][]): LiveLog => ({
+    events,
+    final,
+    updatedAt: 0,
+  });
+
+  const result = (homeScore: number, awayScore: number) => ({
+    home: "Kansas State",
+    away: "Tennessee",
+    homeScore,
+    awayScore,
+  });
+
+  it("folds an extra point into the touchdown it followed", () => {
+    // The bar updates 0 → 7 sometimes and 0 → 6 → 1 other times, depending on where the read
+    // lands relative to the kick. Two events is two drives to anyone reading it.
+    const merged = scoringPlays([
+      play({ kind: "touchdown", total: 6, phrase: "touchdown", seen: 1000 }),
+      play({ kind: "pat", total: 7, phrase: "extra point", seen: 4000 }),
+    ]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].total).toBe(7);
+    expect(merged[0].phrase).toBe("touchdown, extra point good");
+  });
+
+  it("keeps a genuinely separate extra point that arrives much later", () => {
+    const separate = scoringPlays([
+      play({ kind: "touchdown", total: 6, seen: 1000 }),
+      play({ kind: "pat", total: 7, seen: 400_000 }),
+    ]);
+    expect(separate).toHaveLength(2);
+  });
+
+  it("states when each score happened and what the game stood at", () => {
+    const { plays, complete } = playsForResult(
+      log(
+        [
+          play({ quarter: "1st", at: "9:12", total: 7, seen: 1 }),
+          play({ team: "Tennessee", quarter: "2nd", at: "3:30", total: 3, phrase: "field goal", seen: 2 }),
+        ],
+        [["Kansas State", 7], ["Tennessee", 3]]
+      ),
+      result(7, 3)
+    );
+    expect(complete).toBe(true);
+    expect(plays[0]).toBe("1st quarter, 9:12 — Kansas State touchdown, extra point good. Kansas State 7, Tennessee 0.");
+    expect(plays[1]).toBe("2nd quarter, 3:30 — Tennessee field goal. Kansas State 7, Tennessee 3.");
+  });
+
+  it("says so when the watch ended before the game did", () => {
+    // Otherwise three scoring plays read as the complete list, and a 24-21 game gets written
+    // as though it were 7-3.
+    const { plays, complete } = playsForResult(
+      log([play({ total: 7 })], [["Kansas State", 7], ["Tennessee", 0]]),
+      result(24, 21)
+    );
+    expect(complete).toBe(false);
+    expect(plays).toHaveLength(2);
+    expect(plays[1]).toMatch(/NOT the complete list/);
+  });
+
+  it("refuses a log whose teams are not this game's teams", () => {
+    // A log left over from a different game is the failure that puts a score nobody recognises
+    // into the locked facts. Dropped whole rather than partly believed.
+    const stale = log([play({ total: 7 })], [["Utah", 7], ["Ohio State", 0]]);
+    expect(playsForResult(stale, result(24, 21)).plays).toEqual([]);
+  });
+
+  it("refuses a log that says a team scored more than it finished with", () => {
+    const impossible = log([play({ total: 28 })], [["Kansas State", 28], ["Tennessee", 0]]);
+    expect(playsForResult(impossible, result(21, 14)).plays).toEqual([]);
+  });
+
+  it("offers nothing when there is no result to reconcile against", () => {
+    expect(playsForResult(log([play({})], [["Kansas State", 7], ["Tennessee", 0]]), null).plays).toEqual([]);
+    expect(playsForResult(null, result(7, 0)).plays).toEqual([]);
+  });
+});
+
+describe("keeping the week's log", () => {
+  const play = (team: string, total: number, seen: number): LiveEvent => ({
+    kind: "touchdown",
+    text: "",
+    team,
+    at: "8:42",
+    quarter: "2nd",
+    seen,
+    total,
+    phrase: "touchdown, extra point good",
+  });
+
+  it("appends a second sitting to the first", () => {
+    const first = mergeLog(null, [play("Kansas State", 7, 1)], [["Kansas State", 7], ["Tennessee", 0]], 0);
+    const both = mergeLog(first, [play("Tennessee", 7, 2)], [["Kansas State", 7], ["Tennessee", 7]], 0);
+    expect(both.events).toHaveLength(2);
+    expect(both.final).toEqual([["Kansas State", 7], ["Tennessee", 7]]);
+  });
+
+  it("does not score the same touchdown twice when a game is replayed", () => {
+    // A restart puts the board back to nil and every score happens again. A team can only
+    // reach a given total once, so that is the identity.
+    const first = mergeLog(null, [play("Kansas State", 7, 1)], [["Kansas State", 7], ["Tennessee", 0]], 0);
+    const again = mergeLog(first, [play("Kansas State", 7, 900)], [["Kansas State", 7], ["Tennessee", 0]], 0);
+    expect(again.events).toHaveLength(1);
+    expect(again.events[0].seen).toBe(1);
+  });
+
+  it("keeps the last board it knew when a sitting ends with nothing readable", () => {
+    const first = mergeLog(null, [play("Kansas State", 7, 1)], [["Kansas State", 7], ["Tennessee", 0]], 0);
+    expect(mergeLog(first, [], [], 0).final).toEqual([["Kansas State", 7], ["Tennessee", 0]]);
+  });
+
+  it("keeps only scoring, not every down of the game", () => {
+    const down: LiveEvent = { kind: "down", text: "3rd & 4", team: null, at: "8:00", quarter: "2nd", seen: 5 };
+    expect(mergeLog(null, [down, play("Tennessee", 3, 6)], [], 0).events).toHaveLength(1);
   });
 });

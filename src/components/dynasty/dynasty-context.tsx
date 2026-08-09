@@ -52,12 +52,14 @@ import {
   tabCacheKey,
 } from "@/lib/dynasty/issue";
 import {
+  issueKey,
   loadIssue,
   loadIssueLive,
   readTab,
   writeTab,
   type Issue,
 } from "@/lib/dynasty/issue-cache";
+import { playsForResult, type LiveLog } from "@/lib/dynasty/live";
 import { isUpdateHeld, useUpdateHold } from "@/lib/dynasty/update-hold";
 
 export type IssueStatus =
@@ -615,6 +617,31 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
   // the background issue pass is running) so the user is never charged twice.
   const inflight = useRef<Map<string, Promise<unknown>>>(new Map());
 
+  /**
+   * The scoring of a game the user WATCHED, if it reconciles with what the save recorded.
+   *
+   * The save is written once per week advance: it carries the final score and the points each
+   * team scored per quarter, and nothing about the order any of it happened in. The booth read
+   * that off the screen while it happened, so this is the only per-play knowledge in the app.
+   *
+   * Both this week and the last are checked. The booth writes under the week the SAVE said it
+   * was during the game, and some users export before advancing and some after. Trying both is
+   * safe by construction — a log that is not about this result is rejected on its teams, so the
+   * wrong one cannot be picked up.
+   */
+  const watchedPlays = useCallback(async (): Promise<{ plays: string[]; watchedAt: number }> => {
+    const result = delta?.userResult ?? null;
+    if (!result) return { plays: [], watchedAt: 0 };
+    const tried = await Promise.all(
+      [week, week - 1].map(async (w) => {
+        const rec = await readTab<LiveLog>(issueKey(dynastyId, year, w), "live-log").catch(() => null);
+        return { feed: playsForResult(rec?.data, result), watchedAt: rec?.data?.updatedAt ?? 0 };
+      })
+    );
+    const hit = tried.find((t) => t.feed.plays.length);
+    return hit ? { plays: hit.feed.plays, watchedAt: hit.watchedAt } : { plays: [], watchedAt: 0 };
+  }, [dynastyId, year, week, delta]);
+
   const generate = useCallback(
     async <T,>(
       kind: string,
@@ -627,10 +654,15 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       const cacheable = !!currentIssueKey && isCacheable(kind);
       const tKey = tabCacheKey(kind, extra);
       const force = opts?.force === true;
+      const watched = await watchedPlays().catch(() => ({ plays: [], watchedAt: 0 }));
 
       if (cacheable && !force) {
         const cached = await readTab<T>(currentIssueKey!, tKey);
-        if (cached?.status === "ready" && cached.data != null) return cached.data;
+        // A section written BEFORE the game was watched knows nothing about how it was won,
+        // and serving it from cache is how the live feed silently never reaches the paper.
+        // One rewrite per section per game, and only when there is genuinely more to say.
+        const predatesTheGame = watched.plays.length > 0 && (cached?.generatedAt ?? 0) < watched.watchedAt;
+        if (cached?.status === "ready" && cached.data != null && !predatesTheGame) return cached.data;
       }
 
       const flightKey = `${currentIssueKey ?? currentSavePath}::${tKey}`;
@@ -674,6 +706,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
         // every team. Fetch only the handful the desk will actually cover, only when it
         // generates, and let it fall back to role-only for anything that fails.
         const extraWithRosters = { ...cleanExtra(extra) };
+        if (watched.plays.length) extraWithRosters.watchedPlays = watched.plays;
         if (kind === "national-wire" && currentSavePath) {
           const wanted = teamsToLoad({ snapshot, delta, userTeam: settings.userTeam ?? null });
           const loaded: Record<string, RosterPlayer[]> = {};
@@ -738,6 +771,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
       llm,
       settings.userTeam,
       effCoach,
+      watchedPlays,
     ]
   );
 

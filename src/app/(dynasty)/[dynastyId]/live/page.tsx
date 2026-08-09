@@ -22,12 +22,16 @@ import {
   freshConfirmer,
   gameRunning,
   guessCrop,
+  mergeLog,
   readBar,
+  scoringPlays,
   type Confirmer,
   type CropRegion,
   type LiveEvent,
+  type LiveLog,
   type LiveState,
 } from "@/lib/dynasty/live";
+import { issueKey, readTab, writeTab } from "@/lib/dynasty/issue-cache";
 import { Radio, Crosshair, Loader2, Play, Square } from "lucide-react";
 
 const KIND_STYLE: Record<string, string> = {
@@ -43,7 +47,7 @@ const KIND_STYLE: Record<string, string> = {
 };
 
 export default function LivePage() {
-  const { snapshot, settings, updateSettings } = useDynasty();
+  const { snapshot, settings, updateSettings, dynastyId, year, week } = useDynasty();
 
   const [running, setRunning] = useState<boolean | null>(null);
   const [watching, setWatching] = useState(false);
@@ -77,6 +81,46 @@ export default function LivePage() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
+  // What the newsroom will read. The event feed on screen is capped and newest-first because
+  // that is what a person wants to look at; the log is neither, because it is a record.
+  const weekKey = useMemo(() => issueKey(dynastyId, year, week), [dynastyId, year, week]);
+  const log = useRef<LiveLog | null>(null);
+  const [logged, setLogged] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    log.current = null;
+    setLogged(0);
+    void readTab<LiveLog>(weekKey, "live-log").then((rec) => {
+      if (cancelled || !rec?.data) return;
+      log.current = rec.data;
+      setLogged(scoringPlays(rec.data.events).length);
+    });
+    return () => { cancelled = true; };
+  }, [weekKey]);
+
+  // Written on every scoring play rather than at the end of the game, because there is no end
+  // of the game to hook: users quit to the menu, alt-tab away, and close the app mid-drive.
+  const record = useCallback(
+    async (fresh: LiveEvent[], board: [string, number][]) => {
+      const next = mergeLog(log.current, fresh, board);
+      if (next.events.length === (log.current?.events.length ?? 0) && log.current) return;
+      log.current = next;
+      setLogged(scoringPlays(next.events).length);
+      try {
+        await writeTab(
+          weekKey,
+          "live-log",
+          { status: "ready", data: next, error: null, generatedAt: Date.now() },
+          { dynastyId, year, week }
+        );
+      } catch {
+        /* the feed on screen is still right; a lost write costs the newsroom, not the user */
+      }
+    },
+    [weekKey, dynastyId, year, week]
+  );
+
   const tick = useCallback(async () => {
     try {
       const read = await readBar(crop, teams);
@@ -88,12 +132,15 @@ export default function LivePage() {
       setState(settled);
       if (previous) {
         const fresh = deriveEvents(previous, settled);
-        if (fresh.length) setEvents((e) => [...fresh, ...e].slice(0, 80));
+        if (fresh.length) {
+          setEvents((e) => [...fresh, ...e].slice(0, 80));
+          if (fresh.some((f) => f.total != null)) void record(fresh, settled.scores);
+        }
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
-  }, [crop, teams]);
+  }, [crop, teams, record]);
 
   useEffect(() => {
     if (!watching) return;
@@ -239,6 +286,26 @@ export default function LivePage() {
             ))}
           </ul>
         )}
+      </div>
+
+      <div className="mt-6 rounded border border-dw-border/60 bg-paper2 px-4 py-3">
+        <p className="font-sans text-[10px] uppercase tracking-[0.3em] text-ink3">Filed to the newsroom</p>
+        <p className="mt-1.5 font-serif text-[15px] text-ink2">
+          {logged === 0 ? (
+            <>
+              Nothing yet. Every score the booth confirms is written to this week&apos;s issue, and
+              this week&apos;s coverage is built around it — when it happened, in what order, and what
+              the game stood at. The save carries none of that.
+            </>
+          ) : (
+            <>
+              <span className="text-ink">{logged}</span> scoring {logged === 1 ? "play" : "plays"} recorded
+              for Week {week}. The front page, the social feed and the press conference all write
+              around them. Anything the booth did not see is left to the save — it never fills a
+              gap with a guess.
+            </>
+          )}
+        </p>
       </div>
 
       {state?.raw && (

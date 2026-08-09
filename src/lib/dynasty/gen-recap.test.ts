@@ -493,3 +493,53 @@ describe("year-over-year memory reaches the surfaces", () => {
     expect(history).not.toContain("2029: 6-2");
   });
 });
+
+// ── A game the user watched ────────────────────────────────────────────────────
+// The booth reads the scoreboard off the screen while the game is played. That is the only
+// per-play knowledge anywhere in the app: the save is written once per week advance, so it
+// carries the final score and the quarter totals and nothing about the ORDER any of it
+// happened in. These tests pin that it reaches the desks, and reaches them as locked fact.
+
+describe("what a watched game gives the newsroom", () => {
+  const WATCHED = [
+    "1st quarter, 9:12 — State touchdown, extra point good. State 7, Rival 0.",
+    "4th quarter, 0:48 — State field goal. State 10, Rival 7.",
+  ];
+  const watchedOpts = { ...opts, extra: { watchedPlays: WATCHED } };
+
+  it("puts the scoring order in the SHARED context, so it is not just the front page", () => {
+    // Social reacting to the actual go-ahead kick, and the press conference asking about the
+    // actual last minute, is the whole reason this is shared rather than recap-only.
+    const ctx = gen.buildMediaContext(DELTA, SNAPSHOT, watchedOpts);
+    expect(ctx.userContext).toContain("SCORING, AS IT HAPPENED");
+    expect(ctx.userContext).toContain("4th quarter, 0:48 — State field goal");
+  });
+
+  it("forbids filling the gaps between the scores it knows about", () => {
+    // The scoreboard says a touchdown happened. It does not say who scored it, and a writer
+    // handed a timeline will happily supply a name.
+    const ctx = gen.buildMediaContext(DELTA, SNAPSHOT, watchedOpts);
+    expect(ctx.userContext).toContain("do not invent plays to fill the gaps");
+  });
+
+  it("says nothing at all about live scoring when no game was watched", () => {
+    expect(gen.buildMediaContext(DELTA, SNAPSHOT, opts).userContext).not.toContain("AS IT HAPPENED");
+  });
+
+  it("hands the recap the same plays as verified facts it may not contradict", () => {
+    const p = gen.buildSpec("recap-lead", gen.buildMediaContext(DELTA, SNAPSHOT, watchedOpts), {
+      watchedPlays: WATCHED,
+    }).prompt;
+    expect(p).toContain("REALLY happened in THIS game");
+    expect(p).toContain("4th quarter, 0:48 — State field goal");
+  });
+
+  it("keeps attached screenshots alongside a watched game rather than choosing between them", () => {
+    const p = gen.buildSpec("recap-lead", gen.buildMediaContext(DELTA, SNAPSHOT, watchedOpts), {
+      watchedPlays: WATCHED,
+      highlights: [{ text: "62-yard touchdown run", player: "Kellen Marsh" }],
+    }).prompt;
+    expect(p).toContain("State field goal");
+    expect(p).toContain("62-yard touchdown run (Kellen Marsh)");
+  });
+});
