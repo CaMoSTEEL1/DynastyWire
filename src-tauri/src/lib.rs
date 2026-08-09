@@ -5,6 +5,9 @@
 //! - `dynasty_snapshot` / `dynasty_delta` / `dynasty_media` shell out to the Node ingest
 //!   sidecar (bundled madden-franchise + generators), passing the user's BYO key via env.
 
+#[cfg(windows)]
+mod live;
+
 use notify::{EventKind, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1175,6 +1178,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             update_check,
             update_apply,
+            #[cfg(windows)]
+            live::live_game_running,
+            #[cfg(windows)]
+            live::live_calibrate,
+            #[cfg(windows)]
+            live::live_read,
             validate_save,
             dynasty_snapshot,
             dynasty_delta,

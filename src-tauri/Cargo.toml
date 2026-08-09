@@ -29,3 +29,21 @@ minisign-verify = "0.2.5"
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
 windows-core = "0.61"
+
+# Live game reading: capture the game window (GDI) and read the score bar with the OCR engine
+# built into Windows. No memory reads and no injection - the same surface OBS uses - which is
+# what makes it safe to run beside EA's anti-cheat. See src/live.rs.
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.61"
+features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_Threading",
+  "Win32_System_ProcessStatus",
+  "Media_Ocr",
+  "Globalization",
+  "Graphics_Imaging",
+  "Storage_Streams",
+  "Foundation_Collections",
+]
