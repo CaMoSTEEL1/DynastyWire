@@ -10,10 +10,16 @@
 // the angle, the structure, the quotes, and every invented in-game detail. This file only
 // decides what CANNOT be contradicted.
 //
-// THE STATS ARE SEASON-TO-DATE, NEVER A BOX SCORE. The save gives cumulative season totals
-// and the final score; it does not give this game's individual lines. Every helper here
-// carries that distinction into its output, because collapsing it is precisely how "a QB
-// with 3,100 season yards threw for 3,100 today" gets written.
+// SEASON TOTALS AND GAME LINES ARE DIFFERENT THINGS, and every helper here carries that
+// distinction into its output, because collapsing them is precisely how "a QB with 3,100
+// season yards threw for 3,100 today" gets written.
+//
+// This file used to say the game line simply did not exist — that the save gave cumulative
+// totals and a final score and nothing else. That was wrong, and it was wrong for a long
+// time. `Player.GameStats` resolves to per-game rows tagged with the schedule row they belong
+// to, and the schedule carries a `ScoringSummary` timeline of when every score happened. Both
+// are now parsed (see ingest/snapshot.js). So the writer gets the real box score AND the real
+// order of scoring, and the honest list of what nobody knows got shorter.
 
 import type { GameResult, RosterPlayer, SnapshotGame, TeamInfo } from "./client";
 import { classAbbrev } from "./scouting";
@@ -307,6 +313,9 @@ export interface CastMember {
   seasonLine: string | null;
   /** His per-game average, so a story about ONE game has a true number to reach for. */
   perGame: string | null;
+  /** What he ACTUALLY did in this game, from the save's own per-game stat row. Null when he
+   * did not appear, or when his most recent line belongs to a different game. */
+  gameLine: string | null;
   /** Why code put him on the list — the angle that is legitimately available. */
   why: string;
   /** Plays verified from the user's own footage. These DID happen in this game. */
@@ -386,6 +395,53 @@ function seasonLineOf(p: RosterPlayer): string | null {
   return bits.length ? `SEASON TOTALS (not one game): ${bits.join("; ")}` : null;
 }
 
+/**
+ * What this man did in THIS game, from the save's own per-game row.
+ *
+ * `gameRow` is checked against the game being written about rather than trusted. The parser
+ * hands over a player's MOST RECENT line, which after a bye week is last week's game — and a
+ * line from the wrong Saturday presented as tonight's is exactly the failure this whole file
+ * exists to prevent. When they do not match, the writer gets nothing rather than a lie.
+ */
+function gameLineOf(p: RosterPlayer, gameRow: number | null | undefined): string | null {
+  const gl = p.gameLine;
+  if (!gl || gameRow == null || gl.gameRow !== gameRow) return null;
+  const n = (v: unknown) => (typeof v === "number" && v ? v : 0);
+  const bits: string[] = [];
+  if (n(gl.PASSATTEMPTS)) {
+    bits.push(
+      `${n(gl.PASSCOMPLETED)}/${n(gl.PASSATTEMPTS)} for ${n(gl.PASSYARDS)} yds` +
+        `${n(gl.PASSTDS) ? `, ${n(gl.PASSTDS)} TD` : ""}${n(gl.PASSINTS) ? `, ${n(gl.PASSINTS)} INT` : ""}` +
+        `${n(gl.PASSSACKED) ? `, sacked ${n(gl.PASSSACKED)}x` : ""}`
+    );
+  }
+  if (n(gl.RUSHATTEMPTS)) {
+    bits.push(
+      `${n(gl.RUSHATTEMPTS)} car, ${n(gl.RUSHYARDS)} yds` +
+        `${n(gl.RUSHTDS) ? `, ${n(gl.RUSHTDS)} TD` : ""}${n(gl.RUSHLONGEST) ? `, long ${n(gl.RUSHLONGEST)}` : ""}`
+    );
+  }
+  if (n(gl.RECEIVECATCHES)) {
+    bits.push(
+      `${n(gl.RECEIVECATCHES)} rec, ${n(gl.RECEIVEYARDS)} yds` +
+        `${n(gl.RECEIVETDS) ? `, ${n(gl.RECEIVETDS)} TD` : ""}${n(gl.RECEIVELONGEST) ? `, long ${n(gl.RECEIVELONGEST)}` : ""}`
+    );
+  }
+  const def: string[] = [];
+  if (n(gl.DEFTACKLES)) def.push(`${n(gl.DEFTACKLES)} tkl`);
+  if (n(gl.DEFTACKLESFORLOSS)) def.push(`${n(gl.DEFTACKLESFORLOSS)} TFL`);
+  if (n(gl.DLINESACKS)) def.push(`${n(gl.DLINESACKS)} sack${n(gl.DLINESACKS) > 1 ? "s" : ""}`);
+  if (n(gl.DSECINTS)) def.push(`${n(gl.DSECINTS)} INT`);
+  if (n(gl.DEFPASSDEFLECTIONS)) def.push(`${n(gl.DEFPASSDEFLECTIONS)} PBU`);
+  if (n(gl.DLINEFORCEDFUMBLES)) def.push(`${n(gl.DLINEFORCEDFUMBLES)} FF`);
+  if (def.length) bits.push(def.join(", "));
+  if (n(gl.KICKFGATTEMPTS)) {
+    bits.push(`${n(gl.KICKFGMADE)}/${n(gl.KICKFGATTEMPTS)} FG${n(gl.KICKFGLONGEST) ? `, long ${n(gl.KICKFGLONGEST)}` : ""}`);
+  }
+  if (n(gl.PUNTATTEMPTS)) bits.push(`${n(gl.PUNTATTEMPTS)} punts, ${n(gl.PUNTYARDS)} yds`);
+  return bits.length ? `THIS GAME: ${bits.join("; ")}` : null;
+}
+
 function roleOf(p: RosterPlayer): string {
   const cls = classAbbrev(p.year);
   const year = cls ? `${cls.replace(".", "")} ` : "";
@@ -428,6 +484,9 @@ export interface CastInput {
   highlights?: { text: string; player?: string | null }[];
   /** Players who could not play. */
   unavailable?: { playerName: string; reason: string }[];
+  /** The schedule row of the game being written about, so a per-game stat line can be
+   * CHECKED rather than assumed to be from this game. */
+  gameRow?: number | null;
   limit?: number;
 }
 
@@ -511,6 +570,7 @@ export function recapCast(input: CastInput): CastMember[] {
       role: roleOf(p),
       seasonLine: seasonLineOf(p),
       perGame: perGameOf(p),
+      gameLine: gameLineOf(p, input.gameRow),
       why,
       verified: highlights
         .filter((h) => h.player && h.player.toLowerCase() === p.name.toLowerCase())
@@ -582,16 +642,19 @@ export function recapFacts(input: RecapInput): RecapFacts {
     ? stakesFacts({ team: input.userTeamInfo, games: input.games, userRow: input.userRow })
     : null;
 
+  const gameRow = scheduleRow?.row ?? null;
+
   const cast = recapCast({
     roster: input.roster,
     team: input.userTeam,
     game,
     highlights: input.highlights,
     unavailable: input.unavailable,
+    gameRow,
   });
 
   const oppCast = game
-    ? recapCast({ roster: input.oppRoster ?? [], team: game.them, game, limit: 3 })
+    ? recapCast({ roster: input.oppRoster ?? [], team: game.them, game, limit: 3, gameRow })
     : [];
 
   const locked: string[] = [];
@@ -638,12 +701,41 @@ export function recapFacts(input: RecapInput): RecapFacts {
   // how the same week read as a bowl on one tab and a playoff round on another.
   for (const l of input.stakesLines ?? []) locked.push(l);
 
+  // The scoring timeline, straight from the save. This is per-play truth about WHEN — the
+  // one thing a recap always guessed at, and the reason "they pulled away late" used to be a
+  // vibe rather than a fact. It says nothing about who; the cast's game lines do that.
+  const scoring = scheduleRow?.scoring ?? null;
+  if (game && scoring?.length) {
+    const clock = (s: number | null) =>
+      s == null ? "" : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    const userIsHome = game.location === "home" || (game.location === "neutral" && scheduleRow?.homeRow === input.userRow);
+    locked.push("How the scoring actually went, in order (from the save — this is the real sequence):");
+    for (const p of scoring) {
+      const who = (p.side === "home") === userIsHome ? game.us : game.them;
+      const us = userIsHome ? p.home : p.away;
+      const them = userIsHome ? p.away : p.home;
+      locked.push(
+        `  Q${p.quarter ?? "?"} ${clock(p.secondsLeft)} — ${who} +${p.points} · ${game.us} ${us}, ${game.them} ${them}`
+      );
+    }
+    locked.push(
+      "  Use this. It is WHEN each score happened, not who scored it — the save does not record " +
+        "who, so name a scorer only if a cast line below shows he had the touchdown."
+    );
+  }
+
+  const hasGameLines = cast.some((c) => c.gameLine) || oppCast.some((c) => c.gameLine);
   const unknown = [
-    "This game's individual box score. Every stat line above is a SEASON TOTAL — never present one as tonight's line. " +
-      "If you want to say what a player did in THIS game, use his average-game line as a reference point and write it " +
-      "as the kind of night he has (\"another hundred-yard afternoon\"), NOT as a counted stat you do not have.",
+    hasGameLines
+      ? "Nothing beyond the lines given. Where a cast member has a THIS GAME line, that IS his box score and it is complete — " +
+        "if a stat is not on it, it did not happen, and a SEASON TOTAL is never tonight's line."
+      : "This game's individual box score. Every stat line above is a SEASON TOTAL — never present one as tonight's line. " +
+        "If you want to say what a player did in THIS game, use his average-game line as a reference point and write it " +
+        "as the kind of night he has (\"another hundred-yard afternoon\"), NOT as a counted stat you do not have.",
     "Any team or per-category yardage, and anything the defense 'gave up'. Only the final score and the quarter scores are known.",
-    "Drive charts, play-by-play, penalties, time of possession, attendance and weather. Invent these freely as texture — they are colour, not record.",
+    scoring?.length
+      ? "WHO scored on any given play, drive charts, penalties, time of possession, attendance and weather. The scoring TIMES above are real; everything around them is colour, not record."
+      : "Drive charts, play-by-play, penalties, time of possession, attendance and weather. Invent these freely as texture — they are colour, not record.",
   ];
   // Keyed on whether anyone from the other side actually made the cast, not on whether a
   // roster was passed: a roster that yields no nameable player leaves the writer with
@@ -670,6 +762,7 @@ export function recapFacts(input: RecapInput): RecapFacts {
 export function castLine(m: CastMember): string {
   const bits = [`[${m.team}] ${m.name} — ${m.role}`];
   if (m.unavailable) bits.push(`OUT: ${m.unavailable}`);
+  if (m.gameLine) bits.push(m.gameLine);
   if (m.seasonLine) bits.push(m.seasonLine);
   if (m.perGame) bits.push(m.perGame);
   if (m.verified.length) bits.push(`verified in THIS game: ${m.verified.join("; ")}`);

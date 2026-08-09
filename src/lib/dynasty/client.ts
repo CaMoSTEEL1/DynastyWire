@@ -282,6 +282,28 @@ export interface SnapshotGame {
    * desk reads them to tell a fast starter from a team that plays you close and fades. */
   homeQuarters?: (number | null)[] | null;
   awayQuarters?: (number | null)[] | null;
+  /** The schedule row this came from. Used to join a game to its box score. */
+  row?: number;
+  /**
+   * The scoring timeline, straight out of the save's own ScoringSummary table: when every
+   * score happened and what the board read after it. Present only for the user's own played
+   * games, and in practice only for the most recent — the table is a rolling buffer of a few
+   * dozen games league-wide, not a season's history.
+   */
+  scoring?: ScoringPlay[] | null;
+}
+
+/** One scoring play as the save recorded it. Never carries WHO — see RosterPlayer.gameLine. */
+export interface ScoringPlay {
+  quarter: number | null;
+  /** Seconds LEFT in the quarter, which is how the save stores it. */
+  secondsLeft: number | null;
+  side: "home" | "away";
+  /** Points for this play, with a made conversion folded in (so a TD + PAT is 7). */
+  points: number;
+  /** The board after the play. */
+  home: number;
+  away: number;
 }
 
 export interface DynastyCalendar {
@@ -544,6 +566,23 @@ export interface RosterPlayer {
   abilityTier?: string | null;
   /** Scouting trait ratings — the input behind "why he's a threat" and "where to go at him". */
   ratings?: RosterRatings | null;
+  /**
+   * This player's line in ONE game — the most recent he appeared in. Raw save field names,
+   * because the parser reports what the save calls things and recap.ts does the translating.
+   *
+   * `gameRow` is the schedule row it belongs to, and consumers MUST check it against the game
+   * they are writing about. After a bye the most recent game is last week's, and presenting
+   * that as tonight is the exact class of lie this app exists to prevent.
+   */
+  gameLine?: GameLine | null;
+}
+
+export interface GameLine {
+  gameRow: number;
+  opponentRow: number | null;
+  snaps: number | null;
+  started: boolean;
+  [stat: string]: number | boolean | null;
 }
 
 /** A team's real roster. No teamIndex = the user's team; pass a teamIndex to read any

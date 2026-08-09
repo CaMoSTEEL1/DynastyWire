@@ -424,3 +424,79 @@ describe("recapFacts / recapBrief", () => {
     expect(brief).toContain("NO game has been played this week");
   });
 });
+
+// ── The box score and the timeline that were in the save all along ─────────────
+// This file used to state as fact that the save gave season totals and a final score and
+// nothing else. It gives per-game stat rows tagged with the schedule row they belong to, and
+// a scoring summary with the clock on it. These pin both, and pin the trap that comes with
+// them: a player's line is the MOST RECENT one, which after a bye is the wrong Saturday.
+
+describe("what the save actually knew about this game", () => {
+  const THIS_GAME = { ...GAME, row: 42 };
+  const withScoring = (scoring: SnapshotGame["scoring"]) =>
+    recapFacts({
+      result: RESULT,
+      userTeam: "Coastal Carolina",
+      userTeamInfo: USER_TEAM,
+      userRow: 1,
+      games: [...SCHEDULE.slice(0, 3), { ...THIS_GAME, scoring }],
+      roster: ROSTER.map((p) =>
+        p.name === "Kellen Marsh"
+          ? { ...p, gameLine: { gameRow: 42, opponentRow: null, snaps: 41, started: true, RUSHATTEMPTS: 22, RUSHYARDS: 141, RUSHTDS: 2, RUSHLONGEST: 38 } }
+          : p
+      ),
+      week: 8,
+    });
+
+  it("gives the writer the real box score, marked as this game", () => {
+    const brief = recapBrief(withScoring(null));
+    expect(brief).toContain("THIS GAME: 22 car, 141 yds, 2 TD, long 38");
+  });
+
+  it("stops claiming the box score is unknowable once it has one", () => {
+    // The old line told every writer to reach for an average and describe "the kind of night
+    // he has". With a real line in hand that instruction produces a worse story than the truth.
+    const brief = recapBrief(withScoring(null));
+    expect(brief).not.toContain("another hundred-yard afternoon");
+    expect(brief).toContain("that IS his box score and it is complete");
+  });
+
+  it("refuses a line from a different game", () => {
+    // The parser hands over a player's most recent line. After a bye that is last week's, and
+    // presenting it as tonight is the exact lie this file exists to prevent.
+    const stale = recapFacts({
+      result: RESULT,
+      userTeam: "Coastal Carolina",
+      userTeamInfo: USER_TEAM,
+      userRow: 1,
+      games: [{ ...THIS_GAME }],
+      roster: ROSTER.map((p) =>
+        p.name === "Kellen Marsh"
+          ? { ...p, gameLine: { gameRow: 41, opponentRow: null, snaps: 41, started: true, RUSHYARDS: 141, RUSHATTEMPTS: 22 } }
+          : p
+      ),
+      week: 8,
+    });
+    expect(recapBrief(stale)).not.toContain("THIS GAME:");
+  });
+
+  it("locks the scoring order with the clock on it, from the user's side", () => {
+    const brief = recapBrief(
+      withScoring([
+        { quarter: 1, secondsLeft: 436, side: "home", points: 7, home: 7, away: 0 },
+        { quarter: 4, secondsLeft: 48, side: "away", points: 3, home: 31, away: 17 },
+      ])
+    );
+    expect(brief).toContain("Q1 7:16 — Coastal Carolina +7 · Coastal Carolina 7, Tulane 0");
+    expect(brief).toContain("Q4 0:48 — Tulane +3 · Coastal Carolina 31, Tulane 17");
+  });
+
+  it("says plainly that the timeline does not carry who scored", () => {
+    // The save's ScoringSummary rows have player-snapshot arrays that EA never fills. A
+    // timeline without that warning is an invitation to attach a name to every score.
+    const brief = recapBrief(
+      withScoring([{ quarter: 1, secondsLeft: 436, side: "home", points: 7, home: 7, away: 0 }])
+    );
+    expect(brief).toContain("not who scored it");
+  });
+});

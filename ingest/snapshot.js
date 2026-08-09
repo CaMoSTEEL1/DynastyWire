@@ -227,12 +227,16 @@ function rankOrNull(v) {
 
 function buildGames(sgTable) {
   const games = [];
-  for (const r of sgTable.records) {
+  for (let i = 0; i < sgTable.records.length; i++) {
+    const r = sgTable.records[i];
     if (r.isEmpty) continue;
     const hs = num(r, 'HomeScore');
     const as = num(r, 'AwayScore');
     if (hs == null && as == null) continue;
     games.push({
+      // The row this came from, so a later pass can walk back for the scoring summary
+      // without re-scanning the schedule.
+      row: i,
       week: num(r, 'SeasonWeek'),
       year: num(r, 'SeasonYear'),
       homeRow: refRow(r, 'HomeTeam'),
@@ -247,6 +251,133 @@ function buildGames(sgTable) {
       simmed: safeBool(r, 'IsSimmed'),
       status: num(r, 'GameStatus'),
     });
+  }
+  return games;
+}
+
+/**
+ * The scoring summary — the play log that has been in the save the whole time.
+ *
+ * Found by walking the schedule rather than guessing: `SeasonGame.ScoringSummaries` resolves
+ * to a `ScoringSummary[]` array of up to 36 slots, each pointing at a `ScoringSummary` row
+ * carrying the quarter, the seconds LEFT in it, and both teams' score before and after. It is
+ * populated for every game in the league, including ones the user simmed and never watched,
+ * and it reconciles exactly with the final score.
+ *
+ * What it does NOT carry is who did it. Each row has `HomePlayerSnapshots` and
+ * `AwayPlayerSnapshots` arrays — declared in the schema, and empty in all 134 populated rows
+ * of a real save. So this gives WHEN and HOW MANY, and the per-game box score (see
+ * `gameLineFor`) gives WHO. Neither invents the other.
+ *
+ * Points per play need the row AFTER them. A touchdown lands as a 6-point change and its
+ * extra point is folded silently into the next row's "previous" — so a score's real value is
+ * its own delta plus whatever appeared before the next summary was written.
+ */
+async function buildScoring(f, sgTable, rows) {
+  const byId = new Map();
+  for (const t of f.tables) byId.set(t.header.tableId, t);
+  const readById = async (id) => {
+    const t = byId.get(id);
+    return t ? readRecords(t) : null;
+  };
+  const follow = async (rec, field) => {
+    let rd = null;
+    try {
+      const fld = rec.fields[field];
+      rd = fld && fld.referenceData && fld.referenceData.tableId ? fld.referenceData : null;
+    } catch (e) {
+      return null;
+    }
+    if (!rd) return null;
+    const t = await readById(rd.tableId);
+    const r = t && t.records && t.records[rd.rowNumber];
+    return r && !r.isEmpty ? r : null;
+  };
+
+  const out = new Map();
+  for (const row of rows) {
+    const g = sgTable.records[row];
+    if (!g || g.isEmpty) continue;
+    const arr = await follow(g, 'ScoringSummaries');
+    if (!arr) continue;
+
+    const raw = [];
+    for (const slot of Object.keys(arr.fields || {})) {
+      const s = await follow(arr, slot);
+      if (!s) continue;
+      raw.push({
+        quarter: num(s, 'Quarter'),
+        secondsLeft: num(s, 'TimeStampInSec'),
+        conversion: str(s, 'Conversion'),
+        homeBefore: num(s, 'HomePreviousScore'),
+        homeAfter: num(s, 'HomeCurrentScore'),
+        awayBefore: num(s, 'AwayPreviousScore'),
+        awayAfter: num(s, 'AwayCurrentScore'),
+      });
+    }
+    if (!raw.length) continue;
+    // Slot order is play order, but sort defensively: quarter up, clock down.
+    raw.sort((a, b) => (a.quarter || 0) - (b.quarter || 0) || (b.secondsLeft || 0) - (a.secondsLeft || 0));
+
+    const finalHome = num(g, 'HomeScore') || 0;
+    const finalAway = num(g, 'AwayScore') || 0;
+    const plays = [];
+    for (let i = 0; i < raw.length; i++) {
+      const s = raw[i];
+      const next = raw[i + 1];
+      const homeDelta = (s.homeAfter || 0) - (s.homeBefore || 0);
+      const awayDelta = (s.awayAfter || 0) - (s.awayBefore || 0);
+      const side = homeDelta > 0 ? 'home' : awayDelta > 0 ? 'away' : null;
+      // Marker rows (end of a half, a conversion resolving) move nobody's score.
+      if (!side) continue;
+      const after = side === 'home' ? s.homeAfter : s.awayAfter;
+      const nextBefore = next
+        ? side === 'home'
+          ? next.homeBefore
+          : next.awayBefore
+        : side === 'home'
+          ? finalHome
+          : finalAway;
+      // The conversion, if it was good, shows up as the gap before the next summary. Clamped
+      // because a later score by the same team must not be swallowed into this play.
+      const kicked = Math.max(0, Math.min(2, (nextBefore || 0) - (after || 0)));
+      plays.push({
+        quarter: s.quarter,
+        secondsLeft: s.secondsLeft,
+        side,
+        points: (side === 'home' ? homeDelta : awayDelta) + kicked,
+        home: (s.homeAfter || 0) + (side === 'home' ? kicked : 0),
+        away: (s.awayAfter || 0) + (side === 'away' ? kicked : 0),
+      });
+    }
+    if (plays.length) out.set(row, plays);
+  }
+  return out;
+}
+
+/**
+ * Attach the scoring timeline to the user's own played games, and nobody else's.
+ *
+ * Resolving all 983 schedule rows would cost several reference hops each for games no reader
+ * will ever ask about. The user's own season is fifteen-odd games and is the only place the
+ * timeline is read.
+ */
+async function withScoring(f, sgTable, games, userTeamRow) {
+  if (userTeamRow == null) return games;
+  const mine = games.filter(
+    (g) => g.played && (g.homeRow === userTeamRow || g.awayRow === userTeamRow)
+  );
+  if (!mine.length) return games;
+  let byRow;
+  try {
+    byRow = await buildScoring(f, sgTable, mine.map((g) => g.row));
+  } catch (e) {
+    // A save without summaries is a save that recaps the way it always has. Never fatal.
+    return games;
+  }
+  for (const g of games) {
+    const plays = byRow.get(g.row);
+    if (plays) g.scoring = plays;
   }
   return games;
 }
@@ -831,7 +962,7 @@ async function buildSnapshot(pathOrFile, opts = {}) {
   // v10: depth entries returned as a LIST (which row is the user's is still unverified).
   // v13: postseason rows carry a score before kickoff — the record decides what was played.
   // v14: team schemes and team colours.
-  const cf = isPath ? cacheFile(pathOrFile, `snap|v17|${optKey}`) : null;
+  const cf = isPath ? cacheFile(pathOrFile, `snap|v18|${optKey}`) : null;
   if (cf) {
     const cached = readCache(cf);
     if (cached) return cached;
@@ -990,7 +1121,7 @@ async function buildSnapshot(pathOrFile, opts = {}) {
     userTeamRow,
     userTeam: userTeamRow != null ? teams[userTeamRow] : null,
     teams,
-    games,
+    games: await withScoring(f, sgTable, games, userTeamRow),
     headCoaches: buildHeadCoaches(coachTable),
   };
   if (cf) writeCache(cf, result);
@@ -1502,13 +1633,106 @@ function scoutRatings(p) {
   return any ? out : null;
 }
 
+/**
+ * A player's line in ONE game — the thing this app has spent its life insisting the save did
+ * not contain.
+ *
+ * It does. `Player.GameStats` resolves to a `GameStats[]` array whose slots point at
+ * `GameOffensiveStats` / `GameDefensiveStats` / `GameKickingStats` / `GameOLineStats` rows,
+ * each tagged with the `SeasonGame` it belongs to. Verified on a real save: a linebacker with
+ * six tackles and a fifteen-yard interception return, in one specific game.
+ *
+ * The most recent game is taken rather than a requested one, so no caller has to be re-plumbed
+ * to ask for it — and the line carries the game row it came from, so a consumer that cares
+ * WHICH game can check rather than assume. That check is the whole safety property: after a
+ * bye, "most recent" is last week's game, and a line presented as this week's would be a lie.
+ */
+function makeGameLineResolver(f) {
+  const byId = new Map();
+  for (const t of f.tables) byId.set(t.header.tableId, t);
+  const cache = new Map();
+  const readById = (id) => {
+    if (!cache.has(id)) {
+      const t = byId.get(id);
+      cache.set(id, t ? readRecords(t) : Promise.resolve(null));
+    }
+    return cache.get(id);
+  };
+  const refOf = (rec, field) => {
+    try {
+      const fld = rec.fields[field];
+      return fld && fld.referenceData && fld.referenceData.tableId ? fld.referenceData : null;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  return async function gameLineFor(playerRec) {
+    const ref = refOf(playerRec, 'GameStats');
+    if (!ref) return null;
+    const arrT = await readById(ref.tableId);
+    const arrRec = arrT && arrT.records && arrT.records[ref.rowNumber];
+    if (!arrRec) return null;
+
+    let best = null;
+    for (const slot of Object.keys(arrRec.fields || {})) {
+      const rd = refOf(arrRec, slot);
+      if (!rd) continue;
+      const t = byId.get(rd.tableId);
+      if (!t || !/^Game(Offensive|Defensive|Kicking|OLine).*Stats$/.test(t.name)) continue;
+      const st = await readById(rd.tableId);
+      const rec = st && st.records && st.records[rd.rowNumber];
+      if (!rec || rec.isEmpty) continue;
+      const gameRow = refRow(rec, 'SeasonGame');
+      if (gameRow == null) continue;
+      // Slots are not in date order, so "latest" means the highest schedule row — the
+      // schedule is written in date order, which is the only ordering available here.
+      if (!best || gameRow > best.gameRow) best = { gameRow, rec, table: t.name };
+    }
+    if (!best) return null;
+
+    const pick = (keys) => {
+      const out = {};
+      for (const k of keys) {
+        const v = num(best.rec, k);
+        if (v) out[k] = v;
+      }
+      return out;
+    };
+    const line = {
+      gameRow: best.gameRow,
+      opponentRow: refRow(best.rec, 'OpposingTeam'),
+      snaps: num(best.rec, 'DOWNSPLAYED'),
+      started: num(best.rec, 'GAMESSTARTED') ? true : false,
+      ...pick([
+        'PASSYARDS', 'PASSTDS', 'PASSINTS', 'PASSATTEMPTS', 'PASSCOMPLETED', 'PASSSACKED', 'PASSLONGEST',
+        'RUSHYARDS', 'RUSHTDS', 'RUSHATTEMPTS', 'RUSHLONGEST', 'RUSHFUMBLES', 'RUSHBROKENTACKLES',
+        'RECEIVECATCHES', 'RECEIVEYARDS', 'RECEIVETDS', 'RECEIVELONGEST', 'RECEIVEDROPS',
+        'DEFTACKLES', 'ASSDEFTACKLES', 'DEFTACKLESFORLOSS', 'DLINESACKS', 'DLINEHALFSACK',
+        'DSECINTS', 'DSECINTTDS', 'DSECINTRETURNYARDS', 'DEFPASSDEFLECTIONS', 'BIGHITS',
+        'DLINEFORCEDFUMBLES', 'DLINEFUMBLERECOVERIES', 'DLINESAFETIES',
+        'KICKFGMADE', 'KICKFGATTEMPTS', 'KICKFGLONGEST', 'KICKEPMADE', 'KICKEPATTEMPTS',
+        'PUNTATTEMPTS', 'PUNTYARDS', 'PUNTIN20', 'PUNTLONGEST',
+        'KRETYARDS', 'KRETTDS', 'PRETYARDS', 'PRETTDS',
+      ]),
+    };
+    // A line with nothing but snaps on it is a man who dressed, not a man who played.
+    const meaningful = Object.keys(line).some(
+      (k) => !['gameRow', 'opponentRow', 'snaps', 'started'].includes(k)
+    );
+    return meaningful || line.snaps ? line : null;
+  };
+}
+
 async function buildRoster(pathOrFile, opts = {}) {
   const teamIndex = opts.teamIndex;
   if (teamIndex == null) return [];
   const isPath = typeof pathOrFile === 'string';
   // v7 adds archetype + scouting trait ratings. The tag MUST be bumped whenever the shape
   // changes or every existing save serves a cached roster missing the new fields.
-  const cf = isPath ? cacheFile(pathOrFile, `roster|v7|${teamIndex}`) : null;
+  // v8 adds the per-game box-score line. The tag MUST be bumped whenever the shape changes
+  // or every existing save serves a cached roster missing the new fields.
+  const cf = isPath ? cacheFile(pathOrFile, `roster|v8|${teamIndex}`) : null;
   if (cf) {
     const cached = readCache(cf);
     if (cached) return cached;
@@ -1568,11 +1792,22 @@ async function buildRoster(pathOrFile, opts = {}) {
 
   // Attach current-season stat lines (top 40 only — the slice fed to the model).
   const statsFor = makeStatsResolver(f, currentSeasonYear);
+  // ...and the line from the most recent game, which is a different thing entirely: the
+  // season total says he has 940 rushing yards, the game line says he had 141 on Saturday.
+  // Collapsing those two is precisely how "a back with 940 yards ran for 940 today" got
+  // written, and it is why this app used to state outright that per-game lines were not in
+  // the save. They are.
+  const gameLineFor = makeGameLineResolver(f);
   for (const pl of capped.slice(0, 40)) {
     try {
       pl.stats = await statsFor(pl._rec);
     } catch (e) {
       pl.stats = null;
+    }
+    try {
+      pl.gameLine = await gameLineFor(pl._rec);
+    } catch (e) {
+      pl.gameLine = null;
     }
   }
   for (const pl of capped) delete pl._rec;
