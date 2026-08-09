@@ -21,6 +21,7 @@ import {
   Archive,
   ListOrdered,
   Globe2,
+  Radio,
 } from "lucide-react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { useSettings } from "@/components/settings/settings-context";
@@ -46,6 +47,7 @@ const navItems = [
   { label: "The Book", slug: "betting", icon: Coins },
   { label: "Archive", slug: "archive", icon: Archive },
   { label: "Trophy Room", slug: "trophy-room", icon: Award },
+  { label: "The Booth", slug: "live", icon: Radio },
   { label: "The Forum", slug: "forum", icon: Globe2 },
 ] as const;
 
@@ -64,6 +66,7 @@ const rtgNavItems = [
   { label: "Recruitment", slug: "recruitment", icon: Trophy },
   { label: "The Slate", slug: "scoreboard", icon: ListOrdered },
   { label: "Archive", slug: "archive", icon: Archive },
+  { label: "The Booth", slug: "live", icon: Radio },
   { label: "The Forum", slug: "forum", icon: Globe2 },
 ] as const;
 

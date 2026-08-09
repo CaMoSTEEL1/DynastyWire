@@ -862,6 +862,9 @@ export interface DynastySettings {
    * press conference one question, one answer, no follow-ups — and costs one fewer call per
    * question for anyone watching their spend. */
   presserRebuttals: boolean | null;
+  /** The screen rectangle the live booth reads the score bar from, found once by calibrating.
+   * Different resolutions and HUD scales put the bar in different places. */
+  liveCrop: { x: number; y: number; w: number; h: number } | null;
   /** Where the forum lives. Overridable so the app can point at a local worker in
    * development, or so a user who does not trust the default host can run their own. */
   forumUrl: string | null;
@@ -910,6 +913,7 @@ export async function loadSettings(): Promise<DynastySettings> {
     hideRecruitOverall: (await store.get<boolean>("hideRecruitOverall")) ?? null,
     consequenceSync: (await store.get<boolean>("consequenceSync")) ?? null,
     nilWriteToSave: (await store.get<boolean>("nilWriteToSave")) ?? null,
+    liveCrop: (await store.get<{ x: number; y: number; w: number; h: number }>("liveCrop")) ?? null,
     presserRebuttals: (await store.get<boolean>("presserRebuttals")) ?? null,
     forumUrl: (await store.get<string>("forumUrl")) ?? null,
     forumHandle: (await store.get<string>("forumHandle")) ?? null,
