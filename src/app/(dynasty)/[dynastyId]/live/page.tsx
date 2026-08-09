@@ -29,6 +29,7 @@ import {
   momentLines,
   readBar,
   scoringPlays,
+  supersedes,
   worthCalling,
   type Confirmer,
   type CropRegion,
@@ -38,7 +39,7 @@ import {
   type LiveState,
 } from "@/lib/dynasty/live";
 import { issueKey, readTab, writeTab } from "@/lib/dynasty/issue-cache";
-import { Radio, Crosshair, Loader2, Mic, Play, Square } from "lucide-react";
+import { Radio, Crosshair, Loader2, Mic, Play, RotateCcw, Square } from "lucide-react";
 
 const KIND_STYLE: Record<string, string> = {
   touchdown: "border-dw-green/50 text-dw-green",
@@ -62,6 +63,7 @@ export default function LivePage() {
   const [blind, setBlind] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [calibrating, setCalibrating] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
 
   // The gate lives in a ref: it must survive re-renders without causing them, and a stale
   // closure here would mean confirming against a state from two seconds ago.
@@ -126,6 +128,38 @@ export default function LivePage() {
     [weekKey, dynastyId, year, week]
   );
 
+  /**
+   * Throw this week's record away and start the game again from nothing.
+   *
+   * Fires automatically when the board says the game on screen cannot be the one the log is
+   * about — quit and replayed, or the next fixture started before the save was exported. It
+   * is also a button, because "the log looks wrong" is a judgement only the user can make.
+   */
+  const restart = useCallback(
+    async (reason: string) => {
+      log.current = null;
+      setLogged(0);
+      setEvents([]);
+      setCalls([]);
+      setState(null);
+      setBlind(0);
+      gate.current = freshConfirmer();
+      pending.current = [];
+      setNote(reason);
+      try {
+        await writeTab(
+          weekKey,
+          "live-log",
+          { status: "ready", data: { events: [], final: [], updatedAt: Date.now() }, error: null, generatedAt: Date.now() },
+          { dynastyId, year, week }
+        );
+      } catch {
+        /* the in-memory log is already clear; a failed write costs the newsroom, not the feed */
+      }
+    },
+    [weekKey, dynastyId, year, week]
+  );
+
   // ── The booth's voice ────────────────────────────────────────────────────────
   // Off unless asked for. Every other surface in the app spends once a week, on a click the
   // user made; this one spends while they are looking at the television.
@@ -182,6 +216,16 @@ export default function LivePage() {
       const previous = gate.current.confirmed;
       gate.current = next;
       if (!settled) return;
+      if (supersedes(log.current, settled.scores)) {
+        const fixture = new Set((log.current?.final ?? []).map(([t]) => t));
+        const same = settled.scores.every(([t]) => fixture.has(t));
+        await restart(
+          same
+            ? "The game restarted, so the record started over with it — the abandoned attempt has been dropped."
+            : "A different game is on screen, so this week's record started over."
+        );
+        return;
+      }
       setState(settled);
       if (previous) {
         const fresh = deriveEvents(previous, settled);
@@ -206,7 +250,7 @@ export default function LivePage() {
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
-  }, [crop, teams, record, commentaryOn, hasApiKey, speak]);
+  }, [crop, teams, record, commentaryOn, hasApiKey, speak, restart]);
 
   useEffect(() => {
     if (!watching) return;
@@ -310,7 +354,24 @@ export default function LivePage() {
             <span className="normal-case tracking-normal opacity-60">· {spokenCount}</span>
           )}
         </button>
+
+        <button
+          type="button"
+          onClick={() => void restart("This week's record was cleared. The booth is reading the game from the top.")}
+          disabled={logged === 0 && events.length === 0}
+          className="inline-flex items-center gap-2 rounded border border-dw-border px-3 py-2 font-sans text-xs uppercase tracking-wider text-ink3 hover:text-ink disabled:opacity-40"
+          title="Throw away what the booth has recorded for this week and read the game again from nothing."
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          Start over
+        </button>
       </div>
+
+      {note && (
+        <p className="mt-4 rounded border border-dw-accent2/30 bg-dw-accent2/10 px-4 py-3 font-serif text-sm text-dw-accent2">
+          {note}
+        </p>
+      )}
 
       {commentaryOn && (
         <p className="mt-3 font-sans text-[11px] leading-relaxed text-ink3">

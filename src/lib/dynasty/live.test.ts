@@ -18,6 +18,7 @@ import {
   playsForResult,
   scoringPlays,
   stateKey,
+  supersedes,
   worthCalling,
   type LiveEvent,
   type LiveLog,
@@ -429,5 +430,43 @@ describe("when the booth is worth interrupting for", () => {
     expect(boardLine(state({ scores: [["Utah", 7], ["Kansas State", 14]] }))).toBe("Utah 7, Kansas State 14");
     expect(boardLine(state({ scores: [["Utah", 7]] }))).toBe("");
     expect(boardLine(null)).toBe("");
+  });
+});
+
+describe("telling a restarted game from a continued one", () => {
+  const play = (team: string, total: number, seen: number): LiveEvent => ({
+    kind: "touchdown", text: "", team, at: "8:42", quarter: "2nd", seen, total,
+    phrase: "touchdown, extra point good",
+  });
+  const log = (final: [string, number][]): LiveLog => ({
+    events: [play(final[0][0], final[0][1], 1)],
+    final,
+    updatedAt: 0,
+  });
+
+  it("keeps going when the board is where it left it, or ahead", () => {
+    const l = log([["Kansas State", 21], ["Tennessee", 14]]);
+    expect(supersedes(l, [["Kansas State", 21], ["Tennessee", 14]])).toBe(false);
+    expect(supersedes(l, [["Kansas State", 28], ["Tennessee", 14]])).toBe(false);
+  });
+
+  it("calls it a restart when a score has gone backwards", () => {
+    // Quit to the menu and play it again. Scores never go down inside one game, and without
+    // this the replay's touchdowns inherit the abandoned attempt's clock times.
+    const l = log([["Kansas State", 21], ["Tennessee", 14]]);
+    expect(supersedes(l, [["Kansas State", 0], ["Tennessee", 0]])).toBe(true);
+    expect(supersedes(l, [["Kansas State", 21], ["Tennessee", 7]])).toBe(true);
+  });
+
+  it("calls it a different game when the teams are not the same two", () => {
+    // The nastier one: the next week's game gets played before the save is exported, so the
+    // app still thinks it is week N and the booth would file Michigan into the Tennessee log.
+    const l = log([["Kansas State", 21], ["Tennessee", 14]]);
+    expect(supersedes(l, [["Kansas State", 0], ["Michigan", 0]])).toBe(true);
+  });
+
+  it("does not fire on an empty log or a half-read board", () => {
+    expect(supersedes(null, [["Kansas State", 0], ["Tennessee", 0]])).toBe(false);
+    expect(supersedes(log([["Kansas State", 21], ["Tennessee", 14]]), [["Kansas State", 0]])).toBe(false);
   });
 });

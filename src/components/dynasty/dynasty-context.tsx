@@ -633,6 +633,19 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
   const watchedPlays = useCallback(async (): Promise<{ plays: string[]; watchedAt: number }> => {
     const result = delta?.userResult ?? null;
     if (!result) return { plays: [], watchedAt: 0 };
+    // The save's OWN scoring summary outranks anything read off a screen. It is complete, it
+    // is exact, and it exists whether the user watched or not — where the booth's log is only
+    // ever as complete as the part of the game somebody sat through. Two accounts of the same
+    // afternoon in one prompt is redundancy at best and a clock that disagrees with itself at
+    // worst, so when the save has the timeline, the booth stands down. It still owns LIVE,
+    // which is the only place the save cannot follow.
+    const played = (snapshot?.games ?? []).find(
+      (g) =>
+        g.played &&
+        g.week === (result.week ?? null) &&
+        (g.homeRow === snapshot?.userTeamRow || g.awayRow === snapshot?.userTeamRow)
+    );
+    if (played?.scoring?.length) return { plays: [], watchedAt: 0 };
     const tried = await Promise.all(
       [week, week - 1].map(async (w) => {
         const rec = await readTab<LiveLog>(issueKey(dynastyId, year, w), "live-log").catch(() => null);
@@ -641,7 +654,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
     );
     const hit = tried.find((t) => t.feed.plays.length);
     return hit ? { plays: hit.feed.plays, watchedAt: hit.watchedAt } : { plays: [], watchedAt: 0 };
-  }, [dynastyId, year, week, delta]);
+  }, [dynastyId, year, week, delta, snapshot]);
 
   const generate = useCallback(
     async <T,>(

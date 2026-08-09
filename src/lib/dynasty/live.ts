@@ -277,6 +277,37 @@ const SCORING = new Set<LiveEventKind>(["touchdown", "field-goal", "pat", "safet
  * A team can only reach any given total once, so that is the identity used. The earliest
  * sighting wins, because that is the one whose clock is real.
  */
+/**
+ * Is this board a continuation of the log, or the start of something else?
+ *
+ * The log is keyed by week, and a week can be looked at more than once. Two things happen in
+ * practice and both leave a mixed record if the log is simply appended to:
+ *
+ * - The game is QUIT and replayed. The board goes back to nil and every score happens again,
+ *   at a different clock, in a different order. Deduping by "a team can only reach 21 once"
+ *   keeps the FIRST sighting, so the log ends up carrying the abandoned attempt's clock times
+ *   for the replayed attempt's scores. Fragmented in the worst way — plausible and wrong.
+ * - The NEXT game is played before the save is exported. The app still believes it is week N,
+ *   so the booth writes week N+1's game into week N's log. Nothing about that is a restart;
+ *   it is a different fixture.
+ *
+ * A score cannot go down inside one game, and the two teams cannot change. Either of those
+ * means what is on screen is not the game the log is about, so the log is replaced rather
+ * than extended.
+ */
+export function supersedes(
+  log: LiveLog | null | undefined,
+  board: [string, number][]
+): boolean {
+  if (!log?.events?.length || board.length < 2) return false;
+  const had = new Map(log.final);
+  // A log with no usable final can't be contradicted by anything.
+  if (had.size < 2) return false;
+  const sameFixture = board.length === had.size && board.every(([team]) => had.has(team));
+  if (!sameFixture) return true;
+  return board.some(([team, score]) => score < (had.get(team) ?? 0));
+}
+
 export function mergeLog(
   prev: LiveLog | null | undefined,
   events: LiveEvent[],
