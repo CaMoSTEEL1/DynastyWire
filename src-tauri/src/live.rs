@@ -147,6 +147,30 @@ fn capture(hwnd: HWND, crop: (i32, i32, i32, i32), scale: i32) -> Result<Frame, 
     }
 }
 
+/// Crush the frame to black and white so the OCR engine has an easy job.
+///
+/// The bar is not one background. The team with the ball gets its half filled with its own
+/// colour, and white numerals on Tennessee orange are markedly harder to read than the same
+/// numerals on the bar's usual near-black — in a live capture the possessing team's score went
+/// missing on most frames while the other team's read every time. Everything on that bar is
+/// white text, so anything bright enough becomes white and everything else becomes black, and
+/// the possessing team stops being a second-class citizen.
+/// Bright enough to be the bar's white text and not its brightest fill. Measured: the white
+/// numerals sit near 250, Tennessee orange near 166, the bar's own background near 25.
+const BAR_CUTOFF: u32 = 200;
+
+fn binarise(frame: &mut Frame, cutoff: u32) {
+    for px in frame.pixels.chunks_exact_mut(4) {
+        // Rec. 601 luma, integer, on BGRA.
+        let luma = (px[2] as u32 * 299 + px[1] as u32 * 587 + px[0] as u32 * 114) / 1000;
+        let v = if luma >= cutoff { 255 } else { 0 };
+        px[0] = v;
+        px[1] = v;
+        px[2] = v;
+        px[3] = 255;
+    }
+}
+
 /// Run the OCR engine that ships with Windows over a captured frame.
 fn ocr(frame: &Frame) -> Result<Vec<LiveWord>, String> {
     let bitmap = SoftwareBitmap::CreateCopyFromBuffer(
@@ -259,6 +283,14 @@ fn find_down(t: &str) -> Option<String> {
                     .chars()
                     .take_while(|c| c.is_ascii_alphanumeric())
                     .collect();
+                // "2nd & IO" is 2nd and 10. Only fix a distance that is already part digits —
+                // "GOAL" and "inches" are real distances and must be left alone, and turning
+                // one into the other would make the feed announce a down that never changed.
+                let dist = if dist.chars().all(|c| c.is_ascii_digit() || matches!(c, 'I' | 'l' | 'O' | 'o')) {
+                    dist.replace(['I', 'l'], "1").replace(['O', 'o'], "0")
+                } else {
+                    dist
+                };
                 if !dist.is_empty() {
                     return Some(format!("{ord} & {dist}"));
                 }
@@ -361,12 +393,29 @@ enum Tok {
 /// When every word arrives at the same x — the unit tests, and any caller without positions —
 /// the geometry test is skipped and the older "first number after a name" rule stands.
 fn find_scores(words: &[LiveWord], known: &[String]) -> Vec<(String, i32)> {
-    let head: Vec<LiveWord> = words
+    let all: Vec<LiveWord> = words
         .iter()
-        .map(|w| LiveWord { text: normalise(w.text.trim()), x: w.x, y: w.y })
-        .take_while(|w| !ORDINALS.iter().any(|o| w.text.starts_with(o)))
+        .map(|w| {
+            // A lone I is how the OCR engine renders the 1 of a rank badge about half the time.
+            let t = w.text.trim();
+            let text = if t == "I" || t == "l" || t == "|" { "1".to_string() } else { normalise(t) };
+            LiveWord { text, x: w.x, y: w.y }
+        })
         .collect();
-    let positional = head.iter().any(|w| w.x != head.first().map_or(0, |f| f.x));
+    let positional = all.iter().any(|w| w.x != all.first().map_or(0, |f| f.x));
+    let is_ordinal = |w: &LiveWord| ORDINALS.iter().any(|o| w.text.starts_with(o));
+
+    // The bar is one visual row, but the OCR engine returns LINES, and it does not reliably put
+    // the whole row in one. A live capture handed back `TENNESSEE KANSAS STATE 21 3rd 5:13 24`
+    // — Tennessee's 24 sorted after the quarter, which reading order says is out of the
+    // scoreboard entirely. Where a word sits is the truth; what order it arrived in is not.
+    let mut head: Vec<LiveWord> = if positional {
+        let edge = all.iter().filter(|w| is_ordinal(w)).map(|w| w.x).min();
+        all.into_iter().filter(|w| edge.is_none_or(|e| w.x < e)).collect()
+    } else {
+        all.into_iter().take_while(|w| !is_ordinal(w)).collect()
+    };
+    head.sort_by_key(|w| w.x);
 
     let mut toks: Vec<Tok> = Vec::new();
     let mut i = 0;
@@ -398,12 +447,17 @@ fn find_scores(words: &[LiveWord], known: &[String]) -> Vec<(String, i32)> {
     let mut out: Vec<(String, i32)> = Vec::new();
     let mut name = String::new();
     let mut name_x: Option<i32> = None;
+    // Each team's block carries exactly one record. Passing two without a name in between means
+    // a name was missed, and the next number belongs to a team we did not read — captured live
+    // as `TENNESSEE 13-2 15-0 21`, which without this hands Kansas State's 21 to Tennessee.
+    let mut records = 0;
     for (i, tok) in toks.iter().enumerate() {
         match tok {
-            Tok::Record => {}
+            Tok::Record => records += 1,
             Tok::Junk => {
                 name.clear();
                 name_x = None;
+                records = 0;
             }
             Tok::Name(w, x) => {
                 if !name.is_empty() {
@@ -411,19 +465,23 @@ fn find_scores(words: &[LiveWord], known: &[String]) -> Vec<(String, i32)> {
                 }
                 name.push_str(w);
                 name_x = Some(*x);
+                records = 0;
             }
             Tok::Num(v, x) => {
                 let next_name_x = match toks.get(i + 1) {
                     Some(Tok::Name(_, nx)) => Some(*nx),
                     _ => None,
                 };
+                // A quarter of the distance back, not half: measured on a real bar, a badge sits
+                // about 2% of the way and a score about 40%, so there is room to be strict and
+                // reason to be — this rule failing open costs a team its score.
                 let rank = positional
                     && match (next_name_x, name_x) {
-                        (Some(nx), Some(lx)) => (nx - x) * 2 < x - lx,
+                        (Some(nx), Some(lx)) => (nx - x) * 4 < x - lx,
                         (Some(_), None) => true,
                         _ => false,
                     };
-                if !rank && name.trim().len() >= 3 {
+                if !rank && records < 2 && name.trim().len() >= 3 {
                     // An unknown name is still reported, so a save we could not match does not
                     // silently lose its scoreboard.
                     let trimmed = name.trim();
@@ -432,6 +490,7 @@ fn find_scores(words: &[LiveWord], known: &[String]) -> Vec<(String, i32)> {
                 }
                 name.clear();
                 name_x = None;
+                records = 0;
             }
         }
     }
@@ -499,7 +558,8 @@ pub fn live_read(
     teams: Option<Vec<String>>,
 ) -> Result<LiveState, String> {
     let hwnd = game_window().ok_or("College Football 27 isn't running.")?;
-    let frame = capture(hwnd, (x, y, w, h), 3)?;
+    let mut frame = capture(hwnd, (x, y, w, h), 3)?;
+    binarise(&mut frame, BAR_CUTOFF);
     Ok(parse(&ocr(&frame)?, &teams.unwrap_or_default()))
 }
 
@@ -620,6 +680,23 @@ mod tests {
         // geometry has to allow this or most of the country's matchups read as nil.
         let s = parse2(&placed(&[("UTAH", 100), ("8-3", 300), ("14", 470), ("KANSAS STATE", 680), ("9-2", 900), ("21", 1030)]));
         assert_eq!(s.scores, vec![("Utah".to_string(), 14), ("Kansas State".to_string(), 21)]);
+    }
+
+    #[test]
+    fn a_distance_read_as_letters_is_still_a_number() {
+        // "2nd & IO", captured repeatedly. Left alone it alternates with "2nd & 10" between
+        // frames and the feed calls a new down every second.
+        assert_eq!(parse2(&words("3rd 5:13 40 2nd & IO")).down.as_deref(), Some("2nd & 10"));
+        // ...but a distance that is a word stays a word.
+        assert_eq!(parse2(&words("3rd 5:13 2nd & GOAL")).down.as_deref(), Some("2nd & GOAL"));
+    }
+
+    #[test]
+    fn a_missed_team_name_does_not_hand_its_score_to_the_other_side() {
+        // Verbatim: `II TENNESSEE 13-2 15-0 21`. Kansas State's name was lost, so its 21 sat
+        // right behind Tennessee's. Two records with no name between them is the tell.
+        let s = parse2(&words("II UTAH 13-2 15-0 21 2nd 0:38 4th"));
+        assert_eq!(s.scores, vec![]);
     }
 
     #[test]
