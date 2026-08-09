@@ -60,7 +60,7 @@ import {
   type Issue,
 } from "@/lib/dynasty/issue-cache";
 import { playsForResult, type LiveLog } from "@/lib/dynasty/live";
-import { advanceArcs, detectArcs, liveArcs, type LiveArc } from "@/lib/dynasty/arcs";
+import { advanceArcs, detectLeagueArcs, liveArcs, type LiveArc } from "@/lib/dynasty/arcs";
 import { loadArcMemory, saveArcMemory } from "@/lib/dynasty/arc-store";
 import { isUpdateHeld, useUpdateHold } from "@/lib/dynasty/update-hold";
 
@@ -670,11 +670,32 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
     if (!snapshot?.userTeam) return [];
     try {
       const archive = await loadArchive(dynastyId).catch(() => []);
-      const found = detectArcs({
-        roster,
-        archive,
-        awards: snapshot.world?.awards ?? [],
-        team: snapshot.userTeam.name,
+      // The opponent's roster is already parsed for the matchup every week, so their stories
+      // cost nothing extra — and without them the rest of the country is scenery. The week
+      // the two boards intersect is the one the beat writes itself.
+      const oppName = delta?.userResult
+        ? delta.userResult.home === snapshot.userTeam.name
+          ? delta.userResult.away
+          : delta.userResult.home
+        : null;
+      const found = detectLeagueArcs({
+        user: {
+          roster,
+          archive,
+          awards: snapshot.world?.awards ?? [],
+          team: snapshot.userTeam.name,
+          program: {
+            team: snapshot.userTeam,
+            games: snapshot.games ?? [],
+            teams: snapshot.teams ?? {},
+            teamRow: snapshot.userTeamRow,
+            archive,
+          },
+        },
+        opponent:
+          oppRoster.length && oppName
+            ? { roster: oppRoster, archive: [], awards: snapshot.world?.awards ?? [], team: oppName }
+            : null,
       });
       const prior = await loadArcMemory(dynastyId).catch(() => []);
       const memory = advanceArcs(prior, found, { year, week });
@@ -687,7 +708,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
     } catch {
       return [];
     }
-  }, [snapshot, roster, dynastyId, year, week]);
+  }, [snapshot, roster, oppRoster, delta, dynastyId, year, week]);
 
   const generate = useCallback(
     async <T,>(

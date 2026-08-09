@@ -8,7 +8,16 @@
 import { describe, expect, it } from "vitest";
 import type { RosterPlayer, RosterStats } from "./client";
 import type { SeasonRecord } from "./archive";
-import { advanceArcs, arcsBlock, chapterOf, detectArcs, liveArcs, type ArcMemory, type PlayerArc } from "./arcs";
+import {
+  advanceArcs,
+  arcsBlock,
+  chapterOf,
+  detectArcs,
+  detectLeagueArcs,
+  liveArcs,
+  type ArcMemory,
+  type PlayerArc,
+} from "./arcs";
 
 const stats = (over: Partial<RosterStats> = {}): RosterStats => ({
   side: "offense",
@@ -167,7 +176,7 @@ describe("keeping the board honest", () => {
 
 describe("how an arc moves through its chapters", () => {
   const arc: PlayerArc = {
-    kind: "freshman-phenom", player: "Jaylen Moss", position: "WR", classYear: "FR",
+    team: "Kansas State", spin: "s", kind: "freshman-phenom", player: "Jaylen Moss", position: "WR", classYear: "FR",
     claim: "c", evidence: [], weight: 100, advancesIf: "a", collapsesIf: "b",
   };
   const mem = (over: Partial<ArcMemory> = {}): ArcMemory => ({
@@ -215,7 +224,7 @@ describe("how an arc moves through its chapters", () => {
 
 describe("what the newsroom is handed", () => {
   const arc: PlayerArc = {
-    kind: "two-way", player: "Cam Rivers", position: "WR", classYear: "SO",
+    team: "Kansas State", spin: "s", kind: "two-way", player: "Cam Rivers", position: "WR", classYear: "SO",
     claim: "Cam Rivers is playing both ways — and producing on both.",
     evidence: ["Offense: 44 catches for 620 yds, 6 TD", "Defense: 31 tackles, 4 INT"],
     weight: 160, advancesIf: "the snaps hold", collapsesIf: "one side eats the other",
@@ -238,5 +247,125 @@ describe("what the newsroom is handed", () => {
 
   it("says nothing at all when the season has no story in it", () => {
     expect(arcsBlock([])).toBeNull();
+  });
+});
+
+// ── The league, not just your locker room ─────────────────────────────────────
+// The opponent's roster is parsed every week anyway, so their stories cost nothing — and
+// without them the rest of the country is scenery. With them, the team on the other sideline
+// turns up carrying a season of its own, and some weeks the two collide.
+
+describe("the other sideline", () => {
+  const prodigy = P("Cade Whitlock", "QB", {
+    year: "SO",
+    stats: stats({ offense: { gamesPlayed: 9, gamesStarted: 9, passYds: 2900, passTDs: 28, passInts: 4 } }),
+  });
+  const safety = P("Deion Alcorn", "FS", {
+    year: "FR",
+    stats: stats({ side: "defense", defense: { gamesPlayed: 9, gamesStarted: 9, tackles: 52, ints: 5, deflections: 9 } }),
+  });
+
+  it("gives the opponent their own stories, marked as theirs", () => {
+    const board = detectLeagueArcs({
+      user: input([safety]),
+      opponent: input([prodigy], { team: "Texas" }),
+    });
+    const theirs = board.find((a) => a.player === "Cade Whitlock")!;
+    expect(theirs.opposing).toBe(true);
+    expect(theirs.team).toBe("Texas");
+    const mine = board.find((a) => a.player === "Deion Alcorn")!;
+    expect(mine.opposing).toBe(false);
+  });
+
+  it("finds the collision when the two stories meet on the field", () => {
+    // The week the beat writes itself: their quarterback, your secondary, same afternoon.
+    const board = detectLeagueArcs({
+      user: input([safety]),
+      opponent: input([prodigy], { team: "Texas" }),
+    });
+    const meeting = board.find((a) => a.kind === "collision")!;
+    expect(meeting.claim).toContain("Deion Alcorn");
+    expect(meeting.claim).toContain("Cade Whitlock");
+    // It leads, because it is the only story that exists for exactly one week.
+    expect(board[0].kind).toBe("collision");
+  });
+
+  it("does not manufacture a collision out of two unrelated stories", () => {
+    // A quarterback and a running back are not a matchup, they are two men in one game.
+    const back = P("Rell Dozier", "HB", {
+      stats: stats({ offense: { gamesPlayed: 9, gamesStarted: 9, rushAtt: 190, rushYds: 1020, rushTDs: 12 } }),
+    });
+    const board = detectLeagueArcs({
+      user: input([back]),
+      opponent: input([prodigy], { team: "Texas" }),
+    });
+    expect(board.filter((a) => a.kind === "collision")).toHaveLength(0);
+  });
+
+  it("keeps the opponent's board short — they are context, not the paper", () => {
+    const loaded = [prodigy, P("Ty Bloom", "HB", { stats: stats({ offense: { gamesPlayed: 9, gamesStarted: 9, rushAtt: 200, rushYds: 1100, rushTDs: 14 } }) }),
+      P("Sam Rooks", "EDGE", { stats: stats({ side: "defense", defense: { gamesPlayed: 9, gamesStarted: 9, sacks: 11, tfl: 16 } }) }),
+      P("Jo Vance", "CB", { stats: stats({ side: "defense", defense: { gamesPlayed: 9, gamesStarted: 9, ints: 6, deflections: 12 } }) })];
+    const board = detectLeagueArcs({ user: input([]), opponent: input(loaded, { team: "Texas" }) });
+    expect(board.filter((a) => a.opposing).length).toBeLessThanOrEqual(2);
+  });
+
+  it("writes the two sidelines as different things", () => {
+    const board = detectLeagueArcs({
+      user: input([safety]),
+      opponent: input([prodigy], { team: "Texas" }),
+    });
+    const block = arcsBlock(liveArcs(board, [], { ranked: false, seasonOver: false }))!;
+    expect(block).toContain("THIS WEEK'S MEETING");
+    expect(block).toContain("THE OTHER SIDELINE");
+    expect(block).toContain("never celebrated as your own");
+  });
+});
+
+describe("the program's own arcs", () => {
+  const team = (over: Record<string, unknown> = {}) =>
+    ({ row: 1, teamIndex: 1, name: "Kansas State", nickname: null, city: null, wins: 8, losses: 0,
+       confWins: null, confLosses: null, rankMedia: 4, rankCoaches: null, rankCFP: null,
+       prestige: 4, ratingOVR: null, ...over }) as never;
+
+  it("calls an unbeaten season what it is", () => {
+    const arcs = detectArcs(
+      input([], { program: { team: team(), games: [], teams: {}, teamRow: 1, archive: [] } })
+    );
+    const zero = arcs.find((a) => a.kind === "unbeaten")!;
+    expect(zero.claim).toContain("has not lost");
+    expect(zero.evidence[0]).toContain("8-0");
+  });
+
+  it("does not call 2-0 a season", () => {
+    const arcs = detectArcs(
+      input([], { program: { team: team({ wins: 2, losses: 0 }), games: [], teams: {}, teamRow: 1, archive: [] } })
+    );
+    expect(arcs.filter((a) => a.kind === "unbeaten")).toHaveLength(0);
+  });
+
+  it("knows a low-prestige program ranked high is a story, and a blue blood is not", () => {
+    const cinders = detectArcs(
+      input([], { program: { team: team({ losses: 1, prestige: 3 }), games: [], teams: {}, teamRow: 1, archive: [] } })
+    );
+    expect(cinders.some((a) => a.kind === "cinderella")).toBe(true);
+
+    const blueBlood = detectArcs(
+      input([], { program: { team: team({ losses: 1, prestige: 9 }), games: [], teams: {}, teamRow: 1, archive: [] } })
+    );
+    expect(blueBlood.some((a) => a.kind === "cinderella")).toBe(false);
+  });
+
+  it("counts the years since a title, which only the archive can see", () => {
+    const seasons = [2027, 2028, 2029, 2030].map((year) => ({
+      dynastyId: "d", year, team: "Kansas State", coachName: null, wins: 9, losses: 3,
+      confWins: null, confLosses: null, finalRankMedia: null, finalRankCFP: null, prestige: null,
+      result: year === 2025 ? "national-champ" : "regular", champion: null,
+      leaders: [], roster: [], games: [], ledger: [], archivedAt: 0,
+    })) as unknown as SeasonRecord[];
+    const arcs = detectArcs(
+      input([], { program: { team: team({ wins: 6, losses: 3, rankMedia: null }), games: [], teams: {}, teamRow: 1, archive: seasons } })
+    );
+    expect(arcs.some((a) => a.kind === "drought")).toBe(true);
   });
 });

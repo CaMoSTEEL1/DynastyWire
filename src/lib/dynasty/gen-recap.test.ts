@@ -621,6 +621,8 @@ describe("what the booth may say while the game is on", () => {
 describe("the season's own storylines reach every desk", () => {
   const ARC = {
     kind: "two-way" as const,
+    team: "Coastal Carolina",
+    spin: "the workload question",
     player: "Cam Rivers",
     position: "WR",
     classYear: "SO",
