@@ -654,7 +654,33 @@ export interface ImpactResult {
 
 /** Write meter-driven consequences into the save. The sidecar refuses while the game is
  * running, backs the save up first, and verifies its writes by re-reading the file. */
+/**
+ * Write back into the save — and refuse to while the game is running.
+ *
+ * Every write here lands in a FILE. College Football holds its own copy of the dynasty in
+ * memory and writes it out on its next autosave, straight over the top of anything we put
+ * there. The write succeeds, verifies, and is silently undone minutes later — which is what a
+ * tester experiences as NIL money that "shows back up again", with no error to point at.
+ *
+ * The sidecar already refuses a save the game has LOCKED, but a lock is not the danger; the
+ * autosave that lands afterwards is. So the check is whether the game is open at all.
+ *
+ * Failing closed is the right side to err on. A refused write costs one relaunch; an accepted
+ * one that gets overwritten costs the user their NIL budget and their trust in the feature.
+ */
 export async function applyImpact(savePath: string, payload: ImpactPayload): Promise<ImpactResult> {
+  const running = await invoke<boolean>("live_game_running").catch(() => false);
+  if (running) {
+    return {
+      ok: false,
+      error: "game-running",
+      detail:
+        "College Football is still open, so this write would be undone. The game holds its own " +
+        "copy of your dynasty and saves over anything written while it is running. Close the " +
+        "game (or return to the main menu and let it save), then try again — and load the save " +
+        "afterwards so the change is what you play on.",
+    };
+  }
   return JSON.parse(
     await invoke<string>("dynasty_impact", { savePath, payload: JSON.stringify(payload) })
   );

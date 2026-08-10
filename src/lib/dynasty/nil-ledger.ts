@@ -82,8 +82,36 @@ export async function commitWrites(
   return next;
 }
 
+/** A write we made that the save no longer agrees with. */
+export interface LostWrite {
+  name: string;
+  /** What we wrote, and verified at the time. */
+  wrote: number;
+  /** What the save says now. */
+  found: number;
+}
+
+export interface PruneResult {
+  pruned: Record<string, number>;
+  changed: boolean;
+  /**
+   * Writes the save has since disagreed with.
+   *
+   * This is the failure the overlay was accidentally CONCEALING. DynastyWire writes NIL to the
+   * save file on disk and verifies it. If the game is still running with that dynasty loaded,
+   * it holds its own copy in memory and writes it out on the next autosave — straight over the
+   * top. The money is gone, the player is unpaid again, and the only sign was a figure that
+   * "kept resetting" a week later.
+   *
+   * Detected only after the week has moved, because that is the point at which an ingest has
+   * definitely happened and the roster is more current than we are. Before that, a mismatch
+   * just means the app has not re-read the save yet, which is not a loss.
+   */
+  lost: LostWrite[];
+}
+
 /**
- * Drop overlay entries that have done their job.
+ * Drop overlay entries that have done their job — and say which ones did not.
  *
  * Two ways an entry expires. The ordinary one: the save now reports the number we wrote, so
  * the overlay is redundant. The backstop: it was written in an earlier in-game week, which
@@ -91,16 +119,32 @@ export async function commitWrites(
  * are. Without the second rule an entry could pin a row forever — if the value were changed
  * inside the game the roster would never match ours again, and the row would show our stale
  * figure for the rest of the dynasty.
+ *
+ * The backstop used to drop those entries SILENTLY, which is exactly how a write the game
+ * overwrote looked like the app forgetting rather than the money vanishing. Now they come back
+ * as `lost` so somebody can be told.
  */
 export function pruneWritten(
   written: Record<string, number>,
   rosterValues: Map<string, number>,
   writtenAt: { year: number; week: number } | null = null,
   now: { year: number; week: number } | null = null
-): { pruned: Record<string, number>; changed: boolean } {
-  const expired =
+): PruneResult {
+  const moved =
     writtenAt != null && now != null && (writtenAt.year !== now.year || writtenAt.week !== now.week);
-  if (expired) return { pruned: {}, changed: Object.keys(written).length > 0 };
+
+  if (moved) {
+    // The week has advanced, so the save has been re-read. Anything it does not agree with
+    // was not kept — with one exception: a value the game raised on its own is not a loss,
+    // and neither is one we cannot see at all (he transferred, graduated, or is off the list).
+    const lost: LostWrite[] = [];
+    for (const [name, value] of Object.entries(written)) {
+      const live = rosterValues.get(name);
+      if (live == null || live === value || live > value) continue;
+      lost.push({ name, wrote: value, found: live });
+    }
+    return { pruned: {}, changed: Object.keys(written).length > 0, lost };
+  }
 
   const pruned: Record<string, number> = {};
   let changed = false;
@@ -109,7 +153,7 @@ export function pruneWritten(
     if (live != null && live === value) changed = true;
     else pruned[name] = value;
   }
-  return { pruned, changed };
+  return { pruned, changed, lost: [] };
 }
 
 export async function clearLedger(dynastyId: string): Promise<void> {

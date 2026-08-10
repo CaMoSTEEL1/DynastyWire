@@ -66,3 +66,77 @@ describe("pruneWritten", () => {
     expect(pruned).toEqual({ A: 500 });
   });
 });
+
+// ── Money that did not stick ──────────────────────────────────────────────────
+// DynastyWire writes NIL into the save FILE. If the game is still open it holds its own copy
+// of the dynasty and writes it out on the next autosave, straight over the top — the write
+// verifies, and is gone minutes later. The overlay used to hide exactly that: a mismatch was
+// kept as a display value, then dropped silently a week on, so the money vanishing looked
+// like the app forgetting. These pin the difference between the two.
+
+describe("reporting a write the save did not keep", () => {
+  const at = { year: 2030, week: 6 };
+
+  it("reports a value the save has replaced with a lower one", () => {
+    const { lost } = pruneWritten(
+      { "Morris Bulaga": 300 },
+      new Map([["Morris Bulaga", 65]]),
+      at,
+      { year: 2030, week: 7 }
+    );
+    expect(lost).toEqual([{ name: "Morris Bulaga", wrote: 300, found: 65 }]);
+  });
+
+  it("says nothing when the save kept it", () => {
+    const { lost } = pruneWritten(
+      { "Morris Bulaga": 300 },
+      new Map([["Morris Bulaga", 300]]),
+      at,
+      { year: 2030, week: 7 }
+    );
+    expect(lost).toEqual([]);
+  });
+
+  it("does not cry loss before the save has been re-read", () => {
+    // Same week: the roster in memory still carries the OLD figure by design. That is the
+    // overlay doing its job, not money going missing, and warning here would fire on every
+    // successful write.
+    const { lost, pruned } = pruneWritten(
+      { "Morris Bulaga": 300 },
+      new Map([["Morris Bulaga", 65]]),
+      at,
+      at
+    );
+    expect(lost).toEqual([]);
+    expect(pruned["Morris Bulaga"]).toBe(300);
+  });
+
+  it("does not call a RAISE a loss", () => {
+    // The game can pay a man more than we did — a bump we did not make is not a write we lost.
+    const { lost } = pruneWritten(
+      { "Morris Bulaga": 300 },
+      new Map([["Morris Bulaga", 450]]),
+      at,
+      { year: 2030, week: 7 }
+    );
+    expect(lost).toEqual([]);
+  });
+
+  it("stays quiet about a player who is no longer on the roster", () => {
+    // Transferred, graduated, or simply outside the slice we loaded. Unknown is not lost.
+    const { lost } = pruneWritten({ "Morris Bulaga": 300 }, new Map(), at, { year: 2030, week: 7 });
+    expect(lost).toEqual([]);
+  });
+
+  it("clears the overlay either way once the week has moved", () => {
+    // The overlay must never outlive the ingest that supersedes it, whether the write held
+    // or not — otherwise a stale figure pins the row for the rest of the dynasty.
+    const { pruned } = pruneWritten(
+      { "Morris Bulaga": 300 },
+      new Map([["Morris Bulaga", 65]]),
+      at,
+      { year: 2030, week: 7 }
+    );
+    expect(pruned).toEqual({});
+  });
+});

@@ -23,7 +23,7 @@ import { fakeGpa, GPA_COLOR } from "@/lib/dynasty/academics";
 import { loadSuspensions, isActive, type Suspension } from "@/lib/dynasty/suspensions";
 import { playerMarketValue } from "@/lib/dynasty/valuation";
 import { scaleStipend, signDeal } from "@/lib/dynasty/deals";
-import { commitWrites, loadLedger, pruneWritten, saveDrafts, setWritten as persistWritten } from "@/lib/dynasty/nil-ledger";
+import { commitWrites, loadLedger, pruneWritten, saveDrafts, setWritten as persistWritten, type LostWrite } from "@/lib/dynasty/nil-ledger";
 
 // Depth-chart order: group by position, sort by OVR (top = starter).
 function byDepthChart(roster: RosterPlayer[]): { pos: string; players: RosterPlayer[] }[] {
@@ -250,6 +250,8 @@ function NILManager() {
     return m;
   }, [roster]);
 
+  const [lost, setLost] = useState<LostWrite[]>([]);
+
   // Restore drafts and the written overlay. Without this a tab switch (which remounts the
   // whole provider) wiped every edit that hadn't been pushed yet.
   useEffect(() => {
@@ -257,9 +259,13 @@ function NILManager() {
     (async () => {
       const l = await loadLedger(dynastyId).catch(() => null);
       if (cancelled || !l) { if (!cancelled) setLedgerReady(true); return; }
-      const { pruned, changed } = pruneWritten(l.written, rosterValues, l.writtenAt, { year, week });
+      const { pruned, changed, lost } = pruneWritten(l.written, rosterValues, l.writtenAt, { year, week });
       setWritten(pruned);
       setEdits(l.drafts);
+      // Money we wrote, verified, and the save no longer has. Almost always the game
+      // overwriting the file from its own memory — so say so, rather than letting it look
+      // like the app forgot.
+      setLost(lost);
       setLedgerReady(true);
       if (changed) await persistWritten(dynastyId, pruned, l.writtenAt).catch(() => {});
     })();
@@ -376,6 +382,34 @@ function NILManager() {
           </div>
         )}
         {err && <p className="mt-3 font-serif text-sm text-dw-red">{err}</p>}
+
+        {lost.length > 0 && (
+          <div className="mt-4 rounded border border-dw-yellow/40 bg-dw-yellow/10 px-4 py-3">
+            <p className="font-sans text-[10px] uppercase tracking-widest text-dw-yellow">
+              Money that did not stick
+            </p>
+            <p className="mt-1.5 font-serif text-[15px] leading-relaxed text-ink2">
+              These deals were written to your save and confirmed at the time. The save no longer
+              has them — which almost always means College Football was still open and saved over
+              the file from its own memory. Set them again with the game closed, then load the save.
+            </p>
+            <ul className="mt-2 space-y-1">
+              {lost.map((l) => (
+                <li key={l.name} className="font-sans text-xs text-ink3">
+                  <span className="text-ink">{l.name}</span> — you set {fmtMoney(l.wrote)}, the save
+                  now says {fmtMoney(l.found)}
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={() => setLost([])}
+              className="mt-3 font-sans text-[10px] uppercase tracking-wider text-ink3 hover:text-ink"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         <div className="mt-4 max-h-[28rem] space-y-4 overflow-y-auto pr-1">
           {depth.map((g) => (
