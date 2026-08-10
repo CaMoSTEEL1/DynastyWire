@@ -204,7 +204,7 @@ export default function LivePage() {
       // tick would cost far more than it is worth, and names only matter when something
       // just happened.
       const who = inGame.length
-        ? whoLine(namesOnScreen(await screenWords(), inGame)) ?? ""
+        ? whoLine(namesOnScreen(await screenWords(), inGame, crop)) ?? ""
         : "";
       talkingRef.current = true;
       setTalking(true);

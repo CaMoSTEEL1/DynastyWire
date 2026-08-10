@@ -1180,6 +1180,7 @@ pub fn run() {
             update_apply,
             #[cfg(windows)]
             live::live_game_running,
+            live::live_game_visible,
             #[cfg(windows)]
             live::live_calibrate,
             live::live_screen_words,

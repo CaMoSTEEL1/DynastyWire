@@ -602,3 +602,51 @@ describe("what a name on screen is allowed to mean", () => {
     expect(whoLine([])).toBeNull();
   });
 });
+
+describe("the player strip above the score bar", () => {
+  // Verbatim from a live game: BRADLEY@1522,1806 and HURLEY@1678,1806, with the score bar at
+  // y≈1904. Divided by the capture scale that is a name at y≈903 and a bar at y≈952 — the
+  // game naming the man the play is about, fifty pixels above its own scoreboard.
+  const roster = [
+    { name: "Bradley Hurley", jersey: 24 },
+    { name: "Tyler Norris", jersey: 11 },
+    { name: "Marcus Herron", jersey: 5 },
+  ];
+  const bar = { y: 952 };
+  const w = (text: string, x: number, y: number): LiveWord => ({ text, x, y });
+
+  it("marks a name in the strip as a banner", () => {
+    const [hit] = namesOnScreen([w("HURLEY", 761, 903)], roster, bar);
+    expect(hit).toMatchObject({ name: "Bradley Hurley", via: "banner" });
+  });
+
+  it("does not mark a side-panel name as one", () => {
+    // Captured at the same moment: HURLEY at x≈3172 under a "RUSHER CAREER COMPARISON" card,
+    // and HERRON under a "RATINGS" graphic. Real names, nothing to do with the play.
+    const [hit] = namesOnScreen([w("HERRON", 1424, 218)], roster, bar);
+    expect(hit.via).toBe("name");
+  });
+
+  it("lets the banner win over side-panel noise", () => {
+    // This is the case that decides whether the feature is usable at all: the strip says who,
+    // while a career card and a ratings box are up elsewhere with other names on them.
+    const names = namesOnScreen(
+      [w("HURLEY", 761, 903), w("HERRON", 1424, 218), w("NORRIS", 1409, 703)],
+      roster,
+      bar
+    );
+    const line = whoLine(names)!;
+    expect(line).toContain("Bradley Hurley");
+    expect(line).toContain("player strip directly above the score bar");
+  });
+
+  it("still refuses when TWO names are in the strip", () => {
+    const names = namesOnScreen([w("HURLEY", 761, 903), w("NORRIS", 900, 903)], roster, bar);
+    expect(whoLine(names)).toBeNull();
+  });
+
+  it("falls back to the weaker wording without a crop to measure against", () => {
+    const names = namesOnScreen([w("HURLEY", 761, 903)], roster, null);
+    expect(whoLine(names)).toContain("LEGIBLE somewhere on screen");
+  });
+});

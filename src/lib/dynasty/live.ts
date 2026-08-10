@@ -625,11 +625,27 @@ export function boardLine(state: LiveState | null): string {
 /** A roster name that was legible on screen when something happened. */
 export interface ScreenName {
   name: string;
-  /** How it was spotted — a surname read, or a jersey number matched to the roster. */
-  via: "name" | "jersey";
+  /**
+   * How it was spotted. "banner" is the strong one — see BANNER_ABOVE_BAR.
+   */
+  via: "banner" | "name" | "jersey";
   x: number;
   y: number;
 }
+
+/**
+ * How far above the score bar the involved-player graphic sits.
+ *
+ * Measured on a live game rather than guessed. During a play the game renders the player's
+ * full name in its own strip immediately above the bar — captured verbatim as
+ * `BRADLEY@1522,1806  HURLEY@1678,1806` with the bar itself at y≈1904, so about fifty window
+ * pixels of gap. Names found anywhere ELSE on screen at the same moment were side panels: a
+ * career-comparison card and a ratings graphic, both far to the right, neither about the play.
+ *
+ * That distinction is the whole value of the position. A name in this band is about what is
+ * happening; a name outside it is furniture.
+ */
+const BANNER_ABOVE_BAR = 90;
 
 const squash = (t: string): string => t.replace(/[^a-z]/gi, "").toUpperCase();
 
@@ -644,7 +660,9 @@ const squash = (t: string): string => t.replace(/[^a-z]/gi, "").toUpperCase();
  */
 export function namesOnScreen(
   words: LiveWord[],
-  roster: { name: string; jersey?: number | null }[]
+  roster: { name: string; jersey?: number | null }[],
+  /** The score-bar crop, so a name sitting just above it can be told from one in a side panel. */
+  bar?: { y: number } | null
 ): ScreenName[] {
   const bySurname = new Map<string, string>();
   const byJersey = new Map<number, string[]>();
@@ -659,6 +677,9 @@ export function namesOnScreen(
     }
   }
 
+  const inBanner = (y: number): boolean =>
+    bar != null && y < bar.y && y >= bar.y - BANNER_ABOVE_BAR;
+
   const found = new Map<string, ScreenName>();
   for (const w of words) {
     const t = w.text.trim();
@@ -666,7 +687,7 @@ export function namesOnScreen(
     if (key.length >= 5) {
       const hit = bySurname.get(key);
       if (hit && !found.has(hit)) {
-        found.set(hit, { name: hit, via: "name", x: w.x, y: w.y });
+        found.set(hit, { name: hit, via: inBanner(w.y) ? "banner" : "name", x: w.x, y: w.y });
         continue;
       }
     }
@@ -675,7 +696,7 @@ export function namesOnScreen(
       const owners = byJersey.get(Number(jersey[1])) ?? [];
       // A number both teams use is no identification at all. Only an unambiguous one counts.
       if (owners.length === 1 && !found.has(owners[0])) {
-        found.set(owners[0], { name: owners[0], via: "jersey", x: w.x, y: w.y });
+        found.set(owners[0], { name: owners[0], via: inBanner(w.y) ? "banner" : "jersey", x: w.x, y: w.y });
       }
     }
   }
@@ -690,13 +711,27 @@ export function namesOnScreen(
  * and sounding certain about a coin flip.
  */
 export function whoLine(names: ScreenName[]): string | null {
-  if (names.length !== 1) return null;
-  const [n] = names;
+  // A name in the strip above the bar wins outright, even with side-panel names on screen
+  // beside it — that strip is the game telling us who the play is about. Two of them is a
+  // graphic we do not understand, and gets the same silence as everything else ambiguous.
+  const banner = names.filter((n) => n.via === "banner");
+  if (banner.length > 1) return null;
+  const n = banner[0] ?? (names.length === 1 ? names[0] : null);
+  if (!n) return null;
+
+  if (n.via === "banner") {
+    return (
+      `ON SCREEN AT THAT MOMENT: ${n.name}, in the player strip directly above the score bar — ` +
+      "which is where the game names the man the play is about. Strong, but still a SCREEN " +
+      "READ and not a box score: follow it the way a live booth does, and correct yourself " +
+      "later if it turns out to be someone else."
+    );
+  }
   return (
     `ON SCREEN AT THAT MOMENT: ${n.name}${n.via === "jersey" ? " (by jersey number)" : ""}. ` +
-    "This is a NAME THAT WAS LEGIBLE, not a confirmed ball carrier — the play-call screen and " +
-    "graphics put names up too. You may follow it the way a live booth does, hedged " +
-    '("that looks like…", "I think that is…"), and never as a flat statement of fact.'
+    "This is a NAME THAT WAS LEGIBLE somewhere on screen, not a confirmed ball carrier — the " +
+    "play-call screen and side graphics put names up too. You may follow it the way a live " +
+    'booth does, hedged ("that looks like…"), and never as a flat statement of fact.'
   );
 }
 

@@ -31,7 +31,10 @@ use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
     ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, SRCCOPY,
 };
-use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindowRect, IsWindow};
+use windows::Win32::Foundation::POINT;
+use windows::Win32::UI::WindowsAndMessaging::{
+    FindWindowW, GetAncestor, GetWindowRect, IsIconic, IsWindow, WindowFromPoint, GA_ROOT,
+};
 
 /// One OCR'd word and where it sat, so a user can find their score bar once and store the crop.
 #[derive(Serialize)]
@@ -69,6 +72,41 @@ fn game_window() -> Option<HWND> {
             return None;
         }
         Some(hwnd)
+    }
+}
+
+/// Are the game's pixels actually the ones at the game's rectangle?
+///
+/// This matters more than it sounds. The capture below is a BitBlt off the desktop at the
+/// game's rectangle — which is how a D3D game gets captured at all, since one will not answer
+/// PrintWindow. The cost is that it copies whatever is ON TOP of that rectangle. Open the
+/// Start menu over the game and the reader happily OCRs the desktop and calls it the game.
+///
+/// Caught exactly that way: a screen probe run during a live game came back with Spotify,
+/// TikTok, Roblox and a Realtek audio dialog. Nothing errored. It read the wrong screen and
+/// would have gone on doing it all night.
+///
+/// The test is NOT "is the game focused". That would break the setup this feature is most
+/// useful in — game on one monitor, the Booth open on the other — where the game is plainly
+/// visible while something else holds focus. What matters is occlusion, so this asks Windows
+/// what is actually drawn at the middle of the game's rectangle and checks that the answer is
+/// the game. Minimised is the same question with an obvious answer.
+fn game_is_visible(hwnd: HWND) -> bool {
+    unsafe {
+        if IsIconic(hwnd).as_bool() {
+            return false;
+        }
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_err() {
+            return false;
+        }
+        let mid = POINT { x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2 };
+        let on_top = WindowFromPoint(mid);
+        if on_top.0.is_null() {
+            return false;
+        }
+        // A child control answers for itself; the root is what identifies the application.
+        GetAncestor(on_top, GA_ROOT) == hwnd
     }
 }
 
@@ -547,6 +585,13 @@ pub fn live_calibrate() -> Result<Vec<LiveWord>, String> {
     ocr(&frame)
 }
 
+/// Is the game running AND in front? The Booth shows a different message for each, because
+/// "start the game" and "the game is behind this window" are completely different problems.
+#[tauri::command]
+pub fn live_game_visible() -> bool {
+    game_window().map(game_is_visible).unwrap_or(false)
+}
+
 /// Every word on the whole screen, contrast-crushed the way the bar read is.
 ///
 /// This exists to answer the one question the score bar cannot: WHO. The bar carries a score
@@ -561,11 +606,22 @@ pub fn live_calibrate() -> Result<Vec<LiveWord>, String> {
 #[tauri::command]
 pub fn live_screen_words() -> Result<Vec<LiveWord>, String> {
     let hwnd = game_window().ok_or("College Football 27 isn't running.")?;
+    if !game_is_visible(hwnd) {
+        return Ok(Vec::new());
+    }
     let mut rect = RECT::default();
     unsafe { GetWindowRect(hwnd, &mut rect).map_err(|e| e.to_string())? };
-    let mut frame = capture(hwnd, (0, 0, rect.right - rect.left, rect.bottom - rect.top), 2)?;
+    const SCALE: i32 = 2;
+    let mut frame = capture(hwnd, (0, 0, rect.right - rect.left, rect.bottom - rect.top), SCALE)?;
     binarise(&mut frame, BAR_CUTOFF);
-    ocr(&frame)
+    // Report WINDOW coordinates, not upscaled ones. The caller compares these against the
+    // score-bar crop it already stores, and a factor of two between the two coordinate systems
+    // is exactly the kind of quiet mismatch that makes a positional rule look like it works
+    // until it doesn't.
+    Ok(ocr(&frame)?
+        .into_iter()
+        .map(|w| LiveWord { text: w.text, x: w.x / SCALE, y: w.y / SCALE })
+        .collect())
 }
 
 /// One read of the score bar. Emits no events and remembers nothing — deciding that something
@@ -579,6 +635,12 @@ pub fn live_read(
     teams: Option<Vec<String>>,
 ) -> Result<LiveState, String> {
     let hwnd = game_window().ok_or("College Football 27 isn't running.")?;
+    // Behind another window, so anything captured here is somebody else's pixels. Reported as
+    // "no bar on screen", which is already the normal between-plays case and needs no new
+    // handling anywhere downstream.
+    if !game_is_visible(hwnd) {
+        return Ok(LiveState { raw: String::new(), on_screen: false, ..Default::default() });
+    }
     let mut frame = capture(hwnd, (x, y, w, h), 3)?;
     binarise(&mut frame, BAR_CUTOFF);
     Ok(parse(&ocr(&frame)?, &teams.unwrap_or_default()))
@@ -768,6 +830,81 @@ mod live_check {
         bmp.extend_from_slice(&f.pixels);
         std::fs::write(&out, &bmp).expect("write bmp");
         println!("wrote {out} ({}x{})", f.width, f.height);
+    }
+
+    /// The decisive question: when the SCORE BAR is up — meaning a play is live, not a
+    /// play-call screen — is there a legible player name on screen too, and is it one name
+    /// or a crowd of them?
+    ///
+    ///   cargo test --lib dump_names_during_play -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dump_names_during_play() {
+        assert!(super::live_game_running(), "College Football 27 is not running");
+        let mut live = 0;
+        let mut blind = 0;
+        for i in 0..60 {
+            let teams: Vec<String> = ["Tennessee", "Kansas State"].iter().map(|s| s.to_string()).collect();
+            let bar = super::live_read(350, 930, 1400, 90, Some(teams));
+            let on = bar.as_ref().map(|b| b.on_screen).unwrap_or(false);
+            if !on {
+                blind += 1;
+            } else {
+                live += 1;
+                let words = super::live_screen_words().unwrap_or_default();
+                let names: Vec<String> = words
+                    .iter()
+                    .filter(|w| {
+                        let t = w.text.trim();
+                        t.chars().filter(|c| c.is_alphabetic()).count() >= 5
+                            && t.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                    })
+                    .map(|w| format!("{}@{},{}", w.text.trim(), w.x, w.y))
+                    .collect();
+                let d = bar.as_ref().ok().and_then(|b| b.down.clone()).unwrap_or_default();
+                println!("{i}: LIVE {d} | {} tokens: {}", names.len(), names.join("  "));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        println!("--- live frames: {live}, no-bar frames: {blind} ---");
+    }
+
+    /// Sample the WHOLE screen repeatedly and collect every name-shaped token.
+    ///
+    /// The question is whether the game puts a legible player name up at the moment of a play.
+    /// A single capture cannot answer it — the overlay is transient — so this samples fast and
+    /// pools what it saw.
+    ///
+    ///   cargo test --lib dump_screen_names -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dump_screen_names() {
+        assert!(super::live_game_running(), "College Football 27 is not running");
+        use std::collections::BTreeMap;
+        let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+        let mut frames = 0;
+        for _ in 0..40 {
+            if let Ok(words) = super::live_screen_words() {
+                frames += 1;
+                for w in words {
+                    let t = w.text.trim().to_string();
+                    let letters = t.chars().filter(|c| c.is_alphabetic()).count();
+                    // Name-shaped: mostly letters, long enough not to be noise. Plus anything
+                    // written as a jersey.
+                    let jersey = t.starts_with('#');
+                    if letters >= 5 || jersey {
+                        *seen.entry(format!("{t}  @{},{}", w.x, w.y)).or_insert(0) += 1;
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(700));
+        }
+        println!("--- {frames} frames sampled ---");
+        let mut rows: Vec<_> = seen.into_iter().collect();
+        rows.sort_by(|a, b| b.1.cmp(&a.1));
+        for (tok, n) in rows.iter().take(80) {
+            println!("  {n:>3}x  {tok}");
+        }
     }
 
     /// Every word on the screen with the pixel it sits at, for working out where the score
