@@ -604,6 +604,107 @@ export function boardLine(state: LiveState | null): string {
   return state.scores.map(([t, v]) => `${t} ${v}`).join(", ");
 }
 
+
+// ── Who ────────────────────────────────────────────────────────────────────────
+//
+// The score bar answers what and when and never who. The rest of the screen does: the game
+// puts names on the ball carrier, on post-play graphics, on the play-call screen. None of it
+// is at a fixed position and none of it needs to be — the app is holding both rosters, so
+// anything readable on screen can be matched against the men who are actually in this game.
+//
+// The honest limit, and it is the whole design: A NAME ON SCREEN IS NOT A CONFESSION. The
+// play-call screen shows names of men who are about to do nothing. A season-leader graphic
+// shows a man who is standing on the sideline. So this returns CANDIDATES — who was legible
+// at the moment something happened — and never an actor.
+//
+// What that is good enough for: a live booth, which is allowed to say "that looked like
+// Marsh" and be corrected, the way a real one does forty times a night. What it is NOT good
+// enough for is the newsroom, which gets the real per-game box score out of the save after
+// the game and has no need of a guess. The two are kept apart on purpose.
+
+/** A roster name that was legible on screen when something happened. */
+export interface ScreenName {
+  name: string;
+  /** How it was spotted — a surname read, or a jersey number matched to the roster. */
+  via: "name" | "jersey";
+  x: number;
+  y: number;
+}
+
+const squash = (t: string): string => t.replace(/[^a-z]/gi, "").toUpperCase();
+
+/**
+ * Roster men who are legible on screen right now.
+ *
+ * Surnames only. First names are short, common, and collide with everything on a football
+ * broadcast — "Cam" is a name and half a camera graphic — while a surname of five letters or
+ * more is a genuinely rare token to find by accident. Jersey numbers are matched only when
+ * written as `#12`, because a bare number on a football screen is the down, the distance, the
+ * yard line, the clock, the score, or the play clock.
+ */
+export function namesOnScreen(
+  words: LiveWord[],
+  roster: { name: string; jersey?: number | null }[]
+): ScreenName[] {
+  const bySurname = new Map<string, string>();
+  const byJersey = new Map<number, string[]>();
+  for (const p of roster) {
+    const parts = p.name.trim().split(/\s+/);
+    const surname = squash(parts[parts.length - 1] ?? "");
+    // Five letters is the bar for a token that has to survive being found by accident in the
+    // middle of a broadcast graphic.
+    if (surname.length >= 5) bySurname.set(surname, p.name);
+    if (typeof p.jersey === "number" && p.jersey > 0) {
+      byJersey.set(p.jersey, [...(byJersey.get(p.jersey) ?? []), p.name]);
+    }
+  }
+
+  const found = new Map<string, ScreenName>();
+  for (const w of words) {
+    const t = w.text.trim();
+    const key = squash(t);
+    if (key.length >= 5) {
+      const hit = bySurname.get(key);
+      if (hit && !found.has(hit)) {
+        found.set(hit, { name: hit, via: "name", x: w.x, y: w.y });
+        continue;
+      }
+    }
+    const jersey = /^#\s*(\d{1,2})$/.exec(t);
+    if (jersey) {
+      const owners = byJersey.get(Number(jersey[1])) ?? [];
+      // A number both teams use is no identification at all. Only an unambiguous one counts.
+      if (owners.length === 1 && !found.has(owners[0])) {
+        found.set(owners[0], { name: owners[0], via: "jersey", x: w.x, y: w.y });
+      }
+    }
+  }
+  return [...found.values()];
+}
+
+/**
+ * How the booth is allowed to talk about who it saw.
+ *
+ * One name is a lead worth following on air. Several at once is the play-call screen or a
+ * graphic, and means nothing — so it says nothing, rather than picking whichever came first
+ * and sounding certain about a coin flip.
+ */
+export function whoLine(names: ScreenName[]): string | null {
+  if (names.length !== 1) return null;
+  const [n] = names;
+  return (
+    `ON SCREEN AT THAT MOMENT: ${n.name}${n.via === "jersey" ? " (by jersey number)" : ""}. ` +
+    "This is a NAME THAT WAS LEGIBLE, not a confirmed ball carrier — the play-call screen and " +
+    "graphics put names up too. You may follow it the way a live booth does, hedged " +
+    '("that looks like…", "I think that is…"), and never as a flat statement of fact.'
+  );
+}
+
+/** Every word on screen, for the one question the score bar cannot answer. */
+export function screenWords(): Promise<LiveWord[]> {
+  return invoke<LiveWord[]>("live_screen_words").catch(() => []);
+}
+
 // ── The bridge ─────────────────────────────────────────────────────────────────
 
 export interface CropRegion {

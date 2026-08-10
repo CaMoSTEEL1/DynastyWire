@@ -15,11 +15,13 @@ import {
   boardLine,
   mergeLog,
   momentLines,
+  namesOnScreen,
   playResult,
   playsForResult,
   scoringPlays,
   stateKey,
   supersedes,
+  whoLine,
   worthCalling,
   type LiveEvent,
   type LiveLog,
@@ -535,5 +537,68 @@ describe("what the chains say happened", () => {
     const e = deriveEvents(state({ down: "1st & 10" }), state({ down: "2nd & 2" }));
     expect(e[0].text).toBe("8 yards — 2nd & 2");
     expect(e[0].yards).toBe(8);
+  });
+});
+
+// ── Who ───────────────────────────────────────────────────────────────────────
+// The bar answers what and when, never who. The rest of the screen carries names, and the app
+// is holding both rosters — so the question is not whether a name can be found, it is what
+// finding one is allowed to mean.
+
+describe("finding a name on screen", () => {
+  const roster = [
+    { name: "Kellen Marsh", jersey: 22 },
+    { name: "Dorian Whitfield", jersey: 7 },
+    { name: "Ty Bo", jersey: 3 },
+  ];
+  const w = (text: string, x = 100, y = 100): LiveWord => ({ text, x, y });
+
+  it("matches a surname wherever it appears", () => {
+    expect(namesOnScreen([w("MARSH")], roster)).toEqual([
+      { name: "Kellen Marsh", via: "name", x: 100, y: 100 },
+    ]);
+  });
+
+  it("ignores short surnames, which collide with everything", () => {
+    // "BO" would match half the graphics on a football broadcast.
+    expect(namesOnScreen([w("BO"), w("TY")], roster)).toEqual([]);
+  });
+
+  it("reads a jersey only when it is written as one", () => {
+    // A bare number on a football screen is the down, the distance, the yard line, the clock,
+    // the score, or the play clock. Almost never a jersey.
+    expect(namesOnScreen([w("#22")], roster)[0].name).toBe("Kellen Marsh");
+    expect(namesOnScreen([w("22")], roster)).toEqual([]);
+  });
+
+  it("refuses a jersey two men share", () => {
+    const twins = [{ name: "A Adamson", jersey: 5 }, { name: "B Bergstrom", jersey: 5 }];
+    expect(namesOnScreen([w("#5")], twins)).toEqual([]);
+  });
+
+  it("does not report the same man twice", () => {
+    expect(namesOnScreen([w("MARSH"), w("#22")], roster)).toHaveLength(1);
+  });
+});
+
+describe("what a name on screen is allowed to mean", () => {
+  const one = [{ name: "Kellen Marsh", via: "name" as const, x: 0, y: 0 }];
+
+  it("offers a single name as a lead, explicitly hedged", () => {
+    const line = whoLine(one)!;
+    expect(line).toContain("Kellen Marsh");
+    expect(line).toContain("not a confirmed ball carrier");
+    expect(line).toContain("never as a flat statement of fact");
+  });
+
+  it("says nothing when several names are up at once", () => {
+    // That is the play-call screen or a graphic. Picking the first one and sounding certain
+    // about a coin flip is exactly the failure this whole app is built against.
+    const many = [
+      { name: "Kellen Marsh", via: "name" as const, x: 0, y: 0 },
+      { name: "Dorian Whitfield", via: "name" as const, x: 0, y: 0 },
+    ];
+    expect(whoLine(many)).toBeNull();
+    expect(whoLine([])).toBeNull();
   });
 });

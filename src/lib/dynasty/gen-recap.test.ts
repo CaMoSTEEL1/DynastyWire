@@ -679,3 +679,23 @@ describe("the season's own storylines reach every desk", () => {
     expect(gen.buildMediaContext(DELTA, SNAPSHOT, opts).userContext).not.toContain("THE STORIES OF THIS SEASON");
   });
 });
+
+describe("what the booth does with a name it saw", () => {
+  const withWho = (who: string) =>
+    gen.buildSpec("live-call", gen.buildMediaContext(DELTA, SNAPSHOT, opts), {
+      moment: ["2nd 8:42 — A 22-yard play — 1st & 10"],
+      board: "State 21, Rival 14",
+      who,
+    }).prompt;
+
+  it("passes the sighting through, hedge and all", () => {
+    const p = withWho("ON SCREEN AT THAT MOMENT: Kellen Marsh. This is a NAME THAT WAS LEGIBLE, not a confirmed ball carrier.");
+    expect(p).toContain("Kellen Marsh");
+    expect(p).toContain("not a confirmed ball carrier");
+  });
+
+  it("changes nothing when nobody was legible", () => {
+    // Most plays. The booth falls back to describing the result, which it can always do.
+    expect(withWho("")).not.toContain("ON SCREEN AT THAT MOMENT");
+  });
+});

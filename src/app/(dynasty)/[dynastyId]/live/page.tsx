@@ -27,9 +27,12 @@ import {
   guessCrop,
   mergeLog,
   momentLines,
+  namesOnScreen,
   readBar,
   scoringPlays,
+  screenWords,
   supersedes,
+  whoLine,
   worthCalling,
   type Confirmer,
   type CropRegion,
@@ -54,7 +57,8 @@ const KIND_STYLE: Record<string, string> = {
 };
 
 export default function LivePage() {
-  const { snapshot, settings, updateSettings, dynastyId, year, week, generate, hasApiKey } = useDynasty();
+  const { snapshot, settings, updateSettings, dynastyId, year, week, generate, hasApiKey, roster, oppRoster } =
+    useDynasty();
 
   const [running, setRunning] = useState<boolean | null>(null);
   const [watching, setWatching] = useState(false);
@@ -184,11 +188,24 @@ export default function LivePage() {
   // state copy exists only to move the spinner.
   const talkingRef = useRef(false);
 
+  // Both rosters, so a name read off the screen can be matched to a man who is actually in
+  // this game rather than to any name-shaped word.
+  const inGame = useMemo(
+    () => [...roster, ...oppRoster].map((p) => ({ name: p.name, jersey: p.jersey })),
+    [roster, oppRoster]
+  );
+
   const speak = useCallback(
     async (board: string, clock: string) => {
       const moment = momentLines(pending.current);
       pending.current = [];
       if (!moment.length) return;
+      // The one question the bar cannot answer. Read ONLY here — a full-screen OCR every
+      // tick would cost far more than it is worth, and names only matter when something
+      // just happened.
+      const who = inGame.length
+        ? whoLine(namesOnScreen(await screenWords(), inGame)) ?? ""
+        : "";
       talkingRef.current = true;
       setTalking(true);
       try {
@@ -198,7 +215,7 @@ export default function LivePage() {
         const said = spokenLines.current.slice(-6);
         const res = await generate<{ exchange?: LiveCall["exchange"]; call?: string; posts?: LiveCall["posts"] }>(
           "live-call",
-          { moment, board, clock, said },
+          { moment, board, clock, said, who },
           { force: true }
         );
         const exchange = Array.isArray(res?.exchange) ? res.exchange.filter((t) => t?.line) : [];
@@ -217,7 +234,7 @@ export default function LivePage() {
         setTalking(false);
       }
     },
-    [generate]
+    [generate, inGame]
   );
 
   const tick = useCallback(async () => {

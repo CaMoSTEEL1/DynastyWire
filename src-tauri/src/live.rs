@@ -547,6 +547,27 @@ pub fn live_calibrate() -> Result<Vec<LiveWord>, String> {
     ocr(&frame)
 }
 
+/// Every word on the whole screen, contrast-crushed the way the bar read is.
+///
+/// This exists to answer the one question the score bar cannot: WHO. The bar carries a score
+/// and a set of chains and no names at all — but the game puts names on screen constantly, on
+/// the ball carrier, on post-play graphics, on the play-call screen. None of that is at a
+/// fixed place, and it does not need to be: the caller holds both rosters, so anything on
+/// screen can simply be matched against the men who are actually in this game.
+///
+/// Deliberately separate from `live_calibrate`, which finds the score bar and must keep
+/// behaving exactly as it did. This one binarises, because that is what made the bar readable
+/// and the same white-on-anything problem applies to a name graphic.
+#[tauri::command]
+pub fn live_screen_words() -> Result<Vec<LiveWord>, String> {
+    let hwnd = game_window().ok_or("College Football 27 isn't running.")?;
+    let mut rect = RECT::default();
+    unsafe { GetWindowRect(hwnd, &mut rect).map_err(|e| e.to_string())? };
+    let mut frame = capture(hwnd, (0, 0, rect.right - rect.left, rect.bottom - rect.top), 2)?;
+    binarise(&mut frame, BAR_CUTOFF);
+    ocr(&frame)
+}
+
 /// One read of the score bar. Emits no events and remembers nothing — deciding that something
 /// happened needs two agreeing reads, and that belongs to the caller, not here.
 #[tauri::command]

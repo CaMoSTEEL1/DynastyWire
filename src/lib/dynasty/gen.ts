@@ -2140,6 +2140,10 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
           "",
           gameStateNote(board, clock, ctx),
           "",
+          // Who was legible on screen when it happened — see whoLine() in live.ts. It arrives
+          // pre-hedged, because the caller is the only thing that knows how weak the signal is.
+          typeof extra.who === "string" && extra.who ? extra.who : "",
+          typeof extra.who === "string" && extra.who ? "" : "",
           ...boothPersonnel(ctx),
           "",
           `TONE OF THE LEAD VOICE: ${voiceNote}.`,

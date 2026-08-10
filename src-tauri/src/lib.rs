@@ -1182,6 +1182,7 @@ pub fn run() {
             live::live_game_running,
             #[cfg(windows)]
             live::live_calibrate,
+            live::live_screen_words,
             #[cfg(windows)]
             live::live_read,
             validate_save,
