@@ -15,6 +15,7 @@ import {
   boardLine,
   mergeLog,
   momentLines,
+  playResult,
   playsForResult,
   scoringPlays,
   stateKey,
@@ -91,13 +92,16 @@ describe("downs and quarters", () => {
   it("calls a reset to first down what it is", () => {
     const e = deriveEvents(state({ down: "3rd & 4" }), state({ down: "1st & 10" }));
     expect(e[0].kind).toBe("first-down");
-    expect(e[0].text).toMatch(/First down/);
+    expect(e[0].text).toMatch(/Moved the chains on third down/);
   });
 
-  it("reports later downs without dressing them up", () => {
+  it("reports a SKIPPED down without inventing a yardage for it", () => {
+    // 1st straight to 3rd means a read was missed, so the six yards between them are two
+    // plays, not one. The down is reported; the number is not.
     const e = deriveEvents(state({ down: "1st & 10" }), state({ down: "3rd & 4" }));
     expect(e[0].kind).toBe("down");
     expect(e[0].text).toBe("3rd & 4");
+    expect(e[0].yards).toBeNull();
   });
 
   it("announces a new quarter", () => {
@@ -468,5 +472,68 @@ describe("telling a restarted game from a continued one", () => {
   it("does not fire on an empty log or a half-read board", () => {
     expect(supersedes(null, [["Kansas State", 0], ["Tennessee", 0]])).toBe(false);
     expect(supersedes(log([["Kansas State", 21], ["Tennessee", 14]]), [["Kansas State", 0]])).toBe(false);
+  });
+});
+
+// ── Reading the play off the chains ───────────────────────────────────────────
+// The down and distance was on the bar the whole time and nobody was subtracting it. Inside a
+// series it is arithmetic; across a change of possession it is a guess, and the difference
+// between those two is the entire safety property here.
+
+describe("what the chains say happened", () => {
+  it("turns two downs into the yards between them", () => {
+    expect(playResult("1st & 10", "2nd & 3")?.yards).toBe(7);
+    expect(playResult("2nd & 3", "3rd & 1")?.yards).toBe(2);
+  });
+
+  it("calls a big gain a big play and a sack a loss", () => {
+    const big = playResult("1st & 10", "2nd & -5".replace("-5", "10"));
+    expect(big?.kind).toBe("stuffed"); // 1st & 10 → 2nd & 10 is an incompletion, not a play
+    expect(playResult("1st & 25", "2nd & 4")).toMatchObject({ kind: "big-play", yards: 21 });
+    expect(playResult("1st & 10", "2nd & 18")).toMatchObject({ kind: "loss", yards: -8 });
+  });
+
+  it("knows an ordinary gain from a stuff", () => {
+    expect(playResult("1st & 10", "2nd & 6")?.kind).toBe("down");
+    expect(playResult("1st & 10", "2nd & 10")?.text).toMatch(/Nothing on the play/);
+  });
+
+  it("calls a third-and-long conversion what it is", () => {
+    expect(playResult("3rd & 12", "1st & 10")).toMatchObject({ kind: "conversion" });
+    expect(playResult("4th & 8", "1st & 10")?.text).toMatch(/fourth and 8/);
+  });
+
+  it("refuses to do arithmetic across a change of possession", () => {
+    // 1st & 10 → 1st & 10 is a punt, a turnover, a touchback or a conversion, and the bar
+    // never says who has the ball. A booth narrating a punt as a nine-yard gain is worse
+    // than a booth saying nothing.
+    expect(playResult("1st & 10", "1st & 10")).toBeNull();
+    expect(playResult("2nd & 7", "1st & 10")).toBeNull();
+  });
+
+  it("does not invent a number when the bar stops giving one", () => {
+    // Goal-to-go and "inches" are real distances that are not integers.
+    expect(playResult("1st & GOAL", "2nd & GOAL")?.yards).toBeNull();
+    expect(playResult("2nd & inches", "3rd & inches")?.yards).toBeNull();
+  });
+
+  it("ignores anything that is not a down and distance", () => {
+    expect(playResult(null, "2nd & 6")).toBeNull();
+    expect(playResult("KICKOFF", "2nd & 6")).toBeNull();
+  });
+
+  it("interrupts the booth for a big play, never for an ordinary one", () => {
+    const ev = (kind: LiveEvent["kind"]): LiveEvent =>
+      ({ kind, text: "", team: null, at: null, quarter: null, seen: 1 });
+    expect(worthCalling([ev("big-play")])).toBe(true);
+    expect(worthCalling([ev("conversion")])).toBe(true);
+    expect(worthCalling([ev("loss")])).toBe(true);
+    expect(worthCalling([ev("down"), ev("stuffed"), ev("first-down")])).toBe(false);
+  });
+
+  it("puts the yardage into the feed, end to end", () => {
+    const e = deriveEvents(state({ down: "1st & 10" }), state({ down: "2nd & 2" }));
+    expect(e[0].text).toBe("8 yards — 2nd & 2");
+    expect(e[0].yards).toBe(8);
   });
 });

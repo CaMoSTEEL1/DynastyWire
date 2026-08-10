@@ -196,18 +196,19 @@ export default function LivePage() {
         // same question eleven times gets eleven similar answers — which a live feed makes
         // painfully obvious — and a broadcast is supposed to build on itself anyway.
         const said = spokenLines.current.slice(-6);
-        const res = await generate<{ call?: string; posts?: LiveCall["posts"] }>(
+        const res = await generate<{ exchange?: LiveCall["exchange"]; call?: string; posts?: LiveCall["posts"] }>(
           "live-call",
           { moment, board, clock, said },
           { force: true }
         );
+        const exchange = Array.isArray(res?.exchange) ? res.exchange.filter((t) => t?.line) : [];
         const call = typeof res?.call === "string" ? res.call.trim() : "";
         const posts = Array.isArray(res?.posts) ? res.posts.filter((p) => p?.body) : [];
-        if (!call && !posts.length) return;
+        if (!exchange.length && !call && !posts.length) return;
         spoken.current += 1;
         setSpokenCount(spoken.current);
         if (call) spokenLines.current.push(call);
-        setCalls((c) => [{ call, posts, at: clock || null, quarter: null, seen: Date.now() }, ...c].slice(0, 30));
+        setCalls((c) => [{ exchange, call, posts, at: clock || null, quarter: null, seen: Date.now() }, ...c].slice(0, 30));
       } catch (e) {
         // A failed call is not a failed game. The feed keeps reading either way.
         setErr(e instanceof Error ? e.message : String(e));
@@ -459,7 +460,20 @@ export default function LivePage() {
                   <span className="font-sans text-[10px] uppercase tracking-[0.25em] text-dw-accent2">
                     In the booth {item.at ? `· ${item.at}` : ""}
                   </span>
-                  {item.call && <p className="mt-1 font-serif text-[17px] leading-snug text-ink">{item.call}</p>}
+                  {item.exchange?.length ? (
+                    <ul className="mt-1.5 space-y-1.5">
+                      {item.exchange.map((t, k) => (
+                        <li key={k} className="font-serif text-[17px] leading-snug text-ink">
+                          <span className="mr-2 font-sans text-[10px] uppercase tracking-wider text-dw-accent2">
+                            {t.who}
+                          </span>
+                          {t.line}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    item.call && <p className="mt-1 font-serif text-[17px] leading-snug text-ink">{item.call}</p>
+                  )}
                   {item.posts.length > 0 && (
                     <ul className="mt-3 space-y-2 border-l border-dw-border pl-3">
                       {item.posts.map((p, j) => (

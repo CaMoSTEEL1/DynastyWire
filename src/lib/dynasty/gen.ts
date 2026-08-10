@@ -2074,12 +2074,20 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
       // Who is on the mic and who is posting, rotated per call. Three fixed archetypes for a
       // whole game is the other half of the sameness: the same three voices reacting to the
       // same scoreboard produce the same three sentences.
+      // A booth is two people, and the second one is what makes it sound like a broadcast
+      // instead of a press release. Paired so the roles genuinely differ — a play-by-play man
+      // and a colour analyst want different things out of the same snap.
+      const BOOTHS: [string, string][] = [
+        ["Play-by-play", "Colour"],
+        ["Play-by-play", "Sideline"],
+        ["Colour", "Studio"],
+      ];
       const VOICES = [
-        "the play-by-play man — clean, urgent, the score and the situation",
-        "the colour analyst — an ex-coach who explains what it costs the other side",
-        "the sideline reporter — what the bench just did, what the crowd just did",
-        "the studio host cutting in — this game against the rest of the day",
-        "the veteran radio voice — plainer, drier, older, unimpressed by most things",
+        "a play-by-play man — clean and urgent, the situation and the stakes",
+        "a colour analyst — an ex-coach, interested in what it costs the other side",
+        "a sideline reporter — the bench, the crowd, the trainer's tent",
+        "a studio host cutting in — this game measured against the rest of the day",
+        "a veteran radio voice — plainer, drier, older, unimpressed by most things",
       ];
       const CROWD = [
         { who: "a fan with no composure left", note: "all caps, superstitious, personally aggrieved" },
@@ -2094,7 +2102,8 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
       // Deterministic per call rather than random: the same moment always reads the same way,
       // and the rotation still moves every time because the count does.
       const turn = said.length;
-      const voice = VOICES[turn % VOICES.length];
+      const [voice, partner] = BOOTHS[turn % BOOTHS.length];
+      const voiceNote = VOICES[turn % VOICES.length];
       const crowd = [0, 1, 2].map((i) => CROWD[(turn * 3 + i) % CROWD.length]);
 
       return {
@@ -2102,7 +2111,7 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
         prompt: [
           "You are on the air. This game is being played RIGHT NOW and you are watching the",
           "scoreboard, not a replay. Respond as JSON with this exact schema:",
-          '{"call": "string", "posts": [{"handle": "string", "displayName": "string", "type": "fan"|"rival"|"analyst", "body": "string"}]}',
+          '{"exchange": [{"who": "string", "line": "string"}], "posts": [{"handle": "string", "displayName": "string", "type": "fan"|"rival"|"analyst", "body": "string"}]}',
           "",
           `GAME: ${ctx.school} vs ${opponent}.`,
           board ? `SCOREBOARD RIGHT NOW: ${board}${clock ? ` · ${clock}` : ""}` : "",
@@ -2114,7 +2123,11 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
           said.length ? "not re-explain a situation you have already explained. BUILD on it:" : "",
           ...said.map((line) => `  - ${line}`),
           said.length ? "" : "",
-          `- call: ONE or two sentences, in the voice of ${voice}.`,
+          "- exchange: the booth TALKING TO EACH OTHER, 2 or 3 turns, alternating. This is a",
+          "  conversation, not a statement — the second voice answers the first, disagrees with it,",
+          `  finishes its thought or cuts it off. On the mic tonight: ${voice}, working with`,
+          `  ${partner}. Use those two names in "who", nobody else.`,
+          "  Keep each line short — one or two sentences, the way people actually talk on air.",
           "  React to THIS moment and what it does to the game — the lead, the margin, who is in",
           "  trouble now, what has to happen next. Never open the same way twice in a night: no",
           "  stock \"and there it is\" / \"how about that\" openers, no restating the score as a",
@@ -2127,12 +2140,18 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
           "",
           gameStateNote(board, clock, ctx),
           "",
+          ...boothPersonnel(ctx),
+          "",
+          `TONE OF THE LEAD VOICE: ${voiceNote}.`,
+          "",
           "WHAT YOU CANNOT SEE — this is a hard limit, not a style note:",
-          "- You saw a SCOREBOARD change. You did NOT see the play. Never say who scored, how",
-          "  far it went, what kind of play it was, or who made the stop. No 'found the end zone',",
-          "  no 'broke free', no '40-yard strike'. There is no film here to describe.",
+          "- You saw a SCOREBOARD and a set of chains. You did NOT see the play. Where a yardage",
+          "  is given above it is REAL — the chains moved that far — but WHO did it and HOW is",
+          "  unknown. No 'found the end zone', no 'broke free', no '40-yard strike'. Describe the",
+          "  result, never the film.",
           "- A player may be named ONLY for what he has done this SEASON, or for what you EXPECT",
-          "  of him next. Never as the man who did the thing that just happened.",
+          "  of him next ('this is where you would look for him'). Never as the man who did the",
+          "  thing that just happened, however obvious it seems.",
           "- Do not invent a drive, a penalty, an injury, a turnover, or a crowd moment.",
           "- Do not state a final score or call the game over unless the clock says it is.",
           "- NO HTML entities. Plain text only.",
@@ -2861,6 +2880,58 @@ function buildGradeSpec(ctx: MediaContext, extra: Extra): PromptSpec {
  * during a game. Deliberately coarse: the model is good at tone once it is told the stakes,
  * and a precise instruction here would flatten it back out.
  */
+/**
+ * Who is actually on the field, for a booth that has to fill air between plays.
+ *
+ * The scoreboard says nothing about personnel, so without this the commentary can only ever
+ * describe the score — which is why it ran out of things to say by the second quarter. A real
+ * booth talks about PEOPLE: who has been carrying this offense, who the other side has to
+ * account for, who is having the kind of season that gets brought up every week.
+ *
+ * These are SEASON numbers, and the prompt is explicit that they are. That is the line the
+ * booth may not cross: it can say a man has 900 yards this year and that this is where you
+ * would expect them to go to him, and it can never say he just caught the ball, because the
+ * bar does not know that and neither does anyone else.
+ */
+function boothPersonnel(ctx: MediaContext): string[] {
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const line = (p: RosterPlayer): string | null => {
+    const o = p.stats?.offense ?? p.stats;
+    const d = p.stats?.defense ?? p.stats;
+    const bits: string[] = [];
+    if (num(o?.passYds)) bits.push(`${num(o?.passYds)} pass yds, ${num(o?.passTDs)} TD`);
+    if (num(o?.rushYds)) bits.push(`${num(o?.rushYds)} rush yds, ${num(o?.rushTDs)} TD`);
+    if (num(o?.recYds)) bits.push(`${num(o?.recCatches)} rec, ${num(o?.recYds)} yds, ${num(o?.recTDs)} TD`);
+    if (num(d?.sacks)) bits.push(`${num(d?.sacks)} sacks`);
+    if (num(d?.ints)) bits.push(`${num(d?.ints)} INT`);
+    if (!bits.length && num(d?.tackles) >= 40) bits.push(`${num(d?.tackles)} tackles`);
+    if (!bits.length) return null;
+    return `${p.position ?? ""} ${p.name} — ${bits.join(", ")}`.trim();
+  };
+  const rank = (p: RosterPlayer) => {
+    const o = p.stats?.offense ?? p.stats;
+    const d = p.stats?.defense ?? p.stats;
+    return (
+      num(o?.passYds) / 3 + num(o?.rushYds) + num(o?.recYds) + num(d?.sacks) * 60 + num(d?.ints) * 60 + num(d?.tackles) * 4
+    );
+  };
+  const top = (roster: RosterPlayer[], label: string, take: number): string[] => {
+    const picked = [...roster]
+      .filter((p) => p.stats)
+      .sort((a, b) => rank(b) - rank(a))
+      .slice(0, take)
+      .map(line)
+      .filter((x): x is string => !!x);
+    return picked.length ? [`  ${label}:`, ...picked.map((l) => `    ${l}`)] : [];
+  };
+
+  const out = [
+    ...top(ctx.roster ?? [], `${ctx.school} — season to date`, 4),
+    ...top(ctx.oppRoster ?? [], `${ctx.opponent ?? "The opponent"} — season to date`, 3),
+  ];
+  return out.length ? ["WHO IS OUT THERE (SEASON numbers, not tonight's):", ...out] : [];
+}
+
 function gameStateNote(board: string, clock: string, ctx: MediaContext): string {
   const nums = board.match(/\d+/g)?.map(Number) ?? [];
   if (nums.length < 2) return "";
@@ -4036,8 +4107,13 @@ function normalize(
         body: str(p.body),
       }))
       .slice(0, 4);
-    const call = str(parsed?.call);
-    return call || posts.length ? { call, posts } : { error: true };
+    const exchange = (Array.isArray(parsed?.exchange) ? (parsed!.exchange as Record<string, unknown>[]) : [])
+      .filter((t) => t && str(t.line))
+      .map((t) => ({ who: str(t.who) || "Booth", line: str(t.line) }))
+      .slice(0, 4);
+    // `call` is kept as the flattened form so anything that only wants one string still works.
+    const call = exchange.map((t) => t.line).join(" ") || str(parsed?.call);
+    return exchange.length || call || posts.length ? { exchange, call, posts } : { error: true };
   }
 
   if (kind === "social") {

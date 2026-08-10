@@ -568,17 +568,41 @@ describe("what the booth may say while the game is on", () => {
     // would be invented every single time.
     const p = live();
     expect(p).toContain("You did NOT see the play");
-    expect(p).toContain("Never say who scored");
+    expect(p).toContain("no 'broke free'");
   });
 
   it("allows a player's season, never a player's touchdown", () => {
-    expect(live()).toContain("Never as the man who did the thing that just happened");
+    expect(live()).toContain("Never as the man who did the");
   });
 
-  it("asks for a call and three posts, not an article", () => {
+  it("asks for an exchange and three posts, not an article", () => {
     const p = live();
-    expect(p).toContain('"call"');
+    expect(p).toContain('"exchange"');
     expect(p).toContain("posts: exactly 3");
+  });
+
+  it("puts TWO people in the booth, talking to each other", () => {
+    // One voice stating a fact is a press release. The second voice answering it is what
+    // makes it sound like a broadcast.
+    const p = live();
+    expect(p).toContain("the booth TALKING TO EACH OTHER");
+    expect(p).toMatch(/On the mic tonight: [\w-]+, working with/);
+  });
+
+  it("tells the booth who is on the field, and that the numbers are SEASON numbers", () => {
+    // Without personnel it can only ever describe the score, which is why it ran dry by the
+    // second quarter. With it, the booth can talk about people — as long as it never claims
+    // one of them made the play it did not see.
+    const p = live();
+    expect(p).toContain("WHO IS OUT THERE (SEASON numbers, not tonight's)");
+    expect(p).toContain("Dorian Whitfield");
+    expect(p).toContain("Never as the man who did the");
+  });
+
+  it("lets the booth use a yardage the chains gave it, but not the film", () => {
+    const p = live();
+    expect(p).toContain("Where a yardage");
+    expect(p).toContain("result, never the film");
   });
 
   it("rotates who is talking, so eleven calls are not eleven of the same call", () => {
@@ -590,7 +614,7 @@ describe("what the booth may say while the game is on", () => {
     const later = gen.buildSpec("live-call", gen.buildMediaContext(DELTA, SNAPSHOT, opts), {
       moment: ["m"], board: "State 21, Rival 14", said: ["a", "b", "c"],
     }).prompt;
-    const voiceOf = (p: string) => p.match(/in the voice of ([^.]+)\./)?.[1];
+    const voiceOf = (p: string) => p.match(/TONE OF THE LEAD VOICE: ([^.]+)\./)?.[1];
     expect(voiceOf(first)).toBeTruthy();
     expect(voiceOf(later)).not.toBe(voiceOf(first));
   });

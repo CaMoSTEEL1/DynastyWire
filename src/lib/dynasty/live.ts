@@ -31,6 +31,10 @@ export interface LiveWord {
 
 export type LiveEventKind =
   | "touchdown"
+  | "big-play"
+  | "loss"
+  | "conversion"
+  | "stuffed"
   | "field-goal"
   | "pat"
   | "safety-or-2pt"
@@ -54,6 +58,8 @@ export interface LiveEvent {
   total?: number | null;
   /** On a scoring play: the same fact in a sentence, for the newsroom. */
   phrase?: string;
+  /** Yards gained on the play, when the chains allow it to be known. Null otherwise. */
+  yards?: number | null;
 }
 
 const scoreMap = (s: LiveState): Map<string, number> => new Map(s.scores);
@@ -122,6 +128,97 @@ function pointsMeaning(delta: number): { kind: LiveEventKind; text: string; phra
   }
 }
 
+
+// ── Reading the play off the chains ────────────────────────────────────────────
+//
+// The score bar looked like it only carried a score. It carries the DOWN AND DISTANCE, and
+// between two consecutive downs in the same series that is arithmetic: 1st & 10 becoming
+// 2nd & 3 is a seven-yard gain, and becoming 2nd & 14 is a four-yard loss. No extra reading,
+// no new OCR — the number was always on screen, nobody was subtracting.
+//
+// The hard rule is that this only holds INSIDE a series. A down going 1st → 2nd → 3rd is the
+// same team on the same drive and the maths is safe. A reset to 1st & 10 is not: it is a
+// conversion, or a punt, or a turnover, and the bar cannot tell us which, because it never
+// says who has the ball. So a reset is reported as "they moved the chains" when it followed a
+// real third or fourth down, and otherwise says nothing at all rather than guessing.
+
+interface DownState {
+  /** 1-4. */
+  down: number;
+  /** Yards to go, or null when the bar says GOAL or inches. */
+  distance: number | null;
+  /** The literal, for the cases arithmetic cannot touch. */
+  word: string | null;
+}
+
+export function parseDown(text: string | null | undefined): DownState | null {
+  if (!text) return null;
+  const m = /^([1-4])(?:st|nd|rd|th)\s*&\s*(.+)$/i.exec(text.trim());
+  if (!m) return null;
+  const rest = m[2].trim();
+  const num = /^\d+$/.test(rest) ? Number(rest) : null;
+  return { down: Number(m[1]), distance: num, word: num == null ? rest : null };
+}
+
+export interface PlayResult {
+  kind: LiveEventKind;
+  text: string;
+  /** Yards gained on the play, when the chains allow it to be known. */
+  yards: number | null;
+}
+
+/**
+ * What just happened, from the chains alone.
+ *
+ * Returns null when the transition is one the bar genuinely cannot explain — which is most of
+ * them at a change of possession. Saying nothing is the correct output there; the alternative
+ * is a booth confidently narrating a punt as a nine-yard gain.
+ */
+export function playResult(prev: string | null, next: string | null): PlayResult | null {
+  const a = parseDown(prev);
+  const b = parseDown(next);
+  if (!a || !b) return null;
+
+  // Same series, the VERY next down. One play, so the difference is one play's yardage.
+  //
+  // A skipped down — 1st straight to 3rd — means a read was missed, and the difference then
+  // spans two plays. Reporting "6 yards" for what was really a 2 and a 4 is the kind of small
+  // confident lie this whole module exists to avoid, so a gap reports the down and no number.
+  if (b.down > a.down + 1) {
+    return { kind: b.down >= 3 ? "down" : "down", text: `${next}`, yards: null };
+  }
+  if (b.down === a.down + 1) {
+    if (a.distance == null || b.distance == null) {
+      // Goal-to-go or "inches" — a down was used and we cannot say for how much.
+      return { kind: "stuffed", text: `${next}`, yards: null };
+    }
+    const yards = a.distance - b.distance;
+    if (yards <= -5) {
+      return { kind: "loss", text: `Dropped for a loss of ${Math.abs(yards)} — now ${next}`, yards };
+    }
+    if (yards >= 15) {
+      return { kind: "big-play", text: `A ${yards}-yard play — ${next}`, yards };
+    }
+    if (yards <= 0) {
+      return { kind: "stuffed", text: yards === 0 ? `Nothing on the play — ${next}` : `${next}`, yards };
+    }
+    return { kind: "down", text: `${yards} yards — ${next}`, yards };
+  }
+
+  // A reset to first down. A conversion ONLY when it followed a down that had to be
+  // converted; off a 1st or 2nd down it is far more likely a change of possession, and the
+  // bar cannot tell the difference.
+  if (b.down === 1 && a.down >= 3) {
+    const need = a.distance;
+    if (need != null && need >= 7) {
+      return { kind: "conversion", text: `Converted on ${a.down === 3 ? "third" : "fourth"} and ${need}`, yards: null };
+    }
+    return { kind: "first-down", text: `Moved the chains on ${a.down === 3 ? "third" : "fourth"} down`, yards: null };
+  }
+
+  return null;
+}
+
 /**
  * Compare two CONFIRMED states and say what changed.
  *
@@ -145,13 +242,19 @@ export function deriveEvents(prev: LiveState, next: LiveState, now = Date.now())
   }
 
   if (next.down && prev.down && next.down !== prev.down) {
-    const isFirst = /^1st/.test(next.down);
-    out.push({
-      ...base,
-      kind: isFirst ? "first-down" : "down",
-      team: null,
-      text: isFirst ? `First down — ${next.down}` : next.down,
-    });
+    // The chains say more than "it is second down now" — see playResult().
+    const play = playResult(prev.down, next.down);
+    if (play) {
+      out.push({ ...base, kind: play.kind, team: null, text: play.text, yards: play.yards });
+    } else {
+      const isFirst = /^1st/.test(next.down);
+      out.push({
+        ...base,
+        kind: isFirst ? "first-down" : "down",
+        team: null,
+        text: isFirst ? `First down — ${next.down}` : next.down,
+      });
+    }
   }
 
   if (next.quarter && prev.quarter && next.quarter !== prev.quarter) {
@@ -432,6 +535,9 @@ export function playsForResult(
 
 /** A call and the reaction to it, as shown in the feed. */
 export interface LiveCall {
+  /** The booth talking to each other. Two or three turns, alternating. */
+  exchange: { who: string; line: string }[];
+  /** The same thing flattened, for anywhere that only wants one string. */
   call: string;
   posts: { handle: string; displayName: string; type: string; body: string }[];
   at: string | null;
@@ -460,13 +566,31 @@ export const CALLS_PER_GAME = 40;
  * order of magnitude more frequent than scores.
  */
 export function worthCalling(events: LiveEvent[]): boolean {
-  return events.some((e) => SCORING.has(e.kind) || e.kind === "quarter");
+  return events.some(
+    (e) =>
+      SCORING.has(e.kind) ||
+      e.kind === "quarter" ||
+      // Now that the chains give real yardage, the booth can react to the plays that matter
+      // rather than only to points. Still never an ordinary gain — "four yards, second and
+      // six" is the noise that made live commentary unusable.
+      e.kind === "big-play" ||
+      e.kind === "conversion" ||
+      e.kind === "loss"
+  );
 }
 
 /** The moment, as the booth is told about it: what changed, newest last. */
 export function momentLines(events: LiveEvent[]): string[] {
   return events
-    .filter((e) => SCORING.has(e.kind) || e.kind === "quarter" || e.kind === "situation")
+    .filter(
+      (e) =>
+        SCORING.has(e.kind) ||
+        e.kind === "quarter" ||
+        e.kind === "situation" ||
+        e.kind === "big-play" ||
+        e.kind === "conversion" ||
+        e.kind === "loss"
+    )
     .sort((a, b) => a.seen - b.seen)
     .map((e) => {
       const when = [e.quarter, e.at].filter(Boolean).join(" ");
