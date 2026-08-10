@@ -22,7 +22,7 @@ const fmtMoney = (k: number | null | undefined) =>
 import { fakeGpa, GPA_COLOR } from "@/lib/dynasty/academics";
 import { loadSuspensions, isActive, type Suspension } from "@/lib/dynasty/suspensions";
 import { playerMarketValue } from "@/lib/dynasty/valuation";
-import { scaleStipend, signDeal } from "@/lib/dynasty/deals";
+import { expectationFor, scaleStipend, signDeal } from "@/lib/dynasty/deals";
 import { commitWrites, loadLedger, pruneWritten, saveDrafts, setWritten as persistWritten, type LostWrite } from "@/lib/dynasty/nil-ledger";
 
 // Depth-chart order: group by position, sort by OVR (top = starter).
@@ -113,19 +113,30 @@ function BrandDeals() {
       // once per in-game week by disburseWeekly(). (The old code wrote the ENTIRE run's
       // points the moment you signed, which is what people saw as a runaway payout.)
       if (writeNil && d.stipendPoints > 0) {
-        await signDeal(dynastyId, {
-          brand: d.brand,
-          pointsPerWeek: perWeek(d),
-          weeks: Math.max(1, Math.round(d.weeks || 1)),
-          startYear: year,
-          startWeek: week,
-        }).catch(() => {});
+        await signDeal(
+          dynastyId,
+          {
+            brand: d.brand,
+            pointsPerWeek: perWeek(d),
+            weeks: Math.max(1, Math.round(d.weeks || 1)),
+            startYear: year,
+            startWeek: week,
+            // The bar and the starting record ride along, so the run can be judged later
+            // against what was actually agreed rather than against today's expectations.
+            reputation: d.reputation,
+            recordAtSigning: {
+              wins: snapshot?.userTeam?.wins ?? 0,
+              losses: snapshot?.userTeam?.losses ?? 0,
+            },
+          },
+          prestige
+        ).catch(() => {});
       }
       const nextSigned = { ...signed, [d.brand]: true };
       setSigned(nextSigned);
       if (deals) await persist(deals, nextSigned);
     } finally { setBusyBrand(null); }
-  }, [signed, busyBrand, saga, writeNil, dynastyId, year, week, perWeek, deals, persist]);
+  }, [signed, busyBrand, saga, writeNil, dynastyId, year, week, perWeek, deals, persist, prestige, snapshot]);
 
   return (
     <div className="mb-8 overflow-hidden rounded border border-dw-border bg-paper2">
@@ -173,6 +184,14 @@ function BrandDeals() {
                       × {d.weeks}wk · {(perWeek(d) * d.weeks).toLocaleString()} total
                     </span>
                   </div>
+                  {/* The bar. A deal is a contract, so what the brand wants back is on the
+                      card BEFORE it is signed — finding out afterwards is not a decision. */}
+                  <p className="mt-2 border-l-2 border-dw-accent2/40 pl-2 font-serif text-[13px] leading-snug text-ink3">
+                    <span className="font-sans text-[9px] uppercase tracking-wider text-dw-accent2">What they want back</span>
+                    <br />
+                    {expectationFor(d.reputation).label} Beat it and they raise the rate mid-run;
+                    miss it badly and the next offer shrinks — or does not come.
+                  </p>
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-sans text-[10px]">
                     {eff.fanTrust !== 0 && <span className={eff.fanTrust > 0 ? "text-dw-green" : "text-dw-red"}>Fans {eff.fanTrust > 0 ? "+" : ""}{eff.fanTrust}</span>}
                     {eff.mediaHeat !== 0 && <span className={eff.mediaHeat > 0 ? "text-dw-red" : "text-dw-green"}>Media heat {eff.mediaHeat > 0 ? "+" : ""}{eff.mediaHeat}</span>}

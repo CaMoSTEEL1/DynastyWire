@@ -43,7 +43,7 @@ import { teamsToLoad } from "@/lib/dynasty/national";
 import { loadSaga } from "@/lib/dynasty/saga-store";
 import { enforceSuspensions, loadSuspensions, isActive, weeksLeft } from "@/lib/dynasty/suspensions";
 import { buildSeasonRecord, loadArchive, upsertSeason } from "@/lib/dynasty/archive";
-import { disburseWeekly } from "@/lib/dynasty/deals";
+import { disburseWeekly, reviewDeals } from "@/lib/dynasty/deals";
 import {
   ISSUE_TABS,
   eagerTabs,
@@ -467,6 +467,13 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
     if (settings.nilWriteToSave !== false) {
       void disburseWeekly(dynastyId, currentSavePath, ti, year, week).catch(() => {});
     }
+    // Settle the contracts: a run going well earns its raise, a run that has ENDED gets its
+    // verdict written into the brand's memory. Deliberately outside the NIL-to-save guard —
+    // no points move here, and a sponsor's opinion of the program is not a save edit.
+    void reviewDeals(dynastyId, year, week, {
+      wins: snapshot?.userTeam?.wins ?? 0,
+      losses: snapshot?.userTeam?.losses ?? 0,
+    }).catch(() => {});
   }, [dynastyId, currentSavePath, snapshot, year, week, settings.nilWriteToSave]);
 
   // Backfill a profile's mode from the parsed save. Detection is free and unambiguous, so a
