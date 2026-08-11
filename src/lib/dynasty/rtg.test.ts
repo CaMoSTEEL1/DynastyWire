@@ -547,3 +547,46 @@ describe("pregame is not a benching", () => {
     expect(p).toContain("never invent a name for the head coach");
   });
 });
+
+describe("they text back", () => {
+  const ctx = {
+    school: "Oregon State", week: 4, phase: { label: "REGULAR SEASON" }, weekState: "game",
+    snapshot: { player: P({ stats: stats({ gamesPlayed: 4, gamesStarted: 4 }) }), schoolInterest: [] },
+    roster: [], backstory: null, history: null, world: null, outlook: null, userContext: "",
+  } as never;
+
+  it("answers the reply he ACTUALLY sent", async () => {
+    const { buildSpec } = await import("./gen");
+    const p = buildSpec("rtg-text-back", ctx, {
+      with: "Dad", kind: "home", tone: "blunt", sent: "honestly i been in my own head",
+      messages: ["how you feeling about this saturday"],
+      standingBefore: "fine", standingAfter: "fine",
+    }).prompt;
+    expect(p).toContain("You are Dad");
+    expect(p).toContain('HE REPLIED: "honestly i been in my own head"');
+    expect(p).toContain("React to what he ACTUALLY said");
+  });
+
+  it("lets a changed relationship show without announcing itself", async () => {
+    const { buildSpec } = await import("./gen");
+    const p = buildSpec("rtg-text-back", ctx, {
+      with: "Dad", kind: "home", tone: "locked-in", sent: "cant talk, film",
+      messages: ["how you feeling"], standingBefore: "good", standingAfter: "fine",
+    }).prompt;
+    expect(p).toContain("WHERE YOU STOOD WITH HIM: good. WHERE YOU STAND NOW: fine.");
+    expect(p).toContain("Do not announce it");
+  });
+
+  it("writes into silence when he left it on read", async () => {
+    // The most human thing on the surface: somebody who has been ignored twice sends LESS
+    // than somebody ignored once, not more.
+    const { buildSpec } = await import("./gen");
+    const p = buildSpec("rtg-text-back", ctx, {
+      with: "Coach Rodriguez", kind: "coach", tone: "ignore", sent: "",
+      messages: ["film session at 3"], standingBefore: "fine", standingAfter: "strained", ignored: 2,
+    }).prompt;
+    expect(p).toContain("HE DID NOT ANSWER. It has now been 2 weeks");
+    expect(p).toContain("get quieter, not louder");
+    expect(p).not.toContain("HE REPLIED");
+  });
+});

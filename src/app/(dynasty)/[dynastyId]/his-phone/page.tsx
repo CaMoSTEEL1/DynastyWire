@@ -57,8 +57,8 @@ const STANDING_TINT: Record<string, string> = {
   cold: "text-dw-red",
 };
 
-/** What he sent, kept per week so a thread stays answered when the tab is reopened. */
-type Answered = Record<string, { tone: ReplyTone; text: string }>;
+/** What he sent, and what came back. Kept per week so a thread survives a tab switch. */
+type Answered = Record<string, { tone: ReplyTone; text: string; back?: string[] }>;
 
 function HisPhoneInner() {
   const { generate, snapshot, loading, dynastyId, week } = useDynasty();
@@ -72,6 +72,8 @@ function HisPhoneInner() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [answered, setAnswered] = useState<Answered>({});
   const [openWith, setOpenWith] = useState<string | null>(null);
+  /** Who is mid-reply, so the thread can show them typing rather than just stalling. */
+  const [typing, setTyping] = useState<string | null>(null);
 
   const cached = useIssueTab<Texts>("rtg-texts");
   useEffect(() => {
@@ -137,8 +139,37 @@ function HisPhoneInner() {
       void saveContacts(dynastyId, next).catch(() => {});
       const meters = metersAfter(contact, tone);
       if (Object.keys(meters).length) await saga.adjustMeters(meters).catch(() => {});
+
+      // And they answer. Not cached — it is a response to the one thing he actually chose,
+      // and the standing on both sides of the choice goes with it, because the interesting
+      // case is a message landing differently than he meant it.
+      setTyping(t.with);
+      try {
+        const res = await generate<{ messages?: { text: string }[] }>(
+          "rtg-text-back",
+          {
+            with: t.with,
+            kind: t.kind,
+            tone,
+            sent: text,
+            messages: t.messages.map((m) => m.text),
+            standingBefore: contact.standing,
+            standingAfter: standingAfter(contact, tone),
+            ignored: tone === "ignore" ? contact.ignored + 1 : 0,
+            character,
+          },
+          { force: true }
+        );
+        const back = (res?.messages ?? []).map((m) => m.text).filter(Boolean);
+        if (back.length) setAnswered((a) => ({ ...a, [t.with]: { ...a[t.with], back } }));
+      } catch {
+        // A silence here is indistinguishable from a person who did not write back, which is
+        // a perfectly ordinary thing for a phone to do.
+      } finally {
+        setTyping(null);
+      }
     },
-    [contacts, contactFor, dynastyId, saga]
+    [contacts, contactFor, dynastyId, saga, generate, character]
   );
 
   const open = threads.find((t) => t.with === openWith) ?? null;
@@ -233,6 +264,20 @@ function HisPhoneInner() {
                 {answered[open.with]?.tone === "ignore" && (
                   <p className="pt-1 text-right font-sans text-[10px] uppercase tracking-wider text-ink3">
                     Left on read
+                  </p>
+                )}
+                {answered[open.with]?.back?.map((b, i) => (
+                  <p
+                    key={`back-${i}`}
+                    className="max-w-[80%] rounded-lg rounded-tl-none bg-paper px-3 py-2 font-serif text-[15px] leading-snug text-ink2"
+                  >
+                    {b}
+                  </p>
+                ))}
+                {typing === open.with && (
+                  <p className="flex items-center gap-1.5 pt-1 font-sans text-[10px] uppercase tracking-wider text-ink3">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    {open.with} is typing
                   </p>
                 )}
               </div>

@@ -65,6 +65,9 @@ const NON_CACHEABLE = new Set<string>([
   // The booth calling a game as it happens. Every moment is its own moment; a week-keyed
   // cache would replay the first touchdown's call over the fourth quarter.
   "live-call",
+  // What somebody texts back. It answers ONE reply he chose, so a cached copy would be a
+  // response to a message he never sent.
+  "rtg-text-back",
 ]);
 
 export function isCacheable(kind: string): boolean {

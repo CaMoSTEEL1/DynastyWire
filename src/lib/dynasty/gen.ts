@@ -1762,6 +1762,77 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
      * from "your position coach" does not. The cast is fixed, so these threads accumulate into
      * relationships across a season instead of resetting every week.
      */
+    /**
+     * What they send back once he has answered.
+     *
+     * Never cached: it is a reaction to one specific choice he made, and serving a stored one
+     * would answer a text he did not send. The standing BEFORE and AFTER both go in, because
+     * the interesting case is the message that lands differently than he expected — being all
+     * business with somebody who wanted to hear from you reads as a door closing, and they
+     * write like it.
+     */
+    case "rtg-text-back": {
+      const ch = (extra.character ?? null) as RtgCharacter | null;
+      const who = typeof extra.with === "string" ? extra.with : "them";
+      const kind = typeof extra.kind === "string" ? extra.kind : "other";
+      const tone = typeof extra.tone === "string" ? extra.tone : "warm";
+      const sent = typeof extra.sent === "string" ? extra.sent : "";
+      const before = typeof extra.standingBefore === "string" ? extra.standingBefore : "fine";
+      const after = typeof extra.standingAfter === "string" ? extra.standingAfter : "fine";
+      const said = Array.isArray(extra.messages)
+        ? (extra.messages as unknown[]).filter((m): m is string => typeof m === "string")
+        : [];
+      const ignored = typeof extra.ignored === "number" ? extra.ignored : 0;
+
+      return {
+        maxTokens: 400,
+        prompt: [
+          `You are ${who}, texting a college football player. Return JSON:`,
+          '{"messages": [{"text": "string"}]}',
+          "",
+          "WHAT YOU SENT HIM EARLIER:",
+          ...said.map((m) => `  ${m}`),
+          "",
+          tone === "ignore"
+            ? `HE DID NOT ANSWER. It has now been ${Math.max(1, ignored)} week${ignored === 1 ? "" : "s"} of that.`
+            : `HE REPLIED: "${sent}"`,
+          "",
+          `WHERE YOU STOOD WITH HIM: ${before}. WHERE YOU STAND NOW: ${after}.`,
+          before !== after
+            ? "That moved. Do not announce it — let it be in the length, the warmth, or the " +
+              "absence of either. People do not tell you the relationship changed; they just " +
+              "write differently."
+            : "Nothing moved. Answer him like the same person you were an hour ago.",
+          "",
+          "WRITE 1 OR 2 MESSAGES. Short, lowercase, unfinished sentences — a text, not a letter.",
+          tone === "ignore"
+            ? "You are writing into silence. Options: one more try, something smaller than last " +
+              "time, or a single line that makes it clear you noticed. Not a lecture. Real people " +
+              "get quieter, not louder, and somebody who has been ignored twice sends less than " +
+              "somebody ignored once."
+            : "React to what he ACTUALLY said, not to what you wish he had said.",
+          kind === "coach"
+            ? "You are his position coach. You do not gush and you do not explain yourself. Often the honest answer is barely an answer."
+            : "",
+          kind === "home"
+            ? "You are his family. This is not about football even when it is about football."
+            : "",
+          kind === "reporter"
+            ? "You are a reporter. You are already thinking about whether that is usable, and he can feel that."
+            : "",
+          kind === "rival-for-the-job"
+            ? "You are competing with him for the same job. Everything either of you says is polite and weighted."
+            : "",
+          "",
+          "Never promise him playing time or a start — nobody has decided that. Never state a",
+          "score, a record or a rating. He is a PLAYER: do not call him coach.",
+          ch ? characterBlock(ch) ?? "" : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      };
+    }
+
     case "rtg-texts": {
       const facts = rtgFacts({
         player: ctx.snapshot.player ?? null,
@@ -4210,6 +4281,15 @@ function normalize(
     // `call` is kept as the flattened form so anything that only wants one string still works.
     const call = exchange.map((t) => t.line).join(" ") || str(parsed?.call);
     return exchange.length || call || posts.length ? { exchange, call, posts } : { error: true };
+  }
+
+  if (kind === "rtg-text-back") {
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    const messages = (Array.isArray(parsed?.messages) ? (parsed!.messages as Record<string, unknown>[]) : [])
+      .filter((m) => str(m.text))
+      .map((m) => ({ text: str(m.text) }))
+      .slice(0, 2);
+    return messages.length ? { messages } : { messages: [], error: true };
   }
 
   if (kind === "rtg-texts") {
