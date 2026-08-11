@@ -38,7 +38,7 @@ import { Loader2, MessageSquare } from "lucide-react";
 interface Incoming { text: string }
 interface ReplyOption { tone: ReplyTone; text: string }
 interface Thread { with: string; kind: ContactKind; messages: Incoming[]; replies: ReplyOption[] }
-interface Texts { threads: Thread[]; error?: boolean }
+interface Texts { threads: Thread[]; error?: boolean; reason?: string }
 
 const KIND_TINT: Record<string, string> = {
   coach: "text-dw-crimson",
@@ -112,7 +112,14 @@ function HisPhoneInner() {
         character,
         contacts,
       });
-      if (res?.error) setError("The messages didn't come through. Try again.");
+      if (res?.error) {
+        // Naming the failure rather than shrugging at it — the two causes need opposite fixes.
+        setError(
+          res.reason === "no-json"
+            ? "The reply came back cut off, twice. That is usually the model running out of room — try again, and tell Lamar if it keeps happening."
+            : "Messages came back in a shape the phone couldn't read. Try again."
+        );
+      }
       else setTexts(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't load his messages.");

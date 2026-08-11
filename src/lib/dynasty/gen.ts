@@ -1849,7 +1849,10 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
       const didNotPlay = facts.time.state === "did-not-play";
       const notYet = facts.time.state === "not-yet-played";
       return {
-        maxTokens: 2000,
+        // Three written replies per thread on top of the incoming messages — roughly triple
+        // what this returned before it became interactive. The old budget truncated the JSON,
+        // and a truncated envelope fails its retry at the same size for the same reason.
+        maxTokens: 3200,
         prompt: [
           "Write this week's INCOMING TEXT MESSAGES to a college football player, and the ways",
           "he could answer. Return JSON:",
@@ -1869,7 +1872,7 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
           "    transparent to anyone who knows him.",
           "Each reply is ONE text. Short, lowercase, unfinished. Nobody writes a paragraph.",
           "",
-          "3-4 threads, 1-3 incoming messages each. Some threads are two messages and a silence.",
+          "EXACTLY 3 threads, 1-2 incoming messages each. Some threads are one message and a silence.",
           "",
           "WHO TEXTS HIM — use these people and no invented replacements:",
           ch?.positionCoach ? `- ${ch.positionCoach}, his position coach.` : "",
@@ -4308,7 +4311,15 @@ function normalize(
         return { with: str(t.with), kind: str(t.kind) || "other", messages, replies };
       })
       .filter((t) => t.with && t.messages.length);
-    return threads.length ? { threads } : { threads: [], error: true };
+    if (threads.length) return { threads };
+    // Distinguish the two failures, because they need opposite fixes: nothing came back at
+    // all (the envelope broke, usually truncation) versus something came back in a shape
+    // this cannot read. A single "try again" hid which one was happening.
+    return {
+      threads: [],
+      error: true,
+      reason: parsed == null ? "no-json" : "no-threads",
+    };
   }
 
   if (kind === "rtg-social") {
