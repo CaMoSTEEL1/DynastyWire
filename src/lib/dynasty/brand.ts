@@ -83,6 +83,67 @@ export const TIER_NOTE: Record<BrandTier, string> = {
     "with no connection to the program.",
 };
 
+
+// ── What a post is actually worth ──────────────────────────────────────────────
+//
+// Engagement used to be left entirely to the writer, with a prompt line suggesting "3-80
+// likes" for an unknown freshman. That anchor never moved, so a starting quarterback in the
+// early Heisman conversation was still getting seven likes on his own posts — which reads as
+// the app not knowing who he is, because it did not.
+//
+// The numbers are now derived from what he actually is: how many people follow him, and
+// whether this week gave them anything to react to. A real account's post lands with a few
+// percent of its followers; a big week multiplies it, a quiet one does not.
+
+export interface EngagementBand {
+  /** Likes on HIS OWN posts. */
+  own: [number, number];
+  /** Likes on other people's posts about him — a fan account is not him. */
+  crowd: [number, number];
+  /** Reposts run an order of magnitude below likes. */
+  repostRatio: number;
+  label: string;
+}
+
+export function engagementBand(
+  followers: number,
+  time: PlayingTime,
+  line: WeekLine | null
+): EngagementBand {
+  const base = Math.max(50, followers);
+  // A quiet account sees ~2% of its followers on a post; a big week pushes it well past that.
+  const tds = line ? line.passTDs + line.rushTDs + line.recTDs : 0;
+  const yards = line ? line.passYds + line.rushYds + line.recYds : 0;
+  const bigWeek = tds >= 3 || yards >= 250;
+  const played = time.state === "starter" || time.state === "first-start" || time.state === "played-off-bench";
+
+  let rate = 0.02;
+  if (played) rate = 0.05;
+  if (bigWeek) rate = 0.11;
+  if (time.state === "did-not-play") rate = 0.012;
+
+  const mid = Math.round(base * rate);
+  const own: [number, number] = [Math.max(3, Math.round(mid * 0.5)), Math.max(8, Math.round(mid * 2.2))];
+  // The crowd is not bounded by HIS following — a rival fanbase or a national account is
+  // bigger than he is, and a viral dunk on him can outrun anything he posts.
+  const crowd: [number, number] = [Math.max(2, Math.round(own[0] * 0.4)), Math.round(own[1] * 3)];
+  return {
+    own,
+    crowd,
+    repostRatio: 0.12,
+    label:
+      `His own posts land around ${own[0]}-${own[1]} likes. Posts ABOUT him from other ` +
+      `accounts run ${crowd[0]}-${crowd[1]}, since a rival fanbase or a national account is ` +
+      `bigger than he is. Reposts are roughly a tenth of likes.`,
+  };
+}
+
+/** Force a returned figure into the band. The model gets the range; this guarantees it. */
+export function clampEngagement(value: unknown, band: [number, number]): number {
+  const n = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : 0;
+  return Math.max(band[0], Math.min(band[1], n || band[0]));
+}
+
 // ── The model ───────────────────────────────────────────────────────────────────
 
 export interface FollowerInput {
@@ -124,6 +185,10 @@ export function followerDelta(input: FollowerInput): FollowerResult {
   let reason = "";
 
   switch (state) {
+    case "not-yet-played":
+      // The game has not kicked off. Attention neither grows nor drifts on a week that has
+      // not happened, and bleeding followers here is how a pregame week reads as a benching.
+      return { delta: 0, followers: input.followers, reason: "This week's game has not been played yet." };
     case "did-not-play":
       // Nobody unfollows in anger — they just drift, and that drift is the whole reason a
       // first start feels like something.

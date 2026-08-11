@@ -29,7 +29,15 @@ import { isStageDirection } from "../shows/dialogue";
 import { gameplan, gameplanBlock, positionRoom, roomBlock, rtgBrief, rtgFacts, type PlayerWeekState } from "./rtg";
 import { characterBlock, type RtgCharacter } from "./rtg-character";
 import { worldBlock } from "./world";
-import { brandBlock, brandTier, TIER_NOTE, type BrandState, type FollowerResult } from "./brand";
+import {
+  brandBlock,
+  brandTier,
+  clampEngagement,
+  engagementBand,
+  TIER_NOTE,
+  type BrandState,
+  type FollowerResult,
+} from "./brand";
 import type { SeasonRecord } from "./archive";
 import type { CoachBackstory } from "./saga";
 import {
@@ -1411,6 +1419,13 @@ function recapFactsFor(ctx: MediaContext, extra: Extra) {
  * decision 12.
  */
 const RTG_FRAMING: Record<PlayerWeekState, string> = {
+  "not-yet-played":
+    "THIS WEEK'S GAME HAS NOT BEEN PLAYED YET. Nothing has happened, to him or to anyone. Write " +
+    "the week BEFORE a game: the preparation, the opponent, what is being asked of him, the " +
+    "waiting. He has NOT been benched, dropped or passed over — there is simply nothing to " +
+    "report yet, and saying otherwise about a player who has not lost his job is the single " +
+    "worst thing this mode can do to a user. No snap, no stat, no result, no reaction to a " +
+    "performance that does not exist.",
   "did-not-play":
     "HE DID NOT PLAY THIS WEEK. Write the piece about exactly that — the scout-team reps nobody " +
     "saw, watching from the sideline in a clean uniform, the guy ahead of him having a night, " +
@@ -1456,6 +1471,9 @@ function buildRtgWeekSpec(ctx: MediaContext, extra: Extra): PromptSpec {
     player: snap.player ?? null,
     baseline,
     school: ctx.school,
+    // "he did not play" and "kickoff has not happened" are identical in his numbers.
+    // Only the team's week tells them apart.
+    teamPlayed: ctx.weekState === "game",
     interest: snap.schoolInterest,
     teamResult: rtgTeamResult(ctx),
   });
@@ -1528,6 +1546,9 @@ function buildRtgSocialSpec(ctx: MediaContext, extra: Extra): PromptSpec {
     player,
     baseline,
     school: ctx.school,
+    // "he did not play" and "kickoff has not happened" are identical in his numbers.
+    // Only the team's week tells them apart.
+    teamPlayed: ctx.weekState === "game",
     interest: snap.schoolInterest,
     teamResult: rtgTeamResult(ctx),
   });
@@ -1537,6 +1558,11 @@ function buildRtgSocialSpec(ctx: MediaContext, extra: Extra): PromptSpec {
 
   // How much of the internet has any reason to be looking at him this week.
   const attention: Record<PlayerWeekState, string> = {
+    "not-yet-played":
+      "ATTENTION LEVEL: PREGAME. The game has not kicked off. The feed is anticipation — the " +
+      "matchup, the opponent's fans talking their talk, teammates posting, people arguing about " +
+      "what SHOULD happen. NOBODY is reacting to a performance, because there has not been one. " +
+      "Not one post may suggest he was benched, held out, or did not see the field.",
     "did-not-play":
       "ATTENTION LEVEL: ALMOST NONE. He did not play. The feed is mostly NOT about him — it is " +
       "the fanbase arguing about the team, and he surfaces only at the edges: a recruiting " +
@@ -1589,9 +1615,15 @@ function buildRtgSocialSpec(ctx: MediaContext, extra: Extra): PromptSpec {
       "- The type field MUST be one of exactly: fan, rival, analyst, insider, reddit.",
       "- MOST OF THIS FEED IS NOT ABOUT HIM unless he is the starter. A feed where fourteen " +
         "posts all discuss a backup freshman is the failure mode of this surface.",
-      "- Engagement must match reality: posts about an unknown freshman get 3-80 likes, not " +
-        "thousands. A recruiting account has more reach than a fan. Only once he starts do " +
-        "numbers climb. Fake virality for a nobody reads as fake.",
+      // Computed from his actual following and what this week gave people to react to. The
+      // old line here hard-coded "3-80 likes for an unknown freshman" and never moved, so a
+      // starting quarterback in the Heisman conversation was still getting seven likes.
+      `- ENGAGEMENT, and these are not suggestions: ${engagementBand(brand?.followers ?? 0, facts.time, facts.line).label}`,
+      "- A recruiting account has more reach than a fan. Fake virality for a nobody reads as " +
+        "fake, and undercounting a star reads as the app not knowing who he is.",
+      "- HE IS A PLAYER, NOT A COACH. Never address him as one, never call him \"coach\", and " +
+        "never invent a name for the head coach — including anything built out of the " +
+        "player's own name.",
       "- Never state a rating, an overall or any 0-99 number (see rule 6).",
       "- Never invent a stat for him. His real line, if he has one, is below.",
       player?.prospectStars
@@ -1687,6 +1719,9 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
               player: p,
               baseline: (extra.baselinePlayer ?? null) as RtgPlayer | null,
               school: ctx.school,
+    // "he did not play" and "kickoff has not happened" are identical in his numbers.
+    // Only the team's week tells them apart.
+    teamPlayed: ctx.weekState === "game",
               interest: ctx.snapshot.schoolInterest,
               teamResult: rtgTeamResult(ctx),
             })
@@ -1712,6 +1747,9 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
         player: ctx.snapshot.player ?? null,
         baseline: (extra.baselinePlayer ?? null) as RtgPlayer | null,
         school: ctx.school,
+    // "he did not play" and "kickoff has not happened" are identical in his numbers.
+    // Only the team's week tells them apart.
+    teamPlayed: ctx.weekState === "game",
         interest: ctx.snapshot.schoolInterest,
         teamResult: rtgTeamResult(ctx),
       });
@@ -1763,6 +1801,9 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
         player: ctx.snapshot.player ?? null,
         baseline: (extra.baselinePlayer ?? null) as RtgPlayer | null,
         school: ctx.school,
+    // "he did not play" and "kickoff has not happened" are identical in his numbers.
+    // Only the team's week tells them apart.
+    teamPlayed: ctx.weekState === "game",
         interest: ctx.snapshot.schoolInterest,
         teamResult: rtgTeamResult(ctx),
       });
@@ -1838,6 +1879,9 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
         player: ctx.snapshot.player ?? null,
         baseline: (extra.baselinePlayer ?? null) as RtgPlayer | null,
         school: ctx.school,
+    // "he did not play" and "kickoff has not happened" are identical in his numbers.
+    // Only the team's week tells them apart.
+    teamPlayed: ctx.weekState === "game",
         interest: ctx.snapshot.schoolInterest,
       });
       const room = positionRoom((extra.roster as RosterPlayer[]) ?? ctx.roster, ctx.snapshot.player ?? null);
@@ -1940,6 +1984,9 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
             player: ctx.snapshot.player,
             baseline: (extra.baselinePlayer ?? null) as RtgPlayer | null,
             school: ctx.school,
+    // "he did not play" and "kickoff has not happened" are identical in his numbers.
+    // Only the team's week tells them apart.
+    teamPlayed: ctx.weekState === "game",
             interest: ctx.snapshot.schoolInterest,
           })) : "",
         ]
@@ -4118,6 +4165,41 @@ function normalize(
     // `call` is kept as the flattened form so anything that only wants one string still works.
     const call = exchange.map((t) => t.line).join(" ") || str(parsed?.call);
     return exchange.length || call || posts.length ? { exchange, call, posts } : { error: true };
+  }
+
+  if (kind === "rtg-social") {
+    // The prompt states the band; this makes it true. A model handed a range still drifts,
+    // and a starting quarterback with seven likes on his own post is the exact complaint
+    // this exists to answer.
+    const posts = Array.isArray(parsed?.posts) ? (parsed!.posts as Record<string, unknown>[]) : [];
+    if (!posts.length) return parsed ?? { error: true };
+    const snap = ctx.snapshot;
+    const facts = rtgFacts({
+      player: snap.player ?? null,
+      baseline: (extra.baselinePlayer ?? null) as RtgPlayer | null,
+      school: ctx.school,
+      teamPlayed: ctx.weekState === "game",
+      interest: snap.schoolInterest,
+      teamResult: rtgTeamResult(ctx),
+    });
+    const brand = (extra.brand ?? null) as BrandState | null;
+    const band = engagementBand(brand?.followers ?? 0, facts.time, facts.line);
+    const own = (h: unknown) =>
+      typeof h === "string" && snap.player?.name
+        ? h.toLowerCase().includes(snap.player.name.split(/\s+/)[0].toLowerCase())
+        : false;
+    return {
+      ...parsed,
+      posts: posts.map((post) => {
+        const range = own(post.handle) || own(post.displayName) ? band.own : band.crowd;
+        const likes = clampEngagement(post.likes, range);
+        return {
+          ...post,
+          likes,
+          reposts: Math.max(0, Math.round(likes * band.repostRatio)),
+        };
+      }),
+    };
   }
 
   if (kind === "social") {

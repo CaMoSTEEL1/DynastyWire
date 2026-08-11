@@ -21,8 +21,21 @@ import type { RosterPlayer, RosterStats, RtgPlayer, SchoolInterest } from "./cli
 export type PlayerWeekState =
   /** No baseline to compare against — we cannot say what happened. */
   | "unknown"
-  /** Games played did not move. He did not take the field. */
+  /** Games played did not move, AND the team played. He was on the sideline. */
   | "did-not-play"
+  /**
+   * Games played did not move because THE GAME HAS NOT BEEN PLAYED YET.
+   *
+   * Identical in the data to being benched — nothing incremented either way — and the two
+   * were collapsed into one, so an unplayed week read as the starting quarterback being
+   * dropped. The social feed ran with it: "why is san-locus not getting reps", "has not seen
+   * the field Week 3", a rival gloating about a freshman who could not get on the field. All
+   * of it about a game nobody had kicked off yet.
+   *
+   * The team's own record is what separates them. If the team has not played either, nobody
+   * has been benched — the week simply has not happened.
+   */
+  | "not-yet-played"
   /** He appeared but did not start. */
   | "played-off-bench"
   /** Games started moved for the FIRST time in his career at this point. */
@@ -35,6 +48,7 @@ export type PlayerWeekState =
 export const WEEK_STATE_LABEL: Record<PlayerWeekState, string> = {
   unknown: "no baseline — playing time unknown",
   "did-not-play": "did NOT play",
+  "not-yet-played": "has not played yet — this week's game has NOT been played",
   "played-off-bench": "played, did not start",
   "first-start": "made his FIRST career start",
   starter: "started",
@@ -65,7 +79,13 @@ export interface PlayingTime {
 
 export function playingTime(
   current: RtgPlayer | null | undefined,
-  baseline: RtgPlayer | null | undefined
+  baseline: RtgPlayer | null | undefined,
+  /**
+   * Did the TEAM play a game since the baseline? Without this, "he did not play" and "the
+   * game has not kicked off" are the same reading, and the app confidently benches a starter
+   * every single pregame week.
+   */
+  teamPlayed?: boolean | null
 ): PlayingTime {
   const cur = current?.stats ?? null;
   const gp = n(cur?.gamesPlayed);
@@ -79,7 +99,9 @@ export function playingTime(
   const dGs = gs - prevGs;
 
   let state: PlayerWeekState;
-  if (dGp <= 0) state = "did-not-play";
+  // Nothing moved. Whether that is a benching or a week that has not happened is not visible
+  // in HIS numbers at all — only in whether a game was played around him.
+  if (dGp <= 0) state = teamPlayed === false ? "not-yet-played" : "did-not-play";
   else if (dGp > 1) state = "multi-week-gap";
   else if (dGs > 0) state = prevGs === 0 ? "first-start" : "starter";
   else state = "played-off-bench";
@@ -174,6 +196,11 @@ export interface RtgFactsInput {
   interest?: SchoolInterest[];
   /** The team's result this week, already computed by the existing recap core. */
   teamResult?: string | null;
+  /**
+   * Did the TEAM play since the baseline? Null when unknown. False is the one that matters:
+   * it is the only thing separating "he was benched" from "kickoff has not happened".
+   */
+  teamPlayed?: boolean | null;
 }
 
 export interface RtgFacts {
@@ -189,7 +216,7 @@ export interface RtgFacts {
 
 export function rtgFacts(input: RtgFactsInput): RtgFacts {
   const p = input.player ?? null;
-  const time = playingTime(p, input.baseline);
+  const time = playingTime(p, input.baseline, input.teamPlayed);
   const line = weekLine(p, input.baseline, time);
   const lineText = weekLineText(line);
   const board = recruitmentBoard(input.interest);
@@ -223,6 +250,14 @@ export function rtgFacts(input: RtgFactsInput): RtgFacts {
     locked.push(
       "He recorded NOTHING this week because he was not on the field. Do not give him a stat, " +
         "a snap, a rep in the game, or a moment in it."
+    );
+  } else if (time.state === "not-yet-played") {
+    locked.push(
+      "THIS WEEK'S GAME HAS NOT BEEN PLAYED. He has no line because nobody does yet — kickoff " +
+        "has not happened. He has NOT been benched, dropped, or passed over, and nothing about " +
+        "his playing time has changed. Write the week AHEAD of the game: the build-up, the " +
+        "matchup, what is being asked of him. Never a snap count, never a result, and never a " +
+        "word about him not seeing the field."
     );
   }
   if (input.teamResult) locked.push(`The team: ${input.teamResult}`);

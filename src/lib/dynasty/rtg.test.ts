@@ -200,6 +200,8 @@ describe("The Week prompt", () => {
       school: "Oregon State",
       week: 6,
       phase: { label: "REGULAR SEASON" },
+      // The TEAM played this week. Without this the same numbers read as "not kicked off yet".
+      weekState: "game",
       snapshot: { player: P({ stats: s }), schoolInterest: [] },
       backstory: null,
       history: null,
@@ -222,6 +224,8 @@ describe("The Week prompt", () => {
       school: "Oregon State",
       week: 7,
       phase: { label: "REGULAR SEASON" },
+      // The TEAM played this week. Without this the same numbers read as "not kicked off yet".
+      weekState: "game",
       snapshot: { player: after, schoolInterest: [] },
       backstory: null,
       history: null,
@@ -241,6 +245,8 @@ describe("The RTG social feed", () => {
       school: "Oregon State",
       week: 6,
       phase: { label: "REGULAR SEASON" },
+      // The TEAM played this week. Without this the same numbers read as "not kicked off yet".
+      weekState: "game",
       snapshot: { player, schoolInterest: [], week: 6 },
       backstory: null,
       history: null,
@@ -258,7 +264,7 @@ describe("The RTG social feed", () => {
     expect(p).toContain("NOBODY national is discussing him");
     expect(p).toContain("MOST OF THIS FEED IS NOT ABOUT HIM");
     // engagement has to match reality, or the feed reads as fake
-    expect(p).toContain("3-80 likes");
+    expect(p).toMatch(/ENGAGEMENT, and these are not suggestions: His own posts land around \d+-\d+ likes/);
   });
 
   it("turns the volume up only when he earns it", async () => {
@@ -333,7 +339,7 @@ describe("his podium", () => {
     const { buildSpec } = await import("./gen");
     const s = stats({ gamesPlayed: 2, gamesStarted: 0 });
     const ctx = {
-      school: "Oregon State", week: 6, phase: { label: "REGULAR SEASON" },
+      school: "Oregon State", week: 6, phase: { label: "REGULAR SEASON" }, weekState: "game",
       snapshot: { player: P({ stats: s }), schoolInterest: [] },
       roster: [], backstory: null, history: null, world: null, outlook: null, userContext: "",
     } as never;
@@ -398,7 +404,7 @@ describe("who he is", () => {
     };
     const s = stats({ gamesPlayed: 2, gamesStarted: 0 });
     const ctx = {
-      school: "Oregon State", week: 6, phase: { label: "REGULAR SEASON" },
+      school: "Oregon State", week: 6, phase: { label: "REGULAR SEASON" }, weekState: "game",
       snapshot: { player: P({ stats: s }), schoolInterest: [] },
       roster: [], backstory: null, history: null, world: null, outlook: null, userContext: "",
     } as never;
@@ -435,7 +441,7 @@ describe("the gate's findings", () => {
     const { buildSpec } = await import("./gen");
     const s = stats({ gamesPlayed: 2, gamesStarted: 0 });
     const ctx = {
-      school: "Oregon State", week: 6, phase: { label: "REGULAR SEASON" },
+      school: "Oregon State", week: 6, phase: { label: "REGULAR SEASON" }, weekState: "game",
       snapshot: { player: P({ stats: s }), schoolInterest: [], userTeam: { name: "Oregon State", wins: 3, losses: 1 } },
       delta: null, roster: [], backstory: null, history: null, world: null, outlook: null, userContext: "",
     } as never;
@@ -478,5 +484,66 @@ describe("his role does not need a baseline", () => {
     expect(brief).toContain("THE STARTER");
     // ...and it must not be contradicted by the week line right underneath it
     expect(brief).not.toContain("did NOT play");
+  });
+});
+
+// ── A week that has not happened is not a benching ────────────────────────────
+// Reported from a real save: the starting quarterback, in the early Heisman conversation,
+// and the feed was asking "why is san-locus not getting reps against oregon", a rival was
+// gloating that they "can't even get him on the field", a recruiting account had him "not
+// seen the field Week 3". None of it had happened. The game had not kicked off.
+//
+// His numbers look identical either way — nothing incremented — so the ONLY thing that tells
+// the two apart is whether the team played at all.
+
+describe("pregame is not a benching", () => {
+  const s = stats({ gamesPlayed: 3, gamesStarted: 3, passYds: 900, passTDs: 9 });
+
+  it("calls it not-yet-played when the team has not played either", () => {
+    const t = playingTime(P({ stats: s }), P({ stats: s }), false);
+    expect(t.state).toBe("not-yet-played");
+  });
+
+  it("still calls it a benching when the team DID play", () => {
+    const t = playingTime(P({ stats: s }), P({ stats: s }), true);
+    expect(t.state).toBe("did-not-play");
+  });
+
+  it("says outright that he has not been dropped", () => {
+    const brief = rtgBrief(
+      rtgFacts({ player: P({ stats: s }), baseline: P({ stats: s }), school: "Oregon State", teamPlayed: false })
+    );
+    expect(brief).toContain("THIS WEEK'S GAME HAS NOT BEEN PLAYED");
+    expect(brief).toContain("has NOT been benched");
+    expect(brief).not.toContain("was not on the field");
+  });
+
+  it("keeps the feed off the subject of him not playing", async () => {
+    const { buildSpec } = await import("./gen");
+    const ctx = {
+      school: "Oregon State", week: 3, phase: { label: "REGULAR SEASON" },
+      // The team has not played either — this is the pregame week.
+      weekState: "pregame",
+      snapshot: { player: P({ stats: s }), schoolInterest: [] },
+      roster: [], backstory: null, history: null, world: null, outlook: null, userContext: "",
+    } as never;
+    const p = buildSpec("rtg-social", ctx, { baselinePlayer: P({ stats: s }) }).prompt;
+    expect(p).toContain("ATTENTION LEVEL: PREGAME");
+    expect(p).toContain("may suggest he was benched");
+    expect(p).not.toContain("ATTENTION LEVEL: ALMOST NONE");
+  });
+
+  it("never lets a post address him as a coach or name one", async () => {
+    // "whatever game plan coach locan has is the RIGHT one" — about a PLAYER, with a coach
+    // name assembled out of his own surname. The save names no coach at all.
+    const ctx = {
+      school: "Oregon State", week: 3, phase: { label: "REGULAR SEASON" }, weekState: "pregame",
+      snapshot: { player: P({ stats: s }), schoolInterest: [] },
+      roster: [], backstory: null, history: null, world: null, outlook: null, userContext: "",
+    } as never;
+    const { buildSpec } = await import("./gen");
+    const p = buildSpec("rtg-social", ctx, {}).prompt;
+    expect(p).toContain("HE IS A PLAYER, NOT A COACH");
+    expect(p).toContain("never invent a name for the head coach");
   });
 });
