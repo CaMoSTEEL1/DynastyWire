@@ -14,6 +14,17 @@ export interface TabState<T = unknown> {
   data: T | null;
   error: string | null;
   generatedAt: number | null;
+  /**
+   * The generator revision that produced this. See GEN_REVISION in gen.ts.
+   *
+   * Without it a prompt fix silently never reaches the user: the content is cached per week,
+   * so the week they are looking at keeps serving what the OLD prompt wrote and the bug looks
+   * unfixed. Reported exactly that way — a Road to Glory feed still saying a starter had been
+   * benched, after the code that said it was gone.
+   *
+   * Undefined on anything written before this existed, which reads as stale and rewrites once.
+   */
+  genRevision?: string;
 }
 
 export interface Issue {

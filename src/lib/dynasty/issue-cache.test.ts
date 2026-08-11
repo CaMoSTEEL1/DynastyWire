@@ -120,3 +120,34 @@ describe("concurrent tab writes", () => {
     expect((await readTab(key, "shows"))?.status).toBe("ready");
   });
 });
+
+// ── A prompt fix has to reach the week you are reading ────────────────────────
+// Reported live: the Road to Glory feed kept saying a starting quarterback had been benched
+// AFTER the code that said it was gone. The content is cached per week, so the fix never ran
+// for the week actually on screen — it was serving what the old prompt wrote.
+
+describe("cached content knows which generator wrote it", () => {
+  it("carries the revision through a write and back", async () => {
+    const key = issueKey("d", 2030, 5);
+    await writeTab(
+      key,
+      "rtg-social",
+      { status: "ready", data: { posts: [] }, error: null, generatedAt: 1, genRevision: "2" },
+      { dynastyId: "d", year: 2030, week: 5 }
+    );
+    const back = await readTab(key, "rtg-social");
+    expect(back?.genRevision).toBe("2");
+  });
+
+  it("leaves anything written before the field existed without one", async () => {
+    // Which reads as stale, and rewrites once. That is the intended migration.
+    const key = issueKey("d", 2030, 6);
+    await writeTab(
+      key,
+      "social",
+      { status: "ready", data: { posts: [] }, error: null, generatedAt: 1 },
+      { dynastyId: "d", year: 2030, week: 6 }
+    );
+    expect((await readTab(key, "social"))?.genRevision).toBeUndefined();
+  });
+});

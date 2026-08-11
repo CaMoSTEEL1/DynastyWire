@@ -38,7 +38,7 @@ import {
   type RosterPlayer,
   type WeekDelta,
 } from "@/lib/dynasty/client";
-import { generateInApp } from "@/lib/dynasty/gen";
+import { generateInApp, GEN_REVISION } from "@/lib/dynasty/gen";
 import { teamsToLoad } from "@/lib/dynasty/national";
 import { loadSaga } from "@/lib/dynasty/saga-store";
 import { enforceSuspensions, loadSuspensions, isActive, weeksLeft } from "@/lib/dynasty/suspensions";
@@ -737,7 +737,17 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
         // and serving it from cache is how the live feed silently never reaches the paper.
         // One rewrite per section per game, and only when there is genuinely more to say.
         const predatesTheGame = watched.plays.length > 0 && (cached?.generatedAt ?? 0) < watched.watchedAt;
-        if (cached?.status === "ready" && cached.data != null && !predatesTheGame) return cached.data;
+        // Written by an older generator. A prompt fix is invisible otherwise — the week the
+        // user is READING keeps serving what the old prompt said, which is how a fixed bug
+        // still looks broken. Only the current week: an archived one is a record of what was
+        // written at the time, and rewriting history is worse than an old sentence.
+        // startsWith, not equals: the pregame key carries a "::pre" suffix, and pregame is
+        // precisely the week this went wrong on.
+        const isCurrentWeek = (currentIssueKey ?? "").startsWith(issueKey(dynastyId, year, week));
+        const staleGenerator = isCurrentWeek && cached?.genRevision !== GEN_REVISION;
+        if (cached?.status === "ready" && cached.data != null && !predatesTheGame && !staleGenerator) {
+          return cached.data;
+        }
       }
 
       const flightKey = `${currentIssueKey ?? currentSavePath}::${tKey}`;
@@ -821,7 +831,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
           await writeTab(
             currentIssueKey!,
             tKey,
-            { status: "ready", data, error: null, generatedAt: Date.now() },
+            { status: "ready", data, error: null, generatedAt: Date.now(), genRevision: GEN_REVISION },
             { dynastyId, year, week }
           );
         }

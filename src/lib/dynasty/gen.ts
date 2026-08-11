@@ -22,6 +22,7 @@ import { recordBaseline, rowFromReport } from "./baseline";
 import { buildGroundTruth, validateGeneration } from "./validator";
 import { lockedBlock, recapBrief, recapFacts } from "./recap";
 import { arcsBlock, type LiveArc } from "./arcs";
+import { contactBrief, type Contact } from "./phone";
 import { nationalBrief, nationalFacts } from "./national";
 import { coachResumeBlock, jobSecurityLine, priorSeasons, priorSeasonsBlock } from "./history";
 import { postseasonBlock, postseasonOutlook, weekShape, type PostseasonOutlook } from "./postseason";
@@ -237,6 +238,25 @@ export interface MediaContext {
   /** Season phase from the real calendar (regular / late / conf-champ / postseason round). */
   phase: PhaseInfo;
 }
+
+/**
+ * Bumped BY HAND whenever a prompt changes in a way that should invalidate what is already
+ * cached. The weekly issue caches per (dynasty, year, week, kind), so without this a prompt
+ * fix never reaches the week a user is currently reading — they keep being served the sentence
+ * the old prompt wrote, and the fix looks like it did nothing.
+ *
+ * Deliberately manual. Hashing the prompt would invalidate on every whitespace edit and quietly
+ * spend a user's tokens for nothing; this only moves when the OUTPUT should be different.
+ *
+ * Only the CURRENT week is affected — see the check in dynasty-context. Archived weeks are a
+ * record of what was written at the time, and rewriting history is worse than an old sentence.
+ *
+ * 2 — RTG: pregame stopped reading as a benching, the feed stopped inventing a head coach out
+ *     of the player's own name, and engagement became a computed number.
+ * 3 — The phone stopped writing his replies for him. Cached weeks still hold conversations he
+ *     never had a say in, and those must not be served as if he had.
+ */
+export const GEN_REVISION = "3";
 
 export interface GenerateOpts {
   team?: string;
@@ -1747,37 +1767,62 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
         player: ctx.snapshot.player ?? null,
         baseline: (extra.baselinePlayer ?? null) as RtgPlayer | null,
         school: ctx.school,
-    // "he did not play" and "kickoff has not happened" are identical in his numbers.
-    // Only the team's week tells them apart.
-    teamPlayed: ctx.weekState === "game",
+        // "he did not play" and "kickoff has not happened" are identical in his numbers.
+        // Only the team's week tells them apart.
+        teamPlayed: ctx.weekState === "game",
         interest: ctx.snapshot.schoolInterest,
         teamResult: rtgTeamResult(ctx),
       });
       const ch = (extra.character ?? null) as RtgCharacter | null;
+      const contacts = Array.isArray(extra.contacts) ? (extra.contacts as Contact[]) : [];
       const didNotPlay = facts.time.state === "did-not-play";
+      const notYet = facts.time.state === "not-yet-played";
       return {
-        maxTokens: 1800,
+        maxTokens: 2000,
         prompt: [
-          "Write this week's TEXT MESSAGES to a college football player. Return JSON:",
-          '{"threads": [{"with": "who", "relationship": "coach"|"teammate"|"home"|"other",',
-          '  "messages": [{"from": "them"|"him", "text": "string"}]}]}',
+          "Write this week's INCOMING TEXT MESSAGES to a college football player, and the ways",
+          "he could answer. Return JSON:",
+          '{"threads": [{"with": "who", "kind": "coach"|"teammate"|"rival-for-the-job"|"home"|"reporter"|"old-life",',
+          '  "messages": [{"text": "string"}],',
+          '  "replies": [{"tone": "warm"|"locked-in"|"blunt"|"deflect", "text": "what he would send"}]}]}',
           "",
-          "3-4 threads, 2-5 messages each. These are TEXTS: short, lowercase, unfinished",
-          "sentences, no greeting, no signature. Nobody writes a paragraph. Some threads are two",
-          "messages and a read receipt's worth of silence.",
+          "YOU DO NOT WRITE HIS REPLIES AS SENT. This is the whole point of the surface: he",
+          "chooses. `messages` is what THEY sent him and nothing else — never a line from him.",
+          "`replies` is three DIFFERENT things he could send back, one per tone, and they must",
+          "actually differ. Three shades of agreeing is what this looked like before, and it read",
+          "as a transcript of somebody else's phone.",
+          "  - warm: he gives them something real. Costs him nothing except the admission.",
+          "  - locked-in: all business. Correct with a coach; cold to somebody who loves him.",
+          "  - blunt: what he actually thinks, including when that is not flattering to him.",
+          "  - deflect: keeps it light, changes the subject, makes the joke. A real move, and",
+          "    transparent to anyone who knows him.",
+          "Each reply is ONE text. Short, lowercase, unfinished. Nobody writes a paragraph.",
+          "",
+          "3-4 threads, 1-3 incoming messages each. Some threads are two messages and a silence.",
           "",
           "WHO TEXTS HIM — use these people and no invented replacements:",
-          ch?.positionCoach ? `- ${ch.positionCoach}, his position coach. Brief, functional, occasionally warmer than expected. He does not explain himself.` : "",
-          ch?.teammate ? `- ${ch.teammate}, his closest teammate. Jokes, memes described in words, the group-chat register.` : "",
-          ch?.aheadOfHim ? `- ${ch.aheadOfHim}, the man ahead of him — which makes every message between them slightly loaded even when it isn't.` : "",
-          ch?.home ? `- ${ch.home}. This one is not about football. That is the point of it.` : "",
+          ch?.positionCoach ? `- ${ch.positionCoach}, his position coach.` : "",
+          ch?.teammate ? `- ${ch.teammate}, his closest teammate.` : "",
+          ch?.aheadOfHim ? `- ${ch.aheadOfHim}, the man ahead of him on the depth chart.` : "",
+          ch?.home ? `- ${ch.home}.` : "",
+          ch?.reporter ? `- ${ch.reporter}, who covers the team. Anything he sends here can be printed.` : "",
           "",
-          didNotPlay
-            ? "HE DID NOT PLAY. The coach thread is the hard one — it can be encouragement, a correction, or nothing much at all, and 'nothing much at all' is often the most honest. Home does not mention the game."
-            : "He played. The threads react to what he actually did, using the real line below.",
+          // Where he stands with each of them, and what his own silence has already cost.
+          // Without this every week reads as week one of knowing these people.
+          contactBrief(contacts) ?? "",
+          "",
+          notYet
+            ? "THE GAME HAS NOT BEEN PLAYED YET. Nobody is reacting to a performance. These are " +
+              "the messages of the days BEFORE — the week, the opponent, the waiting, ordinary " +
+              "life happening around it. Nothing about him being benched or not playing."
+            : didNotPlay
+              ? "HE DID NOT PLAY. The coach thread is the hard one — encouragement, a correction, " +
+                "or nothing much at all, and 'nothing much at all' is often the most honest. Home " +
+                "does not mention the game."
+              : "He played. The threads react to what he actually did, using the real line below.",
           "",
           "Never promise him playing time or a start — nobody has decided that. Never state a",
-          "score, a record or a rating (rule 6).",
+          "score, a record or a rating (rule 6). He is a PLAYER: nobody calls him coach.",
           "",
           rtgBrief(facts),
           "",
@@ -4165,6 +4210,25 @@ function normalize(
     // `call` is kept as the flattened form so anything that only wants one string still works.
     const call = exchange.map((t) => t.line).join(" ") || str(parsed?.call);
     return exchange.length || call || posts.length ? { exchange, call, posts } : { error: true };
+  }
+
+  if (kind === "rtg-texts") {
+    // The one rule the surface depends on: nothing in `messages` may be from HIM. A model that
+    // slips his reply into the incoming list turns the phone back into a transcript, which is
+    // exactly what this was rebuilt to stop.
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    const threads = (Array.isArray(parsed?.threads) ? (parsed!.threads as Record<string, unknown>[]) : [])
+      .map((t) => {
+        const messages = (Array.isArray(t.messages) ? (t.messages as Record<string, unknown>[]) : [])
+          .filter((m) => str(m.text) && str(m.from) !== "him")
+          .map((m) => ({ text: str(m.text) }));
+        const replies = (Array.isArray(t.replies) ? (t.replies as Record<string, unknown>[]) : [])
+          .filter((r) => str(r.text) && str(r.tone))
+          .map((r) => ({ tone: str(r.tone), text: str(r.text) }));
+        return { with: str(t.with), kind: str(t.kind) || "other", messages, replies };
+      })
+      .filter((t) => t.with && t.messages.length);
+    return threads.length ? { threads } : { threads: [], error: true };
   }
 
   if (kind === "rtg-social") {
