@@ -10,7 +10,7 @@ import { isDirectionOnly, isStageDirection, spokenText, stripDirections } from "
 
 const SKIPPED = [
   "[pause] You know what? I respect that. All right, lock of the week…",
-  "[pause] We're back. Bucky, before the break you said something about playoff math…",
+  "[pause] We're back. Hollis, before the break you said something about playoff math…",
   "[pause] Okay, so you're setting this up like it's actually competitive…",
 ];
 

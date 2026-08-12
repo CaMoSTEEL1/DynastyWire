@@ -255,8 +255,10 @@ export interface MediaContext {
  *     of the player's own name, and engagement became a computed number.
  * 3 — The phone stopped writing his replies for him. Cached weeks still hold conversations he
  *     never had a say in, and those must not be served as if he had.
+ * 4 — Two podcast personas recast, and a season no longer claims "no postseason" on a weak
+ *     signal. Cached shows still carry the old cast and the old claim.
  */
-export const GEN_REVISION = "3";
+export const GEN_REVISION = "4";
 
 export interface GenerateOpts {
   team?: string;
@@ -2663,12 +2665,12 @@ const SHOW_PERSONAS: Record<string, { name: string; role: string; affiliation: s
   gameday: [
     { name: "Marcus Cole", role: "Host", affiliation: "DynastyWire", personality: "Enthusiastic and energetic, loves big moments" },
     { name: "Diana Reeves", role: "Analyst", affiliation: "CFP Network", personality: "Analytical and data-driven, always has the numbers" },
-    { name: "Troy Washington", role: "Analyst", affiliation: "DynastyWire", personality: "Contrarian hot-take artist, provocative but entertaining" },
+    { name: "Adrian Voss", role: "Analyst", affiliation: "DynastyWire", personality: "The skeptic. Argues from the schedule and the numbers, never for effect — and says plainly when the last thing he doubted turned out to be real" },
   ],
   rankings: [
     { name: "Marcus Cole", role: "Host", affiliation: "DynastyWire", personality: "Enthusiastic and energetic, drives the studio discussion" },
     { name: "Diana Reeves", role: "Analyst", affiliation: "CFP Network", personality: "Analytical and data-driven, defends or critiques rankings with evidence" },
-    { name: "Troy Washington", role: "Analyst", affiliation: "DynastyWire", personality: "Contrarian hot-take artist, loves to argue a team is over/underrated" },
+    { name: "Adrian Voss", role: "Analyst", affiliation: "DynastyWire", personality: "The skeptic. Thinks most of the top ten is soft and will show his working; concedes a ranking he cannot argue with rather than reaching for one" },
   ],
   portal: [
     { name: "Jake Morrison", role: "Reporter", affiliation: "Portal Insider Network", personality: "Connected insider with sources everywhere, speaks in scoops" },
@@ -2680,12 +2682,12 @@ const SHOW_PERSONAS: Record<string, { name: string; role: string; affiliation: s
     { name: "Diana Reeves", role: "Analyst", affiliation: "CFP Network", personality: "Analytical and data-driven, compares prospects to NFL archetypes" },
   ],
   hotseat: [
-    { name: "Troy Washington", role: "Host", affiliation: "DynastyWire", personality: "Provocative and direct, not afraid to say a coach should be fired" },
+    { name: "Adrian Voss", role: "Host", affiliation: "DynastyWire", personality: "Direct without enjoying it. Will say a job is in trouble and treats it as a man's livelihood rather than a segment" },
     { name: "Lisa Chen", role: "Analyst", affiliation: "CFP Network", personality: "Measured and fair, considers context and program trajectory" },
   ],
   podcast: [
     { name: "Dominic Farr", role: "National Voice", affiliation: "The Wire Room", personality: "Sees the program from 30,000 feet — respects it when earned, dismisses homer cope, ranks it against the whole country" },
-    { name: "Bucky Lane", role: "The Local", affiliation: "The Wire Room", personality: "Grew up twenty minutes from the stadium, unapologetic diehard — knows every player's story, takes every slight personally, all-in every week" },
+    { name: "Hollis Ward", role: "The Local", affiliation: "The Wire Room", personality: "Played here, covers here now. Knows the building, the position coaches and which freshmen are actually practising well — and because he loves the place he is the first to say when it is not good enough. Never a homer, never performs outrage" },
   ],
 };
 
@@ -2726,7 +2728,7 @@ const SHOW_DIRECTION: Record<string, string[]> = {
     "Include stage directions and technical football evaluation language.",
   ],
   hotseat: [
-    "Generate a coaching hot seat discussion. Troy Washington is provocative about the coach's job security",
+    "Generate a coaching hot seat discussion. Adrian Voss is direct about the coach's job security without relishing it",
     "while Lisa Chen provides measured counterpoints. Discuss trajectory, fan sentiment, and administration patience.",
     "Reference the record, losses, and program direction. Include stage directions.",
   ],

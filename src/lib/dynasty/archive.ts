@@ -191,15 +191,34 @@ export function buildSeasonRecord(
     return winnerRow != null ? teams[String(winnerRow)]?.name ?? null : null;
   })();
 
-  // Best-effort result: did the user reach/win the postseason?
+  // Did the user reach the postseason?
+  //
+  // This used to rest entirely on the week number: anything past
+  // `RegularSeasonLastWeekScheduled` was postseason, anything else was not. One off-by-one in
+  // that field and a playoff run is filed as "no postseason" — which a tester read back in his
+  // own press conference: "last year you went 16-0 and finished #1 with no postseason". A
+  // sixteen-game season IS a postseason run; nobody plays sixteen regular-season games.
+  //
+  // So the GAME COUNT corroborates the week number, and disagreement produces silence rather
+  // than a confident wrong answer. `null` renders as nothing at all (see seasonLine), which is
+  // the right output for something we cannot actually determine.
   const regEnd = snapshot.calendar?.regularSeasonLastWeek ?? 15;
-  const userPost = games.filter((g) => (g.week ?? 0) > regEnd);
+  const byWeek = games.filter((g) => (g.week ?? 0) > regEnd).length > 0;
+  // Twelve regular-season games plus a conference championship is the most anyone plays
+  // before the bracket. Past that, they played something extra, whatever the weeks say.
+  const REG_SEASON_CAP = 13;
+  const byCount = games.length > REG_SEASON_CAP;
+
   const result: SeasonRecord["result"] =
     champion != null && champion === u.name
       ? "national-champ"
-      : userPost.length > 0
+      : byWeek || byCount
         ? "made-postseason"
-        : "regular";
+        : // Neither signal fired. Only claim "no postseason" when the schedule is short enough
+          // for that to be plainly true; otherwise say nothing and let the record speak.
+          games.length > 0 && games.length <= 12
+          ? "regular"
+          : null;
 
   return {
     dynastyId,

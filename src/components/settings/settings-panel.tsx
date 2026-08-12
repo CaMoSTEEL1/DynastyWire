@@ -447,6 +447,23 @@ export default function SettingsPanel() {
   const [fetchingVoices, setFetchingVoices] = useState(false);
   const [voicesError, setVoicesError] = useState<string | null>(null);
   const [savedMsg, setSavedMsg] = useState("");
+  /**
+   * Whether anything the Save button owns has been typed but not saved.
+   *
+   * These fields are held in local state and only written on Save, which is invisible: two
+   * separate testers pasted an ElevenLabs key, went to the podcast, found Play still dead,
+   * and reported it as a bug. One of them had to be rescued by another user asking "did you
+   * hit save settings?". The app should say that itself.
+   */
+  const dirty =
+    team !== (settings.userTeam ?? "") ||
+    coach !== (settings.coachName ?? "") ||
+    key !== (settings.anthropicKey ?? "") ||
+    eleven !== (settings.elevenLabsKey ?? "") ||
+    provider !== (settings.provider ?? "anthropic") ||
+    oaiUrl !== (settings.openaiBaseUrl ?? "") ||
+    oaiKey !== (settings.openaiKey ?? "") ||
+    oaiModel !== (settings.openaiModel ?? "");
 
   // Confirms which of the user's own voices the shows will cast from — and refreshes the
   // session cache, so voices added on elevenlabs.io land without restarting the app.
@@ -875,13 +892,27 @@ export default function SettingsPanel() {
         </div>
       </Section>
 
-      <div className="flex items-center gap-3 px-6 py-5">
-        <button type="button" onClick={persist} className="rounded bg-dw-crimson px-4 py-2 text-sm font-medium text-white">
+      {/* Unsaved work is stated, not implied. A key that has been typed but not saved looks
+          exactly like a key that was never entered, everywhere else in the app. */}
+      <div className="sticky bottom-0 flex flex-wrap items-center gap-3 border-t border-dw-border bg-paper px-6 py-5">
+        <button
+          type="button"
+          onClick={persist}
+          className={cn(
+            "rounded px-4 py-2 text-sm font-medium text-white",
+            dirty ? "bg-dw-crimson" : "bg-dw-crimson/60"
+          )}
+        >
           Save settings
         </button>
         <button type="button" onClick={close} className="text-sm text-ink3 hover:text-ink">
           Close
         </button>
+        {dirty && !savedMsg && (
+          <span className="text-sm text-dw-yellow">
+            Unsaved changes — nothing you typed above takes effect until you save.
+          </span>
+        )}
         {savedMsg && <span className="text-sm text-ink3">{savedMsg}</span>}
       </div>
     </div>

@@ -136,7 +136,7 @@ export function PodcastPlayer({
         type="button"
         onClick={toggle}
         disabled={!hasKey}
-        title={hasKey ? undefined : "Add your ElevenLabs key in Settings to hear this as a podcast"}
+        title={hasKey ? undefined : "Add your ElevenLabs key in Settings — and press Save settings — to hear this as a podcast"}
         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-dw-accent2 text-paper disabled:opacity-40"
       >
         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
@@ -150,7 +150,10 @@ export function PodcastPlayer({
         <p className="font-sans text-[10px] uppercase tracking-widest text-dw-accent2">{label}</p>
         <p className="truncate font-serif text-xs text-ink2">
           {!hasKey ? (
-            <span className="text-ink3">Add your ElevenLabs key in Settings to hear this read aloud.</span>
+            <span className="text-ink3">
+              Add your ElevenLabs key in Settings to hear this read aloud —{" "}
+              <span className="text-dw-yellow">and press Save settings</span>, or the key never lands.
+            </span>
           ) : err ? (
             <span className="text-dw-red">{err}</span>
           ) : idx >= 0 ? (

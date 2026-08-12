@@ -392,3 +392,28 @@ describe("priorSeasonsBlock", () => {
     expect(won).not.toContain("REVENGE ANGLE IS EARNED");
   });
 });
+
+// ── "16-0 with no postseason" ─────────────────────────────────────────────────
+// A tester's own press conference read it back to him. Nobody plays sixteen regular-season
+// games, so the claim was self-evidently a detection failure — it rested entirely on a week
+// number, and one off-by-one in the save's RegularSeasonLastWeekScheduled produces exactly it.
+
+describe("a long season is a postseason", () => {
+  const S = (over: Partial<SeasonRecord> = {}): SeasonRecord =>
+    ({
+      dynastyId: "d", year: 2030, team: "Oregon", coachName: null, wins: 16, losses: 0,
+      confWins: null, confLosses: null, finalRankMedia: 1, finalRankCFP: null, prestige: null,
+      result: null, champion: null, leaders: [], roster: [], games: [], ledger: [], archivedAt: 0,
+      ...over,
+    }) as SeasonRecord;
+
+  it("never says 'no postseason' when the result is unknown", () => {
+    // null renders as silence, which is the correct output for something undetermined.
+    expect(seasonLine(S({ result: null }))).not.toContain("no postseason");
+    expect(seasonLine(S({ result: null }))).toContain("16-0");
+  });
+
+  it("still says it when the season really was twelve games and done", () => {
+    expect(seasonLine(S({ wins: 7, losses: 5, result: "regular" }))).toContain("no postseason");
+  });
+});

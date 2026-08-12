@@ -17,7 +17,13 @@ export type VoiceKey = keyof typeof VOICE_IDS;
 export const PERSONA_VOICE_NAMES: Record<string, string> = {
   "Marcus Cole": "Andrew",
   "Diana Reeves": "Alexandra",
-  "Troy Washington": "Bill",
+  // The skeptic. A drier, older voice than the hot-take chair it replaced — the delivery has
+  // to match a man who is arguing rather than performing.
+  "Adrian Voss": "Brian",
+  // The local: a former player, so warmer and less clipped than the national voice he sits
+  // opposite. Farr is the distance; Ward is the room.
+  "Hollis Ward": "Chris",
+  "Dominic Farr": "Roger",
   "Jake Morrison": "Daniel",
   "Lisa Chen": "Lily",
   "Pete Nakamura": "George",
