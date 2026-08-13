@@ -559,6 +559,24 @@ export const CALL_COOLDOWN_MS = 25_000;
 export const CALLS_PER_GAME = 40;
 
 /**
+ * Is the booth's VOICE shipped yet?
+ *
+ * The reader is verified — the score, the clock, the down and distance were all checked
+ * against a live game and read correctly on 30 consecutive frames. The commentary written on
+ * top of it has never produced a sentence anybody has read: the prompt assembles and the
+ * plumbing typechecks, and that is the whole of what is known about it.
+ *
+ * There is also a specific unfixed risk. `live-call` asks for a two-or-three turn exchange
+ * PLUS three posts inside 800 tokens, which is the same shape that truncated the phone twice
+ * in real use after its output grew and its budget did not.
+ *
+ * So it stays out of the build rather than merely defaulting to off — off-by-default is still
+ * a feature a tester can find, turn on, and report on, and an unverified feature is not worth
+ * the report. Flip this to true once a drive has been watched with it running.
+ */
+export const COMMENTARY_READY = false;
+
+/**
  * Which events are worth interrupting for.
  *
  * Scores and quarters. NOT downs — a booth that says something on every first down is the

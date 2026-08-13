@@ -17,6 +17,7 @@ import { useDynasty } from "@/components/dynasty/dynasty-context";
 import {
   CALLS_PER_GAME,
   CALL_COOLDOWN_MS,
+  COMMENTARY_READY,
   DEFAULT_CROP,
   boardLine,
   calibrate,
@@ -170,7 +171,8 @@ export default function LivePage() {
   // ── The booth's voice ────────────────────────────────────────────────────────
   // Off unless asked for. Every other surface in the app spends once a week, on a click the
   // user made; this one spends while they are looking at the television.
-  const commentaryOn = settings.liveCommentary === true;
+  // Held back until a drive has been watched with it running — see COMMENTARY_READY.
+  const commentaryOn = COMMENTARY_READY && settings.liveCommentary === true;
   const [calls, setCalls] = useState<LiveCall[]>([]);
   const [talking, setTalking] = useState(false);
   // Moments that happened during the cooldown, waiting to go in with the next call rather
@@ -365,7 +367,7 @@ export default function LivePage() {
           Find the score bar
         </button>
 
-        <button
+        {COMMENTARY_READY && <button
           type="button"
           onClick={() => void updateSettings({ liveCommentary: !commentaryOn })}
           disabled={!hasApiKey}
@@ -382,7 +384,7 @@ export default function LivePage() {
           {commentaryOn && spokenCount > 0 && (
             <span className="normal-case tracking-normal opacity-60">· {spokenCount}</span>
           )}
-        </button>
+        </button>}
 
         <button
           type="button"
