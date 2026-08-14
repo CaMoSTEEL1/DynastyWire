@@ -208,7 +208,11 @@ export function buildGroundTruth(input: GroundTruthInput): GroundTruth {
   let opponent: string | null = null;
   const g = delta?.userResult ?? null;
   if (g && userTeam) {
-    opponent = g.home === userTeam ? g.away : g.home;
+    // Normalised: an exact compare here picks the WRONG opponent when the user's team name
+    // differs by case or a stray space, and the validator then checks the piece against a
+    // team that was never on the field.
+    const norm = (n: string | null | undefined) => (n ?? "").trim().toLowerCase();
+    opponent = norm(g.home) === norm(userTeam) ? g.away : g.home;
   } else if (snapshot.userTeamRow != null) {
     const row = snapshot.userTeamRow;
     const next =

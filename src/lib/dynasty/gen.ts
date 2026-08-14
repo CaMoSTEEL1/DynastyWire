@@ -56,6 +56,7 @@ import { STANDING_LABEL, playerStandings, pressureBoard, pressureLine } from "./
 import { weekStateOf } from "./week-state";
 import { archetypeLabel, attackLine, profileLine, threatTags, weaknessTags } from "./traits";
 import { loreBlock, type LoreState } from "./lore";
+import { userIsHome as homeByRow } from "./recap";
 
 export type { LlmConfig, RosterPlayer };
 
@@ -262,7 +263,7 @@ export interface MediaContext {
  * 4 — Two podcast personas recast, and a season no longer claims "no postseason" on a weak
  *     signal. Cached shows still carry the old cast and the old claim.
  */
-export const GEN_REVISION = "5";
+export const GEN_REVISION = "6";
 
 export interface GenerateOpts {
   team?: string;
@@ -1014,7 +1015,21 @@ export function buildMediaContext(
   let opponentName: string | null = null;
 
   if (g) {
-    const userIsHome = g.home === school;
+    // Rows, not names. `g.home === school` is a strict compare between a name that may have
+    // been typed into settings and a name that came out of the save, and it does not merely
+    // choose a preposition — every paired field below (score, opponent, rank) flips with it,
+    // so one stray space reports the user losing to themselves. See userIsHome in recap.ts.
+    const userRow = after.userTeamRow;
+    const scheduleRow =
+      userRow != null
+        ? (after.games ?? []).find(
+            (gm) =>
+              gm.played &&
+              gm.week === d.weekPlayed &&
+              (gm.homeRow === userRow || gm.awayRow === userRow)
+          ) ?? null
+        : null;
+    const userIsHome = homeByRow(g, school, scheduleRow, userRow);
     const isNeutralSite = d.weekPlayed != null && d.weekPlayed >= 16;
     const location = isNeutralSite ? "neutral site (NOT a home game)" : (userIsHome ? "home" : "away");
     const usScore = userIsHome ? g.homeScore : g.awayScore;
@@ -1027,6 +1042,16 @@ export function buildMediaContext(
     parts.push(
       `${school} ${won ? "defeated" : "lost to"} ${fmtRank(oppRank)}${oppName}, ` +
         `${usScore}-${oppScore} (${location}).`
+    );
+    // Where it was played, spelled out rather than left in the parentheses above. A tester
+    // read an article that called a home game an away game and then corrected itself inside
+    // the same piece — the fact was present all along, in the weakest possible form.
+    parts.push(
+      isNeutralSite
+        ? `WHERE: neutral site. Neither team hosted — never call it a home game or a road trip.`
+        : userIsHome
+          ? `WHERE: a HOME game for ${school}. They hosted ${oppName} in their own stadium, in front of their own crowd. NEVER write it as a road game, an away game, a trip or a visit.`
+          : `WHERE: a ROAD game for ${school}. They travelled to ${oppName} and played in ${oppName}'s stadium, in front of a hostile crowd. NEVER write it as a home game, and never put that crowd on ${school}'s side.`
     );
     parts.push(`Result: ${won ? "WIN" : "LOSS"} · Margin: ${Math.abs((usScore ?? 0) - (oppScore ?? 0))}`);
 
@@ -1347,6 +1372,10 @@ export function buildMediaContext(
   if (myForm.games.length > 0) {
     parts.push("=== THEIR SEASON SO FAR, GAME BY GAME (real, most recent first — this is the");
     parts.push("whole résumé; never say who they have played is unknown) ===");
+    // Spell the shorthand out. These lines are the SECOND place a prompt states where a game
+    // was played, and an unglossed "vs"/"at" is a weak signal sitting next to a strong one —
+    // which is how a piece ends up calling the same game a road game and then a home game.
+    parts.push('  Read "vs" as a HOME game and "at" as a ROAD game. This is binding.');
     for (const g of myForm.games) parts.push(`  ${formLine(g)}`);
     if (myForm.streak) {
       parts.push(

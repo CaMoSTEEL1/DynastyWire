@@ -500,3 +500,81 @@ describe("what the save actually knew about this game", () => {
     expect(brief).toContain("not who scored it");
   });
 });
+
+describe("where the game was played", () => {
+  // Reported by a tester: a front-page article called a home game an away game, then
+  // corrected itself to a home game inside the same piece. Two causes, both fixed here —
+  // the fact was computed from a fragile string compare, and it was stated in the weakest
+  // position in the prompt (a trailing prepositional phrase) with no prohibition attached.
+  const RESULT = {
+    week: 8,
+    home: "Coastal Carolina",
+    away: "Tulane",
+    homeScore: 31,
+    awayScore: 17,
+    winner: "Coastal Carolina",
+    loser: "Tulane",
+    margin: 14,
+    rankHome: null,
+    rankAway: 9,
+    userInvolved: true,
+    simmed: false,
+  } as never;
+
+  const SCHEDULE = { week: 8, homeRow: 4, awayRow: 7, played: true } as never;
+
+  it("reads home off the ROW, not the spelling of the name", () => {
+    // Every one of these name variants used to invert the entire game: the user was
+    // reported as losing 17-31 to themselves, because score, rank, quarters and opponent
+    // all flip together with the home flag.
+    for (const userTeam of ["Coastal Carolina", "Coastal Car.", "coastal carolina", "Coastal Carolina "]) {
+      const f = gameFacts({ result: RESULT, userTeam, game: SCHEDULE, userRow: 4 });
+      expect(f.location).toBe("home");
+      expect(f.usScore).toBe(31);
+      expect(f.themScore).toBe(17);
+      expect(f.won).toBe(true);
+      expect(f.them).toBe("Tulane");
+    }
+  });
+
+  it("reads away off the row too", () => {
+    const f = gameFacts({ result: RESULT, userTeam: "Tulane", game: SCHEDULE, userRow: 7 });
+    expect(f.location).toBe("away");
+    expect(f.usScore).toBe(17);
+    expect(f.won).toBe(false);
+  });
+
+  it("still works with no row, and no longer trips over case or stray whitespace", () => {
+    const f = gameFacts({ result: RESULT, userTeam: " coastal carolina " });
+    expect(f.location).toBe("home");
+    expect(f.usScore).toBe(31);
+  });
+
+  it("states the location as a locked fact with the wrong answers named", () => {
+    const lines = recapFacts({
+      result: RESULT,
+      userTeam: "Coastal Carolina",
+      userRow: 4,
+      games: [SCHEDULE],
+      roster: [],
+      week: 8,
+      year: 2031,
+    } as never).locked.join("\n");
+    expect(lines).toMatch(/WHERE: a HOME game/);
+    expect(lines).toMatch(/NEVER write this as a road game/);
+  });
+
+  it("does not claim a home crowd on the road", () => {
+    const lines = recapFacts({
+      result: RESULT,
+      userTeam: "Tulane",
+      userRow: 7,
+      games: [SCHEDULE],
+      roster: [],
+      week: 8,
+      year: 2031,
+    } as never).locked.join("\n");
+    expect(lines).toMatch(/WHERE: a ROAD game/);
+    expect(lines).toMatch(/hostile crowd/);
+  });
+});

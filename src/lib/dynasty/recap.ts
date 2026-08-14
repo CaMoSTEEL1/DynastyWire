@@ -185,11 +185,43 @@ export interface GameInput {
   game?: SnapshotGame | null;
   /** Weeks 16+ are neutral-site by the app's own rule (see buildMediaContext). */
   neutralSite?: boolean;
+  /** The user's team row. When this and the schedule row are both known, it decides
+   * home/away — see `userIsHome`. Names are the fallback, not the source of truth. */
+  userRow?: number | null;
+}
+
+/**
+ * Team names are not identifiers, and this one decision reads from four fields.
+ *
+ * `home` does not merely pick a preposition. It picks which score is ours, which rank is
+ * ours, whose quarters are whose, and who the opponent even was. Get it wrong and the recap
+ * does not report a road game — it reports the user LOSING TO THEMSELVES, 17-31, because
+ * every paired field flipped together.
+ *
+ * The old test was `result.home === userTeam`: a strict string compare between a name the
+ * user may have typed into settings and a name that came out of the save. A trailing space,
+ * a lowercase letter, or a TeamBuilder school abbreviated differently in one place than the
+ * other silently inverts the entire game. Rows cannot drift like that, so rows decide when
+ * they are available, and the name compare — now normalised — is only the fallback for the
+ * paths that genuinely have no row.
+ */
+export function userIsHome(
+  r: GameResult,
+  userTeam: string,
+  game?: SnapshotGame | null,
+  userRow?: number | null
+): boolean {
+  if (userRow != null && game) {
+    if (game.homeRow === userRow) return true;
+    if (game.awayRow === userRow) return false;
+  }
+  const norm = (n: string | null | undefined) => (n ?? "").trim().toLowerCase();
+  return norm(r.home) === norm(userTeam);
 }
 
 export function gameFacts(input: GameInput): GameFacts {
   const { result: r, userTeam } = input;
-  const home = r.home === userTeam;
+  const home = userIsHome(r, userTeam, input.game, input.userRow);
   const usScore = (home ? r.homeScore : r.awayScore) ?? 0;
   const themScore = (home ? r.awayScore : r.homeScore) ?? 0;
   const usRank = home ? r.rankHome : r.rankAway;
@@ -634,6 +666,7 @@ export function recapFacts(input: RecapInput): RecapFacts {
         result: input.result,
         userTeam: input.userTeam,
         game: scheduleRow,
+        userRow: input.userRow,
         neutralSite: (input.week ?? input.result.week ?? 0) >= 16,
       })
     : null;
@@ -671,6 +704,22 @@ export function recapFacts(input: RecapInput): RecapFacts {
     locked.push(
       `${game.us} ${game.won ? "beat" : "lost to"} ${game.themRank ? `#${game.themRank} ` : ""}${game.them}, ` +
         `${game.usScore}-${game.themScore}, ${where}${game.overtime ? ", in overtime" : ""}.`
+    );
+    // Where the game was played gets its own line, stated as hard fact with the wrong
+    // answers named.
+    //
+    // It used to appear only as the two words at the end of the line above, which is the
+    // weakest possible place to put a fact: a trailing prepositional phrase, in a sentence
+    // whose subject is the score. Reported by a tester — an article called a home game an
+    // away game and then corrected itself to a home game inside the same piece. That is not
+    // a model that lacks the fact; it is a model that was never told the fact was binding,
+    // while every other line in this block carries an explicit prohibition.
+    locked.push(
+      game.location === "neutral"
+        ? `WHERE: neutral site. Neither team hosted. Never call it a home game or a road trip for either side.`
+        : game.location === "home"
+          ? `WHERE: a HOME game for ${game.us}. They hosted ${game.them} in their own stadium, in front of their own crowd. NEVER write this as a road game, an away game, a trip, a visit, or anything played at ${game.them}'s place.`
+          : `WHERE: a ROAD game for ${game.us}. They travelled to ${game.them} and played in ${game.them}'s stadium, in front of a hostile crowd. NEVER write this as a home game, and never put this crowd on ${game.us}'s side.`
     );
     locked.push(`Margin: ${Math.abs(game.margin)} — ${BAND_LABEL[game.band]}.`);
     if (game.swing) {
