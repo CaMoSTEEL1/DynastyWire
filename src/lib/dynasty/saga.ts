@@ -7,6 +7,8 @@
 // glue of a dynasty. Every decision moves the meters, and the meters follow the coach across
 // every screen so the pressure is always felt — not just tallied on one page.
 
+import type { LoreState } from "./lore";
+
 // ---- Meters ----------------------------------------------------------------
 
 export interface SagaMeters {
@@ -303,6 +305,10 @@ export interface SagaState {
   figureThreads?: Record<string, RecruitThreadMessage[]>;
   /** Situations the coach sat on, waiting to come back hotter. Cleared once they return. */
   deferred?: DeferredSituation[];
+  /** The user's own world — authored canon plus coverage they chose to keep. See lore.ts.
+   * Lives here rather than in its own store because it is the same kind of thing as the
+   * backstory: one record per dynasty that carries across every week and never resets. */
+  lore?: LoreState;
   seededAt: number;
   updatedAt: number;
 }

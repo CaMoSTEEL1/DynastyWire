@@ -20,6 +20,7 @@ import {
 } from "@/lib/dynasty/scouting";
 import { issueKey, readTab, writeTab } from "@/lib/dynasty/issue-cache";
 import { seatTemperature, SEAT_COLOR, PROGRAM_SITUATIONS, type CoachBackstory, type ProgramSituation } from "@/lib/dynasty/saga";
+import Link from "next/link";
 import { 
   Shield, 
   Heart, 
@@ -32,7 +33,9 @@ import {
   RefreshCw,
   UserCircle,
   RotateCcw,
-  Pencil
+  Pencil,
+  BookMarked,
+  ChevronRight
 } from "lucide-react";
 
 // ── Text threads with the AD / booster / beat reporter ────────────────────────
@@ -1157,12 +1160,38 @@ export default function CoachPage() {
     return { label: "Focused on schedule", color: "text-ink3", desc: "Maintaining standard recruiting bounds." };
   })();
 
+  const loreCount = saga.lore.entries.length;
+  const loreFree = saga.lore.freeform.trim().length > 0;
+
   return (
     <div className="space-y-8">
       <SectionHeader
         title="COACH PROFILE"
         subtitle={dynasty.conference ? `${dynasty.school} — ${dynasty.conference}` : dynasty.school}
       />
+
+      {/* ── Dynasty Lore ──────────────────────────────────────────────────
+          A pointer, not a second editor. The lore lives on its own tab and is edited in one
+          place; duplicating a controlled textarea here would mean two save paths writing the
+          same field, which is how the backstory used to lose writes. This is here because
+          the Coach tab is where people look for "things I told the app about my program". */}
+      <Link
+        href="/current/lore/"
+        className="flex items-center gap-4 rounded border border-dw-border bg-paper2 px-6 py-4 transition-colors hover:border-dw-accent/60"
+      >
+        <BookMarked className="h-5 w-5 shrink-0 text-dw-accent" />
+        <span className="min-w-0 flex-1">
+          <span className="block font-headline text-sm uppercase tracking-widest text-dw-accent">
+            Dynasty Lore
+          </span>
+          <span className="mt-0.5 block font-serif text-[13px] leading-snug text-ink3">
+            {loreCount > 0
+              ? `${loreCount} ${loreCount === 1 ? "fact" : "facts"} the newsroom treats as true${loreFree ? ", plus your own account of the dynasty" : ""}.`
+              : "Tell the newsroom what is true about your dynasty — characters, history, rivalries, where your story stands. It writes around your world instead of a blank one."}
+          </span>
+        </span>
+        <ChevronRight className="h-4 w-4 shrink-0 text-ink3" />
+      </Link>
 
       {/* ── Direct lines: AD / booster / beat writer ──────────────────── */}
       <FiguresDesk />

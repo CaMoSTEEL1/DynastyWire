@@ -22,6 +22,14 @@ import {
   type StoryOption,
   type ThreadMessage,
 } from "@/lib/dynasty/saga";
+import {
+  addEntry,
+  newLore,
+  removeEntry,
+  setFreeform,
+  type AddLoreInput,
+  type LoreState,
+} from "@/lib/dynasty/lore";
 import { loadOrSeedSaga, saveSaga } from "@/lib/dynasty/saga-store";
 import { useDynasty } from "./dynasty-context";
 
@@ -53,7 +61,19 @@ export interface UseSaga {
   saveRecruitDossier: (recruitKey: string, dossier: unknown) => Promise<void>;
   /** Save the coach's generated backstory and staff (null resets it). */
   saveBackstory: (backstory: CoachBackstory | null) => Promise<void>;
+  /** The user's world bible. Never null once read — an absent record reads as empty. */
+  lore: LoreState;
+  /** Replace the user's own free-form account of their dynasty. */
+  saveLoreFreeform: (text: string) => Promise<void>;
+  /** Promote a fact into the permanent world. Idempotent: adding the same line twice is a
+   * no-op, so the button can sit on content that gets re-read without duplicating it. */
+  addLore: (input: Omit<AddLoreInput, "now" | "id">) => Promise<void>;
+  removeLore: (id: string) => Promise<void>;
 }
+
+/** One shared empty record. A fresh object per render would change identity every time and
+ * retrigger every memo that depends on the lore. */
+const EMPTY_LORE: LoreState = newLore();
 
 export function useSaga(): UseSaga {
   const { dynastyId, snapshot } = useDynasty();
@@ -251,6 +271,48 @@ export function useSaga(): UseSaga {
     [mutate]
   );
 
+  const lore = state?.lore ?? EMPTY_LORE;
+
+  const saveLoreFreeform = useCallback<UseSaga["saveLoreFreeform"]>(
+    async (text) => {
+      await mutate((prev) => ({
+        ...prev,
+        lore: setFreeform(prev.lore ?? newLore(), text, Date.now()),
+        updatedAt: Date.now(),
+      }));
+    },
+    [mutate]
+  );
+
+  const addLore = useCallback<UseSaga["addLore"]>(
+    async (input) => {
+      const now = Date.now();
+      await mutate((prev) => ({
+        ...prev,
+        lore: addEntry(prev.lore ?? newLore(), {
+          ...input,
+          now,
+          // Random enough for a local list, and never collides with a re-add of the same
+          // text because addEntry rejects the duplicate before the id is ever used.
+          id: `lore_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        }),
+        updatedAt: now,
+      }));
+    },
+    [mutate]
+  );
+
+  const removeLore = useCallback<UseSaga["removeLore"]>(
+    async (id) => {
+      await mutate((prev) => ({
+        ...prev,
+        lore: removeEntry(prev.lore ?? newLore(), id, Date.now()),
+        updatedAt: Date.now(),
+      }));
+    },
+    [mutate]
+  );
+
   const saveBackstory = useCallback<UseSaga["saveBackstory"]>(
     async (backstory) => {
       await mutate((prev) => {
@@ -263,5 +325,5 @@ export function useSaga(): UseSaga {
     [mutate]
   );
 
-  return { ready, state, resolve, defer, clearDeferred, answerMedia, appendThread, appendRecruitThread, appendFigureThread, adjustMeters, saveRecruitDossier, saveBackstory };
+  return { ready, state, resolve, defer, clearDeferred, answerMedia, appendThread, appendRecruitThread, appendFigureThread, adjustMeters, saveRecruitDossier, saveBackstory, lore, saveLoreFreeform, addLore, removeLore };
 }

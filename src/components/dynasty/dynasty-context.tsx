@@ -760,9 +760,12 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
         // The coach's persistent backstory (saga) rides along as context for every kind, so
         // recaps/social/situations stay consistent with who this coach is. LazyStore caches
         // the read, so this is cheap per call.
-        const backstory = await loadSaga(dynastyId)
-          .then((s) => s?.backstory ?? null)
-          .catch(() => null);
+        // One read, two facts. The lore is the user's own canon (lore.ts) and it binds every
+        // generator exactly the way the backstory does — a world the user established on the
+        // Lore tab has to be true on the front page too.
+        const saga = await loadSaga(dynastyId).catch(() => null);
+        const backstory = saga?.backstory ?? null;
+        const lore = saga?.lore ?? null;
         // Active suspensions ride into EVERY generator: the save carries a temporary 40 OVR
         // for suspended players (that's what benches them), so the context must restore
         // their real rating and state the suspension as fact — otherwise the media universe
@@ -817,6 +820,7 @@ export function DynastyProvider({ children }: { children: React.ReactNode }) {
           roster,
           oppRoster,
           backstory,
+          lore,
           suspensions,
           priorSeasons,
           arcs,

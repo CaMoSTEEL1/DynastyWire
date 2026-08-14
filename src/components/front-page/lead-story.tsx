@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import type { RecapContent } from "./types";
+import { AddToLore } from "@/components/dynasty/add-to-lore";
 
 interface LeadStoryProps {
   recap: RecapContent | null;
@@ -59,7 +60,21 @@ export function LeadStory({ recap }: LeadStoryProps) {
         {recap.headline}
       </h1>
 
-      <p className="font-sans text-sm text-ink3">{recap.byline}</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="font-sans text-sm text-ink3">{recap.byline}</p>
+        {/*
+          The headline, not the body. A recap body restates the box score, which the save
+          already holds and the archive already keeps — promoting it would spend the lore
+          budget on facts the app can recompute. The headline is the one line that says what
+          this week MEANT, and that is the part nothing else records.
+        */}
+        <AddToLore
+          kind="event"
+          from="Front page"
+          text={recap.headline}
+          className="shrink-0"
+        />
+      </div>
 
       <div className="h-px w-full bg-dw-border" />
 

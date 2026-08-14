@@ -55,6 +55,7 @@ import {
 import { STANDING_LABEL, playerStandings, pressureBoard, pressureLine } from "./pressure";
 import { weekStateOf } from "./week-state";
 import { archetypeLabel, attackLine, profileLine, threatTags, weaknessTags } from "./traits";
+import { loreBlock, type LoreState } from "./lore";
 
 export type { LlmConfig, RosterPlayer };
 
@@ -215,6 +216,9 @@ export interface MediaContext {
   suspensions: ActiveSuspension[];
   /** Persistent coach identity + recurring cast, when the user has written one. */
   backstory: CoachBackstory | null;
+  /** The user's own world (lore.ts). On MediaContext rather than only inside userContext
+   * because three surfaces build their own context and never read the shared blob. */
+  lore: LoreState | null;
   /** Year-over-year memory: the rendered PRIOR SEASONS table, or null in year one. Held
    * separately as well as folded into userContext, because the ported surfaces no longer
    * receive the shared blob and would silently lose the program's history with it. */
@@ -258,7 +262,7 @@ export interface MediaContext {
  * 4 — Two podcast personas recast, and a season no longer claims "no postseason" on a weak
  *     signal. Cached shows still carry the old cast and the old claim.
  */
-export const GEN_REVISION = "4";
+export const GEN_REVISION = "5";
 
 export interface GenerateOpts {
   team?: string;
@@ -270,6 +274,10 @@ export interface GenerateOpts {
   /** The coach's persistent backstory (saga) — folded into every generator's context so the
    * media universe stays consistent with who this coach is and their recurring cast. */
   backstory?: CoachBackstory | null;
+  /** The user's own world bible — authored canon plus coverage they chose to keep. Rides in
+   * the same shared block as the backstory, for the same reason: a fact the user established
+   * must be true on every tab, not just the one they typed it on. */
+  lore?: LoreState | null;
   /** Players currently serving a suspension. Their save OVR is temporarily dropped to bench
    * them, so the context restores the REAL rating and states the suspension as hard fact —
    * otherwise every generator would hallucinate a star suddenly rated 40. */
@@ -1320,6 +1328,10 @@ export function buildMediaContext(
   const backstory = opts.backstory ?? null;
   parts.push(...identityBlock(backstory));
 
+  // The user's own canon, immediately after the coach's identity — both are authored, both
+  // are binding, and a generator reading one should read the other in the same breath.
+  parts.push(...loreBlock(opts.lore ?? null));
+
   // WHO THEY HAVE ACTUALLY PLAYED.
   //
   // Reported from a podcast: "they're 3-0 against who? We don't have the other two opponents
@@ -1357,6 +1369,7 @@ export function buildMediaContext(
     oppRoster,
     suspensions,
     backstory,
+    lore: opts.lore ?? null,
     history,
     hasHistory,
     resume,
@@ -1538,6 +1551,7 @@ function buildRtgWeekSpec(ctx: MediaContext, extra: Extra): PromptSpec {
       "",
       ctx.history ?? "",
       ...identityBlock(ctx.backstory),
+      ...loreBlock(ctx.lore),
       `The week: Week ${ctx.week ?? "—"} · ${ctx.phase.label}.`,
     ]
       .filter(Boolean)
@@ -2048,6 +2062,7 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
           roomBlock(room, p?.position ?? null) ?? "",
           "",
           ...identityBlock(ctx.backstory),
+          ...loreBlock(ctx.lore),
         ]
           .filter(Boolean)
           .join("\n"),
@@ -2203,6 +2218,7 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
                 ctx.history ?? "",
                 ctx.resume ?? "",
                 ...identityBlock(ctx.backstory),
+                ...loreBlock(ctx.lore),
                 `The week: Week ${ctx.week ?? "—"} · ${ctx.phase.label}.`,
               ]
             : ["Context:", ctx.userContext]),

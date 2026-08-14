@@ -22,6 +22,7 @@ import {
   ListOrdered,
   Globe2,
   Radio,
+  BookMarked,
 } from "lucide-react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { useSettings } from "@/components/settings/settings-context";
@@ -35,6 +36,7 @@ const navItems = [
   { label: "Front Page", slug: "", icon: Newspaper },
   { label: "National", slug: "national", icon: Globe },
   { label: "Coach", slug: "coach", icon: UserCircle },
+  { label: "Dynasty Lore", slug: "lore", icon: BookMarked },
   { label: "Situation Room", slug: "situation-room", icon: Flame },
   { label: "Social", slug: "social", icon: MessageCircle },
   { label: "Press Conference", slug: "press-conference", icon: Mic },
@@ -57,6 +59,7 @@ const navItems = [
 // that spend, so the cheap half of the mode is always visible.
 const rtgNavItems = [
   { label: "The Week", slug: "the-week", icon: Newspaper },
+  { label: "Dynasty Lore", slug: "lore", icon: BookMarked },
   { label: "His Feed", slug: "my-social", icon: MessageCircle },
   { label: "His Podium", slug: "his-podium", icon: Mic },
   { label: "His Phone", slug: "his-phone", icon: MessageCircle },

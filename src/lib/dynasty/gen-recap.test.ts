@@ -699,3 +699,75 @@ describe("what the booth does with a name it saw", () => {
     expect(withWho("")).not.toContain("ON SCREEN AT THAT MOMENT");
   });
 });
+
+describe("the user's own world reaches the newsroom", () => {
+  // The lore is the one locked fact in this app that nobody computed — the user typed it.
+  // If the wiring from the Lore tab to the prompt breaks, nothing fails loudly: stories keep
+  // generating, they are just quietly written about a world the user did not describe. These
+  // tests exist to make that failure loud.
+  const withLore = (over: Partial<import("./lore").LoreState> = {}) => ({
+    ...opts,
+    lore: {
+      freeform: "",
+      entries: [],
+      updatedAt: 0,
+      ...over,
+    },
+  });
+
+  it("carries the user's own account into the shared context", () => {
+    const ctx = gen.buildMediaContext(
+      DELTA,
+      SNAPSHOT,
+      withLore({ freeform: "My DC is my old college roommate. We do not speak." })
+    );
+    expect(ctx.userContext).toContain("My DC is my old college roommate");
+  });
+
+  it("carries promoted facts, and names who outranks whom", () => {
+    const ctx = gen.buildMediaContext(
+      DELTA,
+      SNAPSHOT,
+      withLore({
+        entries: [
+          {
+            id: "a",
+            source: "canon",
+            kind: "person",
+            text: "Marcus Hale is my offensive coordinator",
+            addedAt: 2,
+          },
+          {
+            id: "b",
+            source: "promoted",
+            kind: "event",
+            text: "The bus broke down before the rivalry game",
+            addedAt: 1,
+          },
+        ],
+      })
+    );
+    expect(ctx.userContext).toContain("Marcus Hale is my offensive coordinator");
+    expect(ctx.userContext).toContain("The bus broke down before the rivalry game");
+    // Canon must appear before promoted — the ordering IS the precedence rule.
+    expect(ctx.userContext.indexOf("Marcus Hale")).toBeLessThan(
+      ctx.userContext.indexOf("The bus broke down")
+    );
+  });
+
+  it("reaches an actual generated prompt, not just the context object", () => {
+    const prompt = gen.buildSpec(
+      "recap-lead",
+      gen.buildMediaContext(DELTA, SNAPSHOT, withLore({ freeform: "We play in a 20,000 seat stadium." })),
+      {}
+    ).prompt;
+    expect(prompt).toContain("20,000 seat stadium");
+  });
+
+  it("adds nothing at all when the user has written no lore", () => {
+    const bare = gen.buildMediaContext(DELTA, SNAPSHOT, opts).userContext;
+    const empty = gen.buildMediaContext(DELTA, SNAPSHOT, withLore()).userContext;
+    expect(empty).toBe(bare);
+    expect(empty).not.toContain("DYNASTY LORE");
+  });
+});

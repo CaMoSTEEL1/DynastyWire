@@ -5,6 +5,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import { Heart, Repeat2, BadgeCheck } from "lucide-react";
 import type { SocialPost } from "@/lib/social/types";
 import { useEffect, useRef, useState } from "react";
+import { AddToLore } from "@/components/dynasty/add-to-lore";
 
 const TYPE_COLORS: Record<SocialPost["type"], { avatar: string; badge: string }> = {
   fan: { avatar: "bg-ink2", badge: "bg-ink2/20 text-ink2" },
@@ -180,6 +181,18 @@ export function SocialPostCard({ post, onClick, delay = 0, isNew = false }: Soci
               <Repeat2 className="h-3.5 w-3.5" />
               {reposts.toLocaleString()}
             </span>
+            {/*
+              Kept as a PERSON, not as a quote. A one-off take ages out in a week, but an
+              account the user liked is reusable forever — and the lore block tells the
+              newsroom to bring named people back rather than invent a replacement.
+            */}
+            <AddToLore
+              kind="person"
+              from="The Wire"
+              label="Keep"
+              text={`${post.displayName} (${post.handle}) is a real ${post.type} voice around this program. They post things like: "${post.body}"`}
+              className="ml-auto"
+            />
           </div>
         </div>
       </div>
