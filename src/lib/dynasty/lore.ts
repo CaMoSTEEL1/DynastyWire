@@ -222,6 +222,30 @@ const KIND_HEADING: Record<LoreKind, string> = {
 export function loreBlock(state: LoreState | null | undefined): string[] {
   if (isEmpty(state)) return [];
   const s = state as LoreState;
+  // Budget-only selection, no week context. lore-select.ts has the relevance-aware version
+  // that generation actually calls; this remains for callers with no week to be relevant to.
+  const ranked = rankEntries(s.entries);
+  const kept: LoreEntry[] = [];
+  let used = 0;
+  for (const e of ranked) {
+    const cost = e.text.length + 8;
+    if (used + cost > ENTRY_BUDGET) break;
+    used += cost;
+    kept.push(e);
+  }
+  return renderLore(s.freeform, kept);
+}
+
+/**
+ * The world bible as the model sees it, given a decided set of facts.
+ *
+ * Split from selection so the two questions stay separate: WHICH facts go in is a judgement
+ * about budget and relevance (lore-select.ts), HOW they are stated is a judgement about
+ * prompting. Mixing them is how a change to one quietly breaks the other.
+ */
+export function renderLore(freeform: string, entries: LoreEntry[]): string[] {
+  if (!freeform.trim() && entries.length === 0) return [];
+  const s = { freeform, entries } as LoreState;
   const parts: string[] = [];
 
   parts.push("=== DYNASTY LORE (the user's own world — treat as fact, never contradict) ===");
@@ -246,19 +270,8 @@ export function loreBlock(state: LoreState | null | undefined): string[] {
     parts.push("");
   }
 
-  const ranked = rankEntries(s.entries);
-  if (ranked.length) {
-    // Group after ranking so the headings appear in ranked order and the budget is spent on
-    // the best facts rather than on whichever kind happens to sort first alphabetically.
-    const kept: LoreEntry[] = [];
-    let used = 0;
-    for (const e of ranked) {
-      const cost = e.text.length + 8;
-      if (used + cost > ENTRY_BUDGET) break;
-      used += cost;
-      kept.push(e);
-    }
-
+  if (entries.length) {
+    const kept = entries;
     const canon = kept.filter((e) => e.source === "canon");
     const promoted = kept.filter((e) => e.source === "promoted");
 

@@ -21,6 +21,7 @@ import {
   rankEntries,
   type LoreKind,
 } from "@/lib/dynasty/lore";
+import { findConflicts, overriddenIds } from "@/lib/dynasty/lore-select";
 
 const KIND_LABEL: Record<LoreKind, string> = {
   person: "Person",
@@ -71,6 +72,11 @@ export default function LorePage() {
   const canon = useMemo(() => ranked.filter((e) => e.source === "canon"), [ranked]);
   const promoted = useMemo(() => ranked.filter((e) => e.source === "promoted"), [ranked]);
   const overflow = useMemo(() => loreOverflow(lore), [lore]);
+  // Two entries handing one job to two different people. Resolved in code before the prompt
+  // is built, so the model never sees the contradiction — but the user has to be told which
+  // fact stopped counting, or the app is silently ignoring something they wrote.
+  const conflicts = useMemo(() => findConflicts(lore.entries), [lore.entries]);
+  const overridden = useMemo(() => overriddenIds(lore.entries), [lore.entries]);
 
   const saveDraft = async () => {
     setBusy(true);
@@ -123,10 +129,12 @@ export default function LorePage() {
           controversies. It just builds them on top of your world instead of a blank one.
         </p>
         <p className="mt-3 font-sans text-[11px] leading-relaxed text-ink3">
-          Straight about the limit: this is context, not a rule the app can enforce. Your stats get
-          checked against your save because there is a table to check them against — there is no
-          such table for a story. Lore makes contradiction unlikely, not impossible. If you catch
-          one, that is worth reporting.
+          Straight about how far this goes. One thing IS enforced: a program has one offensive
+          coordinator, one starting quarterback, one beat writer, and where your world names two
+          people for the same job the newsroom is only ever told the winner — yours. Everything
+          else is weighting, not a rule. Your stats get checked against your save because there is
+          a table to check them against, and there is no such table for a story. Lore makes
+          contradiction unlikely, not impossible. If you catch one, that is worth reporting.
         </p>
       </div>
 
@@ -177,6 +185,41 @@ export default function LorePage() {
           )}
         </div>
       </div>
+
+      {/* ── Conflicts ─────────────────────────────────────────────────── */}
+      {conflicts.length > 0 && (
+        <div className="mt-8 rounded border border-dw-yellow/40 bg-dw-yellow/5 p-4">
+          <h3 className="font-headline text-sm uppercase tracking-widest text-dw-yellow">
+            Two Answers To One Question
+          </h3>
+          <p className="mt-1 font-sans text-[11px] leading-relaxed text-ink3">
+            A program has one of each of these jobs. Where your world names two people for the
+            same one, the newsroom is told only the winner — it never sees the other, so it
+            cannot pick wrong. Delete whichever is out of date to clear this.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {conflicts.map((c, i) => (
+              <li key={`${c.loser.entry.id}-${i}`} className="font-serif text-sm leading-snug">
+                <span className="font-sans text-[10px] uppercase tracking-wider text-ink3">
+                  {c.role}
+                </span>
+                <span className="mt-0.5 block text-ink">
+                  <span className="text-dw-green">{c.winner.subject}</span>
+                  {" · "}
+                  <span className="text-ink3 line-through">{c.loser.subject}</span>
+                </span>
+                <span className="block font-sans text-[10px] uppercase tracking-wider text-ink3">
+                  {c.reason === "canon-beats-generated"
+                    ? "You wrote it — it beats what the app wrote"
+                    : c.reason === "newer-canon"
+                      ? "Both yours — the newer one is treated as the change"
+                      : "Both kept from coverage — the newer one wins"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* ── Canon entries ─────────────────────────────────────────────── */}
       <div className="mt-10 space-y-3">
@@ -235,7 +278,14 @@ export default function LorePage() {
                 >
                   {KIND_LABEL[e.kind]}
                 </span>
-                <span className="flex-1 font-serif text-sm leading-snug text-ink">{e.text}</span>
+                <span
+                  className={cn(
+                    "flex-1 font-serif text-sm leading-snug",
+                    overridden.has(e.id) ? "text-ink3 line-through" : "text-ink"
+                  )}
+                >
+                  {e.text}
+                </span>
                 <button
                   type="button"
                   onClick={() => void removeLore(e.id)}
@@ -280,7 +330,14 @@ export default function LorePage() {
                   {KIND_LABEL[e.kind]}
                 </span>
                 <span className="flex-1">
-                  <span className="block font-serif text-sm leading-snug text-ink">{e.text}</span>
+                  <span
+                    className={cn(
+                      "block font-serif text-sm leading-snug",
+                      overridden.has(e.id) ? "text-ink3 line-through" : "text-ink"
+                    )}
+                  >
+                    {e.text}
+                  </span>
                   {(e.from || e.year != null) && (
                     <span className="mt-0.5 block font-sans text-[10px] uppercase tracking-wider text-ink3">
                       {[e.from, e.year != null ? `${e.year}${e.week != null ? ` · wk ${e.week}` : ""}` : null]
@@ -310,9 +367,11 @@ export default function LorePage() {
       */}
       {overflow > 0 && (
         <p className="mt-6 rounded border border-dw-yellow/30 bg-dw-yellow/10 px-4 py-3 font-serif text-sm text-dw-yellow">
-          Your world is bigger than one prompt can hold. The {overflow} oldest{" "}
-          {overflow === 1 ? "entry is" : "entries are"} no longer being sent with each story —
-          canon and your most recent facts are kept first. Trim anything you no longer need.
+          Your world is bigger than one prompt can hold, so about {overflow}{" "}
+          {overflow === 1 ? "entry" : "entries"} sit out of any given story. Nothing is lost:
+          everything you wrote is kept first, and each week the app sends the facts about the
+          people and the opponent actually in that week. A note about a rival is there the week
+          you play them.
         </p>
       )}
     </div>

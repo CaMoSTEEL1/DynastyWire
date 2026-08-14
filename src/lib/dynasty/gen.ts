@@ -55,7 +55,8 @@ import {
 import { STANDING_LABEL, playerStandings, pressureBoard, pressureLine } from "./pressure";
 import { weekStateOf } from "./week-state";
 import { archetypeLabel, attackLine, profileLine, threatTags, weaknessTags } from "./traits";
-import { loreBlock, type LoreState } from "./lore";
+import { type LoreState } from "./lore";
+import { loreBlockFor, type LoreContext } from "./lore-select";
 import { userIsHome as homeByRow } from "./recap";
 
 export type { LlmConfig, RosterPlayer };
@@ -263,7 +264,7 @@ export interface MediaContext {
  * 4 — Two podcast personas recast, and a season no longer claims "no postseason" on a weak
  *     signal. Cached shows still carry the old cast and the old claim.
  */
-export const GEN_REVISION = "6";
+export const GEN_REVISION = "7";
 
 export interface GenerateOpts {
   team?: string;
@@ -817,6 +818,28 @@ export function parseJSON<T = Record<string, unknown>>(raw: string): T | null {
  * shared blob stay the same text — a coach who is a disciplinarian on one tab and a
  * players-coach on the next is its own kind of hallucination.
  */
+/**
+ * The week's cast, for ranking the user's world bible by relevance.
+ *
+ * Shared by the surfaces that build their own context so all four agree on what "this week"
+ * means. A surface that computed its own would quietly select a different set of facts than
+ * the front page did, and the same dynasty would remember different things on different tabs.
+ */
+function loreCtxFor(ctx: MediaContext): LoreContext {
+  return {
+    opponent: ctx.opponent ?? null,
+    team: ctx.school ?? null,
+    names: [
+      ...(ctx.roster ?? []).map((p) => p.name),
+      ...(ctx.oppRoster ?? []).map((p) => p.name),
+      ctx.backstory?.adName,
+      ctx.backstory?.boosterName,
+      ctx.backstory?.reporterName,
+      ctx.backstory?.rivalCoachName,
+    ].filter((n): n is string => !!n),
+  };
+}
+
 export function identityBlock(backstory: CoachBackstory | null): string[] {
   if (!backstory) return [];
   const parts: string[] = [];
@@ -1355,7 +1378,24 @@ export function buildMediaContext(
 
   // The user's own canon, immediately after the coach's identity — both are authored, both
   // are binding, and a generator reading one should read the other in the same breath.
-  parts.push(...loreBlock(opts.lore ?? null));
+  //
+  // Handed the week's cast so that, once a world bible outgrows the budget, the facts that
+  // survive are the ones about who is actually playing. Without this the rule is newest-first,
+  // which drops a two-season-old note about this week's opponent in favour of a recent note
+  // about a player who has since transferred out.
+  const loreCtx: LoreContext = {
+    opponent: opponentName,
+    team: knownSchool,
+    names: [
+      ...(opts.roster ?? []).map((p) => p.name),
+      ...(opts.oppRoster ?? []).map((p) => p.name),
+      backstory?.adName,
+      backstory?.boosterName,
+      backstory?.reporterName,
+      backstory?.rivalCoachName,
+    ].filter((n): n is string => !!n),
+  };
+  parts.push(...loreBlockFor(opts.lore ?? null, loreCtx));
 
   // WHO THEY HAVE ACTUALLY PLAYED.
   //
@@ -1580,7 +1620,7 @@ function buildRtgWeekSpec(ctx: MediaContext, extra: Extra): PromptSpec {
       "",
       ctx.history ?? "",
       ...identityBlock(ctx.backstory),
-      ...loreBlock(ctx.lore),
+      ...loreBlockFor(ctx.lore, loreCtxFor(ctx)),
       `The week: Week ${ctx.week ?? "—"} · ${ctx.phase.label}.`,
     ]
       .filter(Boolean)
@@ -2091,7 +2131,7 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
           roomBlock(room, p?.position ?? null) ?? "",
           "",
           ...identityBlock(ctx.backstory),
-          ...loreBlock(ctx.lore),
+          ...loreBlockFor(ctx.lore, loreCtxFor(ctx)),
         ]
           .filter(Boolean)
           .join("\n"),
@@ -2247,7 +2287,7 @@ export function buildSpec(kind: string, ctx: MediaContext, extra: Extra = {}): P
                 ctx.history ?? "",
                 ctx.resume ?? "",
                 ...identityBlock(ctx.backstory),
-                ...loreBlock(ctx.lore),
+                ...loreBlockFor(ctx.lore, loreCtxFor(ctx)),
                 `The week: Week ${ctx.week ?? "—"} · ${ctx.phase.label}.`,
               ]
             : ["Context:", ctx.userContext]),
