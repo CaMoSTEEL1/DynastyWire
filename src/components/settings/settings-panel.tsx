@@ -20,6 +20,7 @@ import { clearBaseline, formatBaseline, loadBaseline, summarizeBaseline, type Ba
 import { teamTheme } from "@/lib/dynasty/team-theme";
 import { PublishPanel } from "@/components/share/publish-panel";
 import { DEFAULT_FORUM_URL } from "@/lib/share/api";
+import { PERSONA_VOICE_NAMES } from "@/lib/audio/voices";
 
 /** Destructive action with an inline two-step confirm (no browser dialogs in the webview),
  * which reloads afterward so every screen re-reads the now-empty stores. */
@@ -413,6 +414,10 @@ function Toggle({
 
 const inputCls =
   "w-full rounded border border-dw-border bg-paper2 px-3 py-2 text-sm text-ink outline-none focus:border-dw-crimson";
+
+/** The recurring on-air personas, read from the voice map so this list cannot drift away
+ * from the personas that actually exist. */
+const RECURRING_CAST = Object.keys(PERSONA_VOICE_NAMES);
 
 export default function SettingsPanel() {
   const { close } = useSettings();
@@ -823,11 +828,32 @@ export default function SettingsPanel() {
         />
         <p className="text-[11px] leading-relaxed text-ink3">
           Uses the voices on your ElevenLabs account — cloned, designed, or saved from the
-          voice library — instead of the stock premade ones. Name a voice after a persona
-          (&ldquo;Marcus Cole&rdquo;) and that persona always speaks with it; everyone else gets
-          a gender-matched voice from your library, re-rolled weekly. Accounts with no custom
-          voices fall back to the premades automatically.
+          voice library — instead of the stock premade ones. Name a voice after a persona and
+          that persona always speaks with it; everyone else gets a gender-matched voice from
+          your library, re-rolled weekly. Accounts with no custom voices fall back to the
+          premades automatically.
         </p>
+        {/*
+          The cast list, because the feature above is unusable without it. Asked on Discord by
+          someone who had already cloned a voice and wanted to assign it — the behaviour has
+          always worked, but nothing in the app ever told anyone WHO to name a voice after,
+          which made a shipped feature effectively invisible.
+        */}
+        <div className="rounded border border-dw-border bg-paper2 px-3 py-2.5">
+          <p className="font-sans text-[10px] uppercase tracking-widest text-dw-accent2">
+            Name a voice after one of these
+          </p>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-ink2">
+            {RECURRING_CAST.join(" · ")}
+          </p>
+          <p className="mt-2 text-[11px] leading-relaxed text-ink3">
+            Clone or design the voice in ElevenLabs, name it exactly as it appears here, and
+            that host speaks with it from the next show on. Part of a name works too —
+            a voice called &ldquo;Voss&rdquo; is enough. Your AD, booster, beat writer and rival
+            coach work the same way: name a voice after whatever you called them on the Coach
+            tab.
+          </p>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"

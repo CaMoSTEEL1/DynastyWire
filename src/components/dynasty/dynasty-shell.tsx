@@ -21,6 +21,8 @@ import UpdateGate from "@/components/dynasty/update-gate";
 import { TutorialProvider } from "@/components/tutorial/tutorial-context";
 import TutorialWizard from "@/components/tutorial/tutorial-wizard";
 import { useTeamTheme } from "./use-team-theme";
+import { PodcastAudioProvider } from "@/components/shows/podcast-audio";
+import { NowPlaying } from "@/components/shows/now-playing";
 
 const UNIVERSE_ITEMS = [
   "SOURCES: Three Power Four programs quietly pursuing the same 5-star QB prospect.",
@@ -177,6 +179,11 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   return (
     <SettingsProvider dynasty={dynastyInfo} initialSeason={seasonInfo}>
       <TutorialProvider>
+        {/* Above the router on purpose: podcast audio lives here so navigating between tabs
+            cannot unmount the player mid-sentence, and so synthesized clips (which cost the
+            user ElevenLabs credits) survive a route change instead of being thrown away and
+            paid for twice. See shows/podcast-audio.tsx. */}
+        <PodcastAudioProvider>
         <DynastySwitcher />
         <Masthead
           // RTG turns it into a different publication entirely — RoadWire, covering one kid.
@@ -214,6 +221,10 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         {/* Self-update prompt. Corner toast, always declinable — never interrupts a week. */}
         <UpdateGate />
         <TutorialWizard />
+        {/* A show still running on some other tab — visible and stoppable from wherever the
+            user has wandered to. Hides itself on the page that owns the player. */}
+        <NowPlaying />
+        </PodcastAudioProvider>
       </TutorialProvider>
     </SettingsProvider>
   );

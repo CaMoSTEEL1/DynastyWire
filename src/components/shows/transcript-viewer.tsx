@@ -98,6 +98,8 @@ export function TranscriptViewer({
           resetKey={`${transcript.title}::${transcript.week}`}
           autoStart
           label="Listen · Podcast Audio"
+          title={transcript.title || "Broadcast"}
+          href="/current/shows/"
         />
 
         <div className="mt-4 border-t border-dw-border pt-4">

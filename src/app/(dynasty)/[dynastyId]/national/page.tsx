@@ -177,6 +177,8 @@ export default function NationalDeskPage() {
                 weekSeed={week || 0}
                 resetKey={`national::${desk.podcast.title}::${week}`}
                 label="Listen · National Radio"
+                title={desk.podcast.title || "National Radio"}
+                href="/current/national/"
               />
               <div className="mt-4 space-y-3">
                 {desk.podcast.lines.map((l, i) => (

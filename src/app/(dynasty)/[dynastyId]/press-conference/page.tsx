@@ -188,6 +188,14 @@ export default function PressConferencePage() {
     }
   }, [generate]);
 
+  /**
+   * Does a reporter get to press after an answer?
+   *
+   * Read once here rather than inside the answer handlers, because the answer handlers have
+   * to act on it BEFORE they await anything — see below.
+   */
+  const willPress = settings.presserRebuttals !== false;
+
   const currentIndex = useMemo(() => {
     for (let i = 0; i < questions.length; i++) if (!record.answers[i]) return i;
     return -1; // all answered
@@ -196,8 +204,20 @@ export default function PressConferencePage() {
 
   // When the room empties, have the media grade the performance (once).
   useEffect(() => {
-    // `pending` matters: all questions can be answered while a follow-up is still on the
-    // floor, and grading then would judge a transcript missing its last exchange.
+    // `pending` and `pressing` matter: all questions can be answered while a follow-up is
+    // still on the floor, and grading then would judge a transcript missing its last
+    // exchange.
+    //
+    // THIS GUARD WAS NOT ENOUGH ON ITS OWN, and the hole was only ever visible on the LAST
+    // question. The answer handlers awaited persistRecord — which completes the answer set
+    // and makes `done` true — and only then called askFollowUp, which is what sets
+    // `pressing`. Between those two, React renders with done=true, pending=null and
+    // pressing=false, and this effect fires. The verdict is computed, and the follow-up the
+    // coach is about to be asked cannot count toward a grade that has already been written.
+    // Reported by a tester exactly that way.
+    //
+    // The fix is at the other end: the handlers now claim the floor synchronously, before
+    // their first await, so there is no render where the room looks empty but isn't.
     if (!done || pending || pressing || record.grade || grading) return;
     setGrading(true);
     (async () => {
@@ -237,7 +257,11 @@ export default function PressConferencePage() {
   const askFollowUp = useCallback(
     async (qi: number, answerText: string) => {
       const q = questions[qi];
-      if (!q || settings.presserRebuttals === false) return;
+      if (!q || settings.presserRebuttals === false) {
+        // The caller may have claimed the floor on our behalf; never leave it held.
+        setPressing(false);
+        return;
+      }
       setPressing(true);
       try {
         const r = await generate<Rebuttal>(
@@ -298,6 +322,8 @@ export default function PressConferencePage() {
     async (qi: number, a: PCAnswer) => {
       if (record.answers[qi] || answering) return;
       setAnswering(true);
+      // Claim the floor NOW, before anything is awaited. See holdTheFloor.
+      if (willPress) setPressing(true);
       try {
         await saga.adjustMeters({ mediaHeat: a.mediaDelta, fanTrust: a.fanDelta, lockerRoom: a.lockerDelta });
         await persistRecord({
@@ -312,7 +338,7 @@ export default function PressConferencePage() {
         setAnswering(false);
       }
     },
-    [record, answering, saga, persistRecord, askFollowUp]
+    [record, answering, saga, persistRecord, askFollowUp, willPress]
   );
 
   const answerCustom = useCallback(
@@ -321,6 +347,8 @@ export default function PressConferencePage() {
       if (!text || record.answers[qi] || answering) return;
       setAnswering(true);
       setDraft("");
+      // Claim the floor NOW, before anything is awaited. See holdTheFloor.
+      if (willPress) setPressing(true);
       try {
         const q = questions[qi];
         const res = await generate<{ reaction: string; headline: string; mediaDelta: number; fanDelta: number; lockerDelta: number; error?: boolean }>(
@@ -349,7 +377,7 @@ export default function PressConferencePage() {
         setAnswering(false);
       }
     },
-    [draft, record, answering, questions, generate, saga, persistRecord, askFollowUp]
+    [draft, record, answering, questions, generate, saga, persistRecord, askFollowUp, willPress]
   );
 
   const answeredCount = Object.keys(record.answers).length;
