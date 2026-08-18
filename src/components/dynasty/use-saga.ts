@@ -69,6 +69,8 @@ export interface UseSaga {
    * no-op, so the button can sit on content that gets re-read without duplicating it. */
   addLore: (input: Omit<AddLoreInput, "now" | "id">) => Promise<void>;
   removeLore: (id: string) => Promise<void>;
+  /** Keep every front-page headline without being asked each week. */
+  setAutoKeepFrontPage: (on: boolean) => Promise<void>;
 }
 
 /** One shared empty record. A fresh object per render would change identity every time and
@@ -313,6 +315,18 @@ export function useSaga(): UseSaga {
     [mutate]
   );
 
+  const setAutoKeepFrontPage = useCallback<UseSaga["setAutoKeepFrontPage"]>(
+    async (on) => {
+      const now = Date.now();
+      await mutate((prev) => ({
+        ...prev,
+        lore: { ...(prev.lore ?? newLore()), autoKeepFrontPage: on, updatedAt: now },
+        updatedAt: now,
+      }));
+    },
+    [mutate]
+  );
+
   const saveBackstory = useCallback<UseSaga["saveBackstory"]>(
     async (backstory) => {
       await mutate((prev) => {
@@ -325,5 +339,5 @@ export function useSaga(): UseSaga {
     [mutate]
   );
 
-  return { ready, state, resolve, defer, clearDeferred, answerMedia, appendThread, appendRecruitThread, appendFigureThread, adjustMeters, saveRecruitDossier, saveBackstory, lore, saveLoreFreeform, addLore, removeLore };
+  return { ready, state, resolve, defer, clearDeferred, answerMedia, appendThread, appendRecruitThread, appendFigureThread, adjustMeters, saveRecruitDossier, saveBackstory, lore, saveLoreFreeform, addLore, removeLore, setAutoKeepFrontPage };
 }

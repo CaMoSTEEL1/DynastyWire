@@ -592,6 +592,44 @@ pub fn live_game_visible() -> bool {
     game_window().map(game_is_visible).unwrap_or(false)
 }
 
+/// WHY the Booth cannot see the game, in words the user can act on.
+///
+/// This exists because the honest answer to "is the bar on screen" was being used to answer a
+/// question it cannot answer. A minimised game and a play call between snaps both produced
+/// "no bar on screen", so a user whose game was minimised got silence — the same silence they
+/// get fifty times a normal drive — and concluded the Booth simply did not work. Several did,
+/// and reported it that way.
+///
+/// The minimised case is not an edge case either: it is what EXCLUSIVE FULLSCREEN does the
+/// instant you click another window, which is exactly what calibrating the Booth asks the
+/// user to do. Reported verbatim — "it'll always minimize the game when I switch over to
+/// click Find the score bar". That user was doing everything right and the mode made it
+/// impossible.
+#[tauri::command]
+pub fn live_game_status() -> String {
+    let Some(hwnd) = game_window() else {
+        return "not-running".into();
+    };
+    unsafe {
+        if IsIconic(hwnd).as_bool() {
+            return "minimised".into();
+        }
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_err() {
+            return "unreadable".into();
+        }
+        let mid = POINT { x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2 };
+        let on_top = WindowFromPoint(mid);
+        if on_top.0.is_null() {
+            return "unreadable".into();
+        }
+        if GetAncestor(on_top, GA_ROOT) != hwnd {
+            return "covered".into();
+        }
+    }
+    "visible".into()
+}
+
 /// Every word on the whole screen, contrast-crushed the way the bar read is.
 ///
 /// This exists to answer the one question the score bar cannot: WHO. The bar carries a score

@@ -11,7 +11,7 @@
 // Deliberately quiet in the layout. It sits beside generated content that people are reading
 // for pleasure, and a loud button on every paragraph would wreck the page it is attached to.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BookmarkCheck, BookmarkPlus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDynasty } from "./dynasty-context";
@@ -74,4 +74,37 @@ export function AddToLore({ text, kind = "fact", from, label, className }: AddTo
       {added ? "In your lore" : (label ?? "Add to Dynasty Lore")}
     </button>
   );
+}
+
+/**
+ * Keep a generated line automatically, once, when the user has switched that on.
+ *
+ * Written as a hook rather than folded into the button because the thing being kept is the
+ * page's headline, which exists whether or not anybody looks at the button — and the request
+ * was explicitly to stop having to press it every week.
+ *
+ * Guards, in order of how badly each would bite:
+ *  - the setting must be on;
+ *  - the store must have loaded, or a fresh launch would write into an empty world and
+ *    "already kept?" would answer no for something kept weeks ago;
+ *  - the text must not already be present (hasEntry is the same check the button uses);
+ *  - and it fires at most once per mounted text, because a re-render is not a new week.
+ */
+export function useAutoKeep(text: string | null | undefined, from: string, kind: LoreKind = "event") {
+  const { year, week } = useDynasty();
+  const { lore, addLore, ready } = useSaga();
+  const done = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!ready || !lore.autoKeepFrontPage) return;
+    const clean = tidy(text ?? "");
+    if (!clean) return;
+    if (done.current === clean) return;
+    if (hasEntry(lore, clean)) {
+      done.current = clean;
+      return;
+    }
+    done.current = clean;
+    void addLore({ source: "promoted", kind, text: clean, from, year, week });
+  }, [ready, lore, text, from, kind, addLore, year, week]);
 }

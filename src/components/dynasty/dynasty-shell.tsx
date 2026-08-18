@@ -149,13 +149,28 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   if (!ready) return <FullScreen>Loading…</FullScreen>;
   if (needsOnboarding) return <Onboarding />;
   if (loading && !snapshot) return <FullScreen>Reading your dynasty…</FullScreen>;
-  if (error && !snapshot) return <FullScreen>Couldn&apos;t read the save: {error}</FullScreen>;
+  // A save that cannot be read USED TO BE A DEAD END — a full-screen error with no control
+  // on it. That is how a user ends up wiping %APPDATA%/com.vyce.dynastywire, which is the
+  // advice being passed around in Discord, and which destroys every dynasty's lore, coach
+  // backstory, season archive, NIL ledger and issue history at once. Reinstalling does not
+  // help, because none of that lives in the install.
+  //
+  // The trigger is ordinary: delete a dynasty in-game, rename the file, or move it, and the
+  // stored path now points at nothing. So the error screen sends the user back to the picker
+  // with the reason shown, and they choose a different save. Nothing is deleted, and there is
+  // no state a restart cannot reach.
+  if (error && !snapshot) return <Onboarding reason={`Couldn't read that save: ${error}`} />;
   // The save parsed but we could not tell WHICH team is the user's. That used to be a dead
   // end reading "No dynasty data yet" — and before that it was worse: the app guessed the
   // program with the most points and confidently covered Ohio State or Alabama instead.
   // Every team in the league is right here, so ask.
   if (snapshot && !snapshot.userTeam) return <PickYourTeam />;
-  if (!snapshot?.userTeam) return <FullScreen>No dynasty data yet. {error ?? ""}</FullScreen>;
+  if (!snapshot?.userTeam)
+    return (
+      <Onboarding
+        reason={`That save opened but had no dynasty in it. ${error ?? ""}`.trim()}
+      />
+    );
 
   const u = snapshot.userTeam;
   const record = `${u.wins}-${u.losses}`;
@@ -315,8 +330,12 @@ function FullScreen({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Onboarding() {
+function Onboarding({ reason }: { reason?: string } = {}) {
   const { settings, updateSettings, addDynasty } = useDynasty();
+  // The path that just failed, so the user can see WHICH file went missing rather than
+  // guessing which of their dynasties broke.
+  const lastUsed =
+    settings.dynasties?.find((d) => d.id === settings.activeDynastyId)?.saveFile ?? null;
   const [saveFile, setSaveFile] = useState("");
   const [userTeam, setUserTeam] = useState(settings.userTeam ?? "");
   const [coachName, setCoachName] = useState(settings.coachName ?? "");
@@ -370,8 +389,22 @@ function Onboarding() {
   return (
     <div className="min-h-screen flex items-center justify-center px-6">
       <div className="w-full max-w-md space-y-5">
-        <h1 className="font-headline text-3xl">Set up Dynasty Wire</h1>
-        <p className="opacity-70 text-sm">Pick the exact dynasty save file you want covered, add your Anthropic key. Nothing leaves your machine. You can add more dynasties later.</p>
+        <h1 className="font-headline text-3xl">{reason ? "Pick your dynasty save" : "Set up Dynasty Wire"}</h1>
+        {reason ? (
+          <div className="rounded border border-dw-yellow/40 bg-dw-yellow/5 px-4 py-3">
+            <p className="font-serif text-sm leading-relaxed text-ink2">{reason}</p>
+            <p className="mt-2 text-xs leading-relaxed opacity-70">
+              This normally means the save was renamed, moved, or deleted since you last opened
+              DynastyWire. Point it at the file again below — nothing you have written is lost,
+              and there is no need to reinstall or delete anything.
+            </p>
+            {lastUsed && (
+              <p className="mt-2 break-all font-mono text-[10px] opacity-50">Last used: {lastUsed}</p>
+            )}
+          </div>
+        ) : (
+          <p className="opacity-70 text-sm">Pick the exact dynasty save file you want covered, add your Anthropic key. Nothing leaves your machine. You can add more dynasties later.</p>
+        )}
 
         <label className="block space-y-1">
           <span className="text-xs uppercase tracking-wide opacity-70">Dynasty save file</span>

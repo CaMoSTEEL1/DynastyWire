@@ -50,7 +50,7 @@ Examples:
 Write it however you like. Nothing here is parsed — it goes to the newsroom in your own words.`;
 
 export default function LorePage() {
-  const { ready, lore, saveLoreFreeform, addLore, removeLore } = useSaga();
+  const { ready, lore, saveLoreFreeform, addLore, removeLore, setAutoKeepFrontPage } = useSaga();
 
   // Local draft so typing is not a write per keystroke. Seeded once the store has loaded.
   const [draft, setDraft] = useState("");
@@ -305,6 +305,26 @@ export default function LorePage() {
         <h3 className="font-headline text-sm uppercase tracking-widest text-dw-accent">
           Kept From Coverage
         </h3>
+
+        {/* Asked for by a user who was pressing Keep on every front page by hand so the
+            story would keep building on its own write-ups. */}
+        <label className="flex cursor-pointer items-start gap-3 rounded border border-dw-border bg-paper2 px-3 py-2.5">
+          <input
+            type="checkbox"
+            checked={lore.autoKeepFrontPage === true}
+            onChange={(e) => void setAutoKeepFrontPage(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--dw-accent)]"
+          />
+          <span className="min-w-0">
+            <span className="block font-sans text-xs uppercase tracking-wider text-ink">
+              Keep every front-page headline automatically
+            </span>
+            <span className="mt-0.5 block font-serif text-[13px] leading-snug text-ink3">
+              Every week&apos;s lead story joins your world without you pressing anything, so the
+              next week is written on top of the last one. You can still delete any of them here.
+            </span>
+          </span>
+        </label>
         <p className="font-sans text-[11px] text-ink3">
           Anything you pressed <span className="text-ink2">Add to Dynasty Lore</span> on. These
           people and events are real now, and the newsroom reuses them instead of inventing

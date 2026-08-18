@@ -47,6 +47,18 @@ export interface LoreEntry {
 
 export interface LoreState {
   /**
+   * Keep every front-page headline automatically.
+   *
+   * Asked for directly: "I am adding every single one so that the story continues to build
+   * based off those write offs." Somebody pressing the same button every week is a setting
+   * that has not been written yet — and the manual press is easy to forget, which silently
+   * puts holes in the story it is meant to be building.
+   *
+   * Off by default. A world bible that fills itself without being asked is a surprise, and
+   * this one costs prompt budget.
+   */
+  autoKeepFrontPage?: boolean;
+  /**
    * The user's own words about their dynasty, unstructured and unparsed. This is the whole
    * of step one: someone running a custom story alongside their save can paste their
    * characters, their program's culture and where the story currently stands, and every

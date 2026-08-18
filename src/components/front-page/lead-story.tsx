@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import type { RecapContent } from "./types";
-import { AddToLore } from "@/components/dynasty/add-to-lore";
+import { AddToLore, useAutoKeep } from "@/components/dynasty/add-to-lore";
 
 interface LeadStoryProps {
   recap: RecapContent | null;
@@ -34,6 +34,11 @@ function LeadStorySkeleton() {
 }
 
 export function LeadStory({ recap }: LeadStoryProps) {
+  // Keeps this week's headline on its own when the user has asked for that. Hooks run before
+  // the early return, and the hook itself no-ops when the setting is off or the headline is
+  // already kept.
+  useAutoKeep(recap?.headline ?? null, "Front page");
+
   if (!recap || !recap.body) {
     return <LeadStorySkeleton />;
   }

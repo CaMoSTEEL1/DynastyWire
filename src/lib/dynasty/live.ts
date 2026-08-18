@@ -778,6 +778,54 @@ export interface CropRegion {
  */
 export const DEFAULT_CROP: CropRegion = { x: 350, y: 930, w: 1400, h: 90 };
 
+/**
+ * Why the Booth cannot see the game — "not-running" | "minimised" | "covered" | "unreadable"
+ * | "visible".
+ *
+ * Split out from gameRunning because a boolean forced two very different problems through one
+ * message. Minimised is the important one: exclusive fullscreen minimises the moment you
+ * click another window, which is precisely what calibrating the Booth asks you to do, and the
+ * result was reported as "I can't get it to find the scoreboard" by several people who were
+ * doing nothing wrong.
+ */
+export type GameStatus = "not-running" | "minimised" | "covered" | "unreadable" | "visible";
+
+export function gameStatus(): Promise<GameStatus> {
+  return invoke<string>("live_game_status")
+    .then((s) => s as GameStatus)
+    .catch(() => "not-running" as GameStatus);
+}
+
+/** What to tell the user, and what to do about it. Null when nothing is wrong. */
+export function statusAdvice(s: GameStatus): { title: string; detail: string } | null {
+  switch (s) {
+    case "not-running":
+      return {
+        title: "College Football isn't running",
+        detail: "Start the game and load into a matchup. The Booth reads the score bar off the screen, so there has to be a screen.",
+      };
+    case "minimised":
+      return {
+        title: "The game is minimised",
+        detail:
+          "This is almost always exclusive fullscreen: the game minimises the moment you click another window, so the Booth is looking at nothing. Set the game to BORDERLESS (Windowed Borderless / Fullscreen Borderless) in its video settings and it will stay on screen while you use DynastyWire — including on a second monitor.",
+      };
+    case "covered":
+      return {
+        title: "Something is on top of the game",
+        detail:
+          "The Booth captures the game's rectangle, so whatever is drawn there is what it reads. Move DynastyWire off the game — a second monitor is ideal — or put the game back in front.",
+      };
+    case "unreadable":
+      return {
+        title: "Windows won't say where the game is",
+        detail: "The game window is in a state the Booth can't measure. Alt-tab to it once, or restart it in borderless.",
+      };
+    default:
+      return null;
+  }
+}
+
 export function gameRunning(): Promise<boolean> {
   return invoke<boolean>("live_game_running").catch(() => false);
 }

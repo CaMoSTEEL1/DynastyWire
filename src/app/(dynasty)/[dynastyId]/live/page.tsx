@@ -25,6 +25,8 @@ import {
   deriveEvents,
   freshConfirmer,
   gameRunning,
+  gameStatus,
+  statusAdvice,
   guessCrop,
   mergeLog,
   momentLines,
@@ -40,6 +42,7 @@ import {
   type LiveCall,
   type LiveEvent,
   type LiveLog,
+  type GameStatus,
   type LiveState,
 } from "@/lib/dynasty/live";
 import { issueKey, readTab, writeTab } from "@/lib/dynasty/issue-cache";
@@ -62,6 +65,8 @@ export default function LivePage() {
     useDynasty();
 
   const [running, setRunning] = useState<boolean | null>(null);
+  // WHY it cannot see the game, not just whether. See statusAdvice.
+  const [status, setStatus] = useState<GameStatus | null>(null);
   const [watching, setWatching] = useState(false);
   const [state, setState] = useState<LiveState | null>(null);
   const [events, setEvents] = useState<LiveEvent[]>([]);
@@ -88,8 +93,18 @@ export default function LivePage() {
 
   useEffect(() => {
     let cancelled = false;
-    void gameRunning().then((r) => { if (!cancelled) setRunning(r); });
-    const id = setInterval(() => { void gameRunning().then((r) => setRunning(r)); }, 5000);
+    const poll = () => {
+      void gameStatus().then((st) => {
+        if (cancelled) return;
+        setStatus(st);
+        // "Running" for the controls means the game exists at all — calibration and watching
+        // are still worth offering while it is merely covered, because the user is usually
+        // in the middle of fixing exactly that.
+        setRunning(st !== "not-running");
+      });
+    };
+    poll();
+    const id = setInterval(poll, 5000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
@@ -397,6 +412,27 @@ export default function LivePage() {
           Start over
         </button>
       </div>
+
+      {/*
+        Why the Booth is blind, stated plainly.
+
+        Before this, a minimised game produced "no bar on screen" — the identical message the
+        user sees fifty times a drive between plays — so several people concluded the feature
+        simply did not work. The most common cause is exclusive fullscreen, which minimises
+        the game the instant you click DynastyWire to calibrate it.
+      */}
+      {(() => {
+        const advice = status ? statusAdvice(status) : null;
+        if (!advice) return null;
+        return (
+          <div className="mt-4 rounded border border-dw-yellow/40 bg-dw-yellow/5 px-4 py-3">
+            <p className="font-headline text-sm uppercase tracking-widest text-dw-yellow">
+              {advice.title}
+            </p>
+            <p className="mt-1 font-serif text-sm leading-relaxed text-ink2">{advice.detail}</p>
+          </div>
+        );
+      })()}
 
       {note && (
         <p className="mt-4 rounded border border-dw-accent2/30 bg-dw-accent2/10 px-4 py-3 font-serif text-sm text-dw-accent2">
