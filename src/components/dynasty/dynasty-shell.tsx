@@ -21,6 +21,7 @@ import UpdateGate from "@/components/dynasty/update-gate";
 import { TutorialProvider } from "@/components/tutorial/tutorial-context";
 import TutorialWizard from "@/components/tutorial/tutorial-wizard";
 import { useTeamTheme } from "./use-team-theme";
+import { pageColour, useAppTheme } from "./use-app-theme";
 import { PodcastAudioProvider } from "@/components/shows/podcast-audio";
 import { NowPlaying } from "@/components/shows/now-playing";
 
@@ -123,7 +124,10 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const { ready, needsOnboarding, snapshot, loading, error, generate, hasApiKey, settings, coachName: resolvedCoach } = useDynasty();
   // The app wears the user's program. On by default; Settings -> Immersion turns it off, and
   // a team whose only colours are neutrals keeps the house crimson.
-  useTeamTheme(snapshot, settings.teamColors !== false);
+  // Order matters only in that both land on <html>; the page colour flows into the team
+  // theme so accents are re-picked for whichever page is showing.
+  const appTheme = useAppTheme(settings.appTheme);
+  useTeamTheme(snapshot, settings.teamColors !== false, pageColour(appTheme));
   // This week's around-the-league items (written by the weekly issue pass) drive the
   // breaking ticker so the whole country feels alive — falls back to evergreen lines
   // until the national desk files.
@@ -409,26 +413,26 @@ function Onboarding({ reason }: { reason?: string } = {}) {
         <label className="block space-y-1">
           <span className="text-xs uppercase tracking-wide opacity-70">Dynasty save file</span>
           <div className="flex gap-2">
-            <input className="flex-1 bg-black/30 border border-white/15 rounded px-3 py-2 text-sm" value={fileName} readOnly placeholder="DYNASTY-… (pick the file, not the folder)" />
-            <button className="px-3 py-2 border border-white/20 rounded text-sm" onClick={pickFile}>Browse</button>
+            <input className="flex-1 bg-paper2 border border-dw-border rounded px-3 py-2 text-sm" value={fileName} readOnly placeholder="DYNASTY-… (pick the file, not the folder)" />
+            <button className="px-3 py-2 border border-dw-border rounded text-sm" onClick={pickFile}>Browse</button>
           </div>
           {saveFile && <span className="block text-[11px] opacity-50 truncate">{saveFile}</span>}
         </label>
 
         <label className="block space-y-1">
           <span className="text-xs uppercase tracking-wide opacity-70">Your team (optional — auto-detected)</span>
-          <input className="w-full bg-black/30 border border-white/15 rounded px-3 py-2 text-sm" value={userTeam} onChange={(e) => setUserTeam(e.target.value)} placeholder="Kansas State" />
+          <input className="w-full bg-paper2 border border-dw-border rounded px-3 py-2 text-sm" value={userTeam} onChange={(e) => setUserTeam(e.target.value)} placeholder="Kansas State" />
         </label>
 
         <label className="block space-y-1">
           <span className="text-xs uppercase tracking-wide opacity-70">Coach name (optional)</span>
-          <input className="w-full bg-black/30 border border-white/15 rounded px-3 py-2 text-sm" value={coachName} onChange={(e) => setCoachName(e.target.value)} placeholder="Coach Prime" />
+          <input className="w-full bg-paper2 border border-dw-border rounded px-3 py-2 text-sm" value={coachName} onChange={(e) => setCoachName(e.target.value)} placeholder="Coach Prime" />
         </label>
 
         <label className="block space-y-1">
           <span className="text-xs uppercase tracking-wide opacity-70">AI provider</span>
           <select
-            className="w-full bg-black/30 border border-white/15 rounded px-3 py-2 text-sm"
+            className="w-full bg-paper2 border border-dw-border rounded px-3 py-2 text-sm"
             value={provider}
             onChange={(e) => setProvider(e.target.value as "anthropic" | "openai")}
           >
@@ -440,34 +444,34 @@ function Onboarding({ reason }: { reason?: string } = {}) {
         {provider === "anthropic" ? (
           <label className="block space-y-1">
             <span className="text-xs uppercase tracking-wide opacity-70">Anthropic API key</span>
-            <input type="password" className="w-full bg-black/30 border border-white/15 rounded px-3 py-2 text-sm" value={anthropicKey} onChange={(e) => setKey(e.target.value)} placeholder="sk-ant-…" />
+            <input type="password" className="w-full bg-paper2 border border-dw-border rounded px-3 py-2 text-sm" value={anthropicKey} onChange={(e) => setKey(e.target.value)} placeholder="sk-ant-…" />
           </label>
         ) : (
           <>
             <label className="block space-y-1">
               <span className="text-xs uppercase tracking-wide opacity-70">API base URL (v1 endpoint)</span>
-              <input className="w-full bg-black/30 border border-white/15 rounded px-3 py-2 text-sm" value={oaiUrl} onChange={(e) => setOaiUrl(e.target.value)} placeholder="https://api.openai.com/v1" />
+              <input className="w-full bg-paper2 border border-dw-border rounded px-3 py-2 text-sm" value={oaiUrl} onChange={(e) => setOaiUrl(e.target.value)} placeholder="https://api.openai.com/v1" />
             </label>
             <label className="block space-y-1">
               <span className="text-xs uppercase tracking-wide opacity-70">API key</span>
-              <input type="password" className="w-full bg-black/30 border border-white/15 rounded px-3 py-2 text-sm" value={oaiKey} onChange={(e) => setOaiKey(e.target.value)} placeholder="sk-…" />
+              <input type="password" className="w-full bg-paper2 border border-dw-border rounded px-3 py-2 text-sm" value={oaiKey} onChange={(e) => setOaiKey(e.target.value)} placeholder="sk-…" />
             </label>
             <label className="block space-y-1">
               <span className="text-xs uppercase tracking-wide opacity-70">Model name</span>
               <div className="flex gap-2">
-                <input className="flex-1 bg-black/30 border border-white/15 rounded px-3 py-2 text-sm" value={oaiModel} onChange={(e) => setOaiModel(e.target.value)} placeholder="gpt-4o-mini" />
+                <input className="flex-1 bg-paper2 border border-dw-border rounded px-3 py-2 text-sm" value={oaiModel} onChange={(e) => setOaiModel(e.target.value)} placeholder="gpt-4o-mini" />
                 <button
                   type="button"
                   onClick={() => void fetchModels()}
                   disabled={fetchingModels || !oaiUrl.trim() || !oaiKey.trim()}
-                  className="px-3 py-2 border border-white/20 rounded text-xs disabled:opacity-40"
+                  className="px-3 py-2 border border-dw-border rounded text-xs disabled:opacity-40"
                 >
                   {fetchingModels ? "…" : "Fetch models"}
                 </button>
               </div>
               {models && models.length > 0 && (
                 <select
-                  className="w-full bg-black/30 border border-white/15 rounded px-3 py-2 text-sm"
+                  className="w-full bg-paper2 border border-dw-border rounded px-3 py-2 text-sm"
                   value={models.includes(oaiModel) ? oaiModel : ""}
                   onChange={(e) => { if (e.target.value) setOaiModel(e.target.value); }}
                 >
@@ -484,7 +488,7 @@ function Onboarding({ reason }: { reason?: string } = {}) {
         <button
           disabled={!canFinish}
           onClick={finish}
-          className="w-full py-2.5 rounded bg-dw-crimson disabled:opacity-40 font-medium"
+          className="w-full py-2.5 rounded bg-dw-crimson text-white disabled:opacity-40 font-medium"
         >
           Enter the Wire
         </button>

@@ -13,7 +13,7 @@
 
 import { useEffect, useMemo } from "react";
 import type { DynastySnapshot } from "@/lib/dynasty/client";
-import { teamTheme, themeVariables, type TeamTheme } from "@/lib/dynasty/team-theme";
+import { PAPER, teamTheme, themeVariables, type TeamTheme } from "@/lib/dynasty/team-theme";
 
 /**
  * Derive the theme for whichever team the user is. Works unchanged in Road to Glory: an RTG
@@ -22,13 +22,16 @@ import { teamTheme, themeVariables, type TeamTheme } from "@/lib/dynasty/team-th
  */
 export function useTeamTheme(
   snapshot: DynastySnapshot | null | undefined,
-  enabled: boolean
+  enabled: boolean,
+  /** The page the accents have to survive. Team colours are picked and lifted against it, so
+   * a light page gets the navy where a dark one gets the maize — same team, both readable. */
+  onPage: string = PAPER
 ): TeamTheme | null {
   const theme = useMemo(() => {
     if (!enabled) return null;
     const t = snapshot?.userTeam;
-    return t ? teamTheme(t.colorPrimary, t.colorSecondary) : null;
-  }, [enabled, snapshot?.userTeam]);
+    return t ? teamTheme(t.colorPrimary, t.colorSecondary, onPage) : null;
+  }, [enabled, snapshot?.userTeam, onPage]);
 
   useEffect(() => {
     const root = document.documentElement;

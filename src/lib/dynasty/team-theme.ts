@@ -33,6 +33,9 @@
 /** The page these accents have to live on. */
 export const PAPER = "#1c1a17";
 
+/** The light theme's page colour. Accents are judged against whichever page is showing. */
+export const PAPER_LIGHT = "#f5f1e8";
+
 /**
  * The floor for the lead accent.
  *
@@ -53,6 +56,14 @@ const SECONDARY_MIN_CONTRAST = 3;
 const MIN_CHROMA = 0.18;
 /** Never lift past this: beyond it every hue converges on white. */
 const MAX_LIFT_LIGHTNESS = 0.78;
+/**
+ * The floor for the other direction.
+ *
+ * A light page needs accents pushed DOWN, and a colour dragged to near-black keeps its hue in
+ * name only — Michigan navy at l=0.05 is just black. 0.16 is dark enough to clear 4.5:1 on
+ * cream and still read as a colour.
+ */
+const MIN_LIFT_LIGHTNESS = 0.16;
 
 export interface RGB {
   r: number;
@@ -139,18 +150,27 @@ export function hslToRgb({ h, s, l }: HSL): RGB {
 }
 
 /**
- * Raise lightness until the colour clears `target` against the page, holding hue and
- * saturation. Returns the colour unchanged when it already clears, and the brightest version
- * short of washing out when it never can (a pure black has no hue to preserve anyway).
+ * Move lightness until the colour clears `target` against the page, holding hue and
+ * saturation. Returns the colour unchanged when it already clears.
+ *
+ * THE DIRECTION IS DECIDED BY THE PAGE, not assumed. This function used to only ever go UP,
+ * which is right on the dark editorial page it was written for and exactly backwards on a
+ * light one: brightening Oregon's yellow to clear contrast against cream drives it to white.
+ * The page's own luminance says which way legibility lies, so a dark page lifts and a light
+ * page deepens, and the same team colours work in both.
  */
 export function lift(c: RGB, target: number, on: RGB): RGB {
   if (contrast(c, on) >= target) return c;
   const hsl = rgbToHsl(c);
-  for (let l = hsl.l; l <= MAX_LIFT_LIGHTNESS; l += 0.01) {
+  // A dark page wants brighter accents; a light page wants deeper ones.
+  const goUp = luminance(on) < 0.5;
+  const limit = goUp ? MAX_LIFT_LIGHTNESS : MIN_LIFT_LIGHTNESS;
+  const step = goUp ? 0.01 : -0.01;
+  for (let l = hsl.l; goUp ? l <= limit : l >= limit; l += step) {
     const candidate = hslToRgb({ ...hsl, l });
     if (contrast(candidate, on) >= target) return candidate;
   }
-  return hslToRgb({ ...hsl, l: MAX_LIFT_LIGHTNESS });
+  return hslToRgb({ ...hsl, l: limit });
 }
 
 /** Whether a colour has enough chroma to read as an accent rather than as ink. */
@@ -181,10 +201,20 @@ export interface TeamTheme {
  */
 function tint(c: RGB, on: RGB): RGB {
   const hsl = rgbToHsl(c);
-  const alreadyBright = contrast(c, on) >= 6;
-  const soft = alreadyBright
-    ? { h: hsl.h, s: Math.min(1, hsl.s * 0.92), l: Math.max(0.26, hsl.l - 0.2) }
-    : { h: hsl.h, s: Math.max(0, hsl.s * 0.72), l: Math.min(0.82, hsl.l + 0.16) };
+  // "Already far from the page" rather than "already bright" — on cream, the accent that has
+  // room to move is the DARK one, and the old wording only happened to be right because the
+  // page was only ever dark.
+  const alreadyStrong = contrast(c, on) >= 6;
+  const pull = alreadyStrong
+    ? { h: hsl.h, s: Math.min(1, hsl.s * 0.92), l: hsl.l - 0.2 }
+    : { h: hsl.h, s: Math.max(0, hsl.s * 0.72), l: hsl.l + 0.16 };
+  // Toward the page is where a second voice lives; away from it is where the first one is.
+  const towardPage = luminance(on) < 0.5 ? pull : { ...pull, l: hsl.l - (pull.l - hsl.l) };
+  const soft = {
+    h: towardPage.h,
+    s: towardPage.s,
+    l: Math.max(0.2, Math.min(0.86, towardPage.l)),
+  };
   return lift(hslToRgb(soft), SECONDARY_MIN_CONTRAST, on);
 }
 

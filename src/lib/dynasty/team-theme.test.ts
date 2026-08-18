@@ -21,6 +21,8 @@ import {
   teamTheme,
   themeVariables,
   toHex,
+  PAPER_LIGHT,
+  luminance,
 } from "./team-theme";
 
 const on = parseHex(PAPER)!;
@@ -214,5 +216,59 @@ describe("themeVariables", () => {
 
   it("is empty when there is no theme, so the house colours stand", () => {
     expect(themeVariables(null)).toEqual({});
+  });
+});
+
+describe("the same colours on a light page", () => {
+  // The whole algorithm was written against one page colour and quietly assumed it. On cream,
+  // "make it more legible" means DARKER, and the old code could only go brighter — which
+  // drives a yellow to white and calls it readable.
+  const CREAM = PAPER_LIGHT;
+  const cream = parseHex(CREAM)!;
+
+  it("deepens a bright colour instead of washing it out", () => {
+    // Oregon yellow. On the dark page it is already legible; on cream it is nearly invisible
+    // and must come DOWN.
+    const t = teamTheme("#FEE123", "#154733", CREAM)!;
+    const accent = parseHex(t.accent)!;
+    expect(contrast(accent, cream)).toBeGreaterThanOrEqual(3);
+    expect(luminance(accent)).toBeLessThan(luminance(parseHex("#FEE123")!));
+  });
+
+  it("leaves a dark colour alone when it already reads on cream", () => {
+    // Michigan navy is unusable on the dark page and perfectly good on a light one.
+    const t = teamTheme("#00274C", "#FFCB05", CREAM)!;
+    expect(contrast(parseHex(t.accent)!, cream)).toBeGreaterThanOrEqual(3);
+  });
+
+  it("picks the navy on cream and the maize on charcoal — the same team, both pages", () => {
+    const onLight = teamTheme("#00274C", "#FFCB05", CREAM)!;
+    const onDark = teamTheme("#00274C", "#FFCB05", PAPER)!;
+    expect(luminance(parseHex(onLight.accent)!)).toBeLessThan(luminance(parseHex(onDark.accent)!));
+  });
+
+  it("clears contrast on cream for every real program it is given", () => {
+    const programs: Array<[string, string]> = [
+      ["#b5202a", "#d4943a"], // house
+      ["#FEE123", "#154733"], // Oregon
+      ["#00274C", "#FFCB05"], // Michigan
+      ["#ba0c2f", "#000000"], // Georgia
+      ["#252525", "#FFCD00"], // Iowa
+      ["#4B2E83", "#B7A57A"], // Washington
+      ["#F56600", "#522D80"], // Clemson
+    ];
+    for (const [p, s] of programs) {
+      const t = teamTheme(p, s, CREAM);
+      if (!t) continue; // all-neutral programs legitimately have no accent
+      expect(contrast(parseHex(t.accent)!, cream)).toBeGreaterThanOrEqual(3);
+      expect(contrast(parseHex(t.accent2)!, cream)).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it("keeps the two accents distinguishable from each other on cream", () => {
+    // The failure this guards: a tint moved the wrong way lands on top of the accent and the
+    // eye reads one colour where the design expects two.
+    const t = teamTheme("#ba0c2f", null, CREAM)!;
+    expect(contrast(parseHex(t.accent)!, parseHex(t.accent2)!)).toBeGreaterThan(1.2);
   });
 });

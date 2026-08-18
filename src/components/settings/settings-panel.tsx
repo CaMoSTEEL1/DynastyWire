@@ -21,6 +21,7 @@ import { teamTheme } from "@/lib/dynasty/team-theme";
 import { PublishPanel } from "@/components/share/publish-panel";
 import { DEFAULT_FORUM_URL } from "@/lib/share/api";
 import { PERSONA_VOICE_NAMES } from "@/lib/audio/voices";
+import { pageColour, resolveTheme } from "@/components/dynasty/use-app-theme";
 
 /** Destructive action with an inline two-step confirm (no browser dialogs in the webview),
  * which reloads afterward so every screen re-reads the now-empty stores. */
@@ -340,10 +341,41 @@ function TeamColorsSetting() {
   const { settings, updateSettings, snapshot } = useDynasty();
   const on = settings.teamColors !== false;
   const team = snapshot?.userTeam ?? null;
-  const theme = team ? teamTheme(team.colorPrimary, team.colorSecondary) : null;
+  // Against the CURRENT page. Previewing a dark-page accent while the app is on cream would
+  // show a swatch the app is not going to use.
+  const page = pageColour(resolveTheme(settings.appTheme));
+  const theme = team ? teamTheme(team.colorPrimary, team.colorSecondary, page) : null;
+
+  const appTheme = resolveTheme(settings.appTheme);
 
   return (
     <>
+      <div className="space-y-2">
+        <p className="font-sans text-[10px] uppercase tracking-widest text-ink3">Page</p>
+        <div className="flex gap-2">
+          {(["dark", "light"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => void updateSettings({ appTheme: t })}
+              className={cn(
+                "flex-1 rounded border px-3 py-2 font-sans text-xs uppercase tracking-wider transition-colors",
+                appTheme === t
+                  ? "border-dw-accent bg-dw-accent/10 text-dw-accent"
+                  : "border-dw-border text-ink3 hover:text-ink"
+              )}
+            >
+              {t === "dark" ? "Dark" : "Light"}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] leading-relaxed text-ink3">
+          Dark is the house style. Light is the same publication printed on cream stock — for
+          reading in a bright room. Your program&apos;s colours are re-picked for whichever page
+          you choose, so they stay readable on both.
+        </p>
+      </div>
+
       <Toggle
         checked={on}
         onChange={(v) => void updateSettings({ teamColors: v })}

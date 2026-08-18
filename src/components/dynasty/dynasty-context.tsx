@@ -177,6 +177,7 @@ const EMPTY_SETTINGS: DynastySettings = {
   budgetMode: null,
   elevenLabsKey: null,
   customVoices: null,
+  appTheme: null,
   autoGenerate: null,
   autoGenerateTabs: null,
 };

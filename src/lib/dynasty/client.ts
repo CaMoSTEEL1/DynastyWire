@@ -905,6 +905,9 @@ export interface DynastySettings {
    * premade stock ones. null = on; false = force premades. Accounts with no custom voices
    * fall back to premades on their own, so this only matters as an opt-out. */
   customVoices: boolean | null;
+  /** "light" switches the app to the cream editorial page. null/absent = dark, the default
+   * and the product's identity. Asked for by users reading in a bright room. */
+  appTheme: "dark" | "light" | null;
   // OpenAI-compatible provider (optional alternative to the Anthropic key): any service
   // exposing a /v1/chat/completions endpoint — OpenAI, OpenRouter, Groq, local models.
   provider: "anthropic" | "openai" | null; // null = anthropic
@@ -974,6 +977,7 @@ export async function loadSettings(): Promise<DynastySettings> {
     anthropicKey: (await store.get<string>("anthropicKey")) ?? null,
     elevenLabsKey: (await store.get<string>("elevenLabsKey")) ?? null,
     customVoices: (await store.get<boolean>("customVoices")) ?? null,
+    appTheme: (await store.get<"dark" | "light">("appTheme")) ?? null,
     provider: (await store.get<"anthropic" | "openai">("provider")) ?? null,
     openaiBaseUrl: (await store.get<string>("openaiBaseUrl")) ?? null,
     openaiKey: (await store.get<string>("openaiKey")) ?? null,

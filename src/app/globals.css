@@ -70,6 +70,75 @@
   --sidebar-ring: #b5202a;
 }
 
+/* ── Light theme ─────────────────────────────────────────────────────────────
+   Opt-in, set by data-theme="light" on <html> (see use-app-theme.ts).
+
+   Not a colour inversion. The identity is EDITORIAL, so the light page is warm
+   cream stock and warm near-black ink — a printed sports section, not a white
+   SaaS panel. The dark page's own #1c1a17 becomes the ink here, which is why the
+   two themes feel like the same publication.
+
+   The accents move too, and they have to. #b5202a and #d4943a were chosen to
+   carry on charcoal; on cream the orange in particular drops under 3:1 and reads
+   as a smudge. Both are deepened rather than re-hued, so a crimson is still a
+   crimson. Team colours are handled separately and computed per page — see
+   lift() in team-theme.ts, which decides its direction from the page's own
+   luminance rather than assuming a dark one. */
+:root[data-theme="light"] {
+  --paper: #f5f1e8;
+  --paper2: #ebe5d8;
+  --paper3: #e0d9c9;
+  --paper4: #d3cbb8;
+
+  --ink: #1c1a17;
+  --ink2: #4a453d;
+  /* Measured, not eyeballed. Each of these is the LIGHTEST value that still clears 4.5:1
+     against the CARD (--paper2), which is the tighter of the two surfaces they sit on — the
+     first pass looked fine and metered 3.97 for small metadata on cards. */
+  --ink3: #6c665c;
+
+  --dw-accent: #a01b24;
+  --dw-accent2: #8a5a18;
+  --dw-crimson: var(--dw-accent);
+
+  --dw-green: #137638;
+  --dw-red: #b91c1c;
+  --dw-yellow: #935906;
+  --dw-border: #d3cbb8;
+
+  --background: #f5f1e8;
+  --foreground: #1c1a17;
+  --card: #ebe5d8;
+  --card-foreground: #1c1a17;
+  --popover: #ebe5d8;
+  --popover-foreground: #1c1a17;
+  --primary: #a01b24;
+  --primary-foreground: #f5f1e8;
+  --secondary: #e0d9c9;
+  --secondary-foreground: #1c1a17;
+  --muted: #e0d9c9;
+  --muted-foreground: #6c665c;
+  --accent: #e0d9c9;
+  --accent-foreground: #1c1a17;
+  --destructive: #b91c1c;
+  --border: #d3cbb8;
+  --input: #d3cbb8;
+  --ring: #a01b24;
+  --chart-1: #a01b24;
+  --chart-2: #8a5a18;
+  --chart-3: #137638;
+  --chart-4: #935906;
+  --chart-5: #b91c1c;
+  --sidebar: #ebe5d8;
+  --sidebar-foreground: #1c1a17;
+  --sidebar-primary: #a01b24;
+  --sidebar-primary-foreground: #f5f1e8;
+  --sidebar-accent: #e0d9c9;
+  --sidebar-accent-foreground: #1c1a17;
+  --sidebar-border: #d3cbb8;
+  --sidebar-ring: #a01b24;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
