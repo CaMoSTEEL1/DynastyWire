@@ -23,6 +23,7 @@ import {
   Globe2,
   Radio,
   BookMarked,
+  ClipboardList,
 } from "lucide-react";
 import { useDynasty } from "@/components/dynasty/dynasty-context";
 import { useSettings } from "@/components/settings/settings-context";
@@ -37,6 +38,7 @@ const navItems = [
   { label: "National", slug: "national", icon: Globe },
   { label: "Coach", slug: "coach", icon: UserCircle },
   { label: "Dynasty Lore", slug: "lore", icon: BookMarked },
+  { label: "The Board", slug: "depth-chart", icon: ClipboardList },
   { label: "Situation Room", slug: "situation-room", icon: Flame },
   { label: "Social", slug: "social", icon: MessageCircle },
   { label: "Press Conference", slug: "press-conference", icon: Mic },
@@ -66,6 +68,7 @@ const rtgNavItems = [
   { label: "His Week", slug: "his-week-decision", icon: Flame },
   { label: "His Gameplan", slug: "his-gameplan", icon: ListOrdered },
   { label: "The Room", slug: "the-room", icon: Users },
+  { label: "The Board", slug: "depth-chart", icon: ClipboardList },
   { label: "Recruitment", slug: "recruitment", icon: Trophy },
   { label: "The Slate", slug: "scoreboard", icon: ListOrdered },
   { label: "Archive", slug: "archive", icon: Archive },
